@@ -1,0 +1,16 @@
+{
+  "name": "hubness",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.13.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "corepack pnpm --parallel -r run dev",
+    "build": "corepack pnpm --filter @hubness/web run build",
+    "start": "corepack pnpm --filter @hubness/server run start",
+    "check": "corepack pnpm -r run check",
+    "test": "corepack pnpm --filter @hubness/server run test"
+  }
+}
