@@ -1,0 +1,9 @@
+{
+  "name": "hubness",
+  "short_name": "hubness",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#282c34",
+  "theme_color": "#282c34",
+  "icons": [{ "src": "/brand/hubness-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

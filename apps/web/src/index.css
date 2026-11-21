@@ -1,0 +1,186 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/fira-code';
+
+/*
+ * Design tokens. Defaults are the Standard theme (dark); the actual
+ * values are set by src/theme/index.ts on <html> (theme + mode).
+ */
+@theme {
+  /*
+   * TUI style (like opencode): the whole interface is monospace, no rounded corners,
+   * thin borders, dense layout. Font — Fira Code.
+   */
+  --font-sans: 'Fira Code Variable', 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-mono: 'Fira Code Variable', 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
+
+  --color-bg: #282c34;
+  --color-surface: #111111;
+  --color-sunken: #1e2228;
+  --color-line: #355a66;
+  --color-fg: #9cdef2;
+  --color-muted: #6b8a94;
+  --color-accent: #e06c75;
+  --color-accent-fg: #ffffff;
+  --color-ok: #50fa7b;
+  --color-warn: #f0ad4e;
+  --color-danger: #ff5f66;
+  --color-add: #50fa7b24;
+  --color-add-fg: #8ee6a8;
+  --color-del: #ff5f6629;
+  --color-del-fg: #f2a0a6;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  font-size: 14px;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+/* Thin scrollbars matching panel color (in the base layer so utilities can override them) */
+@layer base {
+  /* keyboard focus in the accent color instead of the browser's white/blue ring */
+  :focus-visible {
+    outline: 1px solid var(--color-accent);
+    outline-offset: -1px;
+  }
+  /* browser autofill keeps the theme instead of its yellow/blue fill */
+  input:-webkit-autofill {
+    -webkit-text-fill-color: var(--color-fg);
+    box-shadow: 0 0 0 1000px var(--color-bg) inset;
+    caret-color: var(--color-fg);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line) transparent;
+  }
+}
+
+/* utilities (not plain classes): explicit pb-*/pt-* on the same element still win */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Accent as selection, like in opencode: solid accent fill, dark text */
+@utility btn-accent {
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent-fg);
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 85%, var(--color-fg));
+  }
+}
+
+/* Markdown of agent replies */
+.md {
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.md > * + * {
+  margin-top: 0.6em;
+}
+.md h1,
+.md h2,
+.md h3 {
+  font-weight: 600;
+  margin-top: 1em;
+  color: var(--color-accent);
+}
+.md h1 {
+  font-size: 1.2em;
+}
+.md h2 {
+  font-size: 1.1em;
+}
+.md ul {
+  list-style: disc;
+  padding-left: 1.3em;
+}
+.md ol {
+  list-style: decimal;
+  padding-left: 1.3em;
+}
+.md a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.md code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  background: var(--color-sunken);
+  padding: 0.1em 0.35em;
+  color: var(--syntax-function, var(--color-accent));
+}
+.md pre {
+  font-family: var(--font-mono);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  padding: 0.75em;
+  overflow-x: auto;
+  font-size: 0.9em;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+.md table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+.md th,
+.md td {
+  border: 1px solid var(--color-line);
+  padding: 0.3em 0.6em;
+}
+/* names in tables stay whole: on a phone the table scrolls sideways instead of breaking them per letter */
+/* in tables words keep their width (`anywhere` would let columns shrink to one letter);
+   a table wider than the phone scrolls sideways */
+.md table {
+  overflow-wrap: break-word;
+}
+.md td,
+.md th {
+  min-width: 10ch;
+}
+.md blockquote {
+  border-left: 2px solid var(--color-accent);
+  padding-left: 0.8em;
+  color: var(--color-muted);
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
