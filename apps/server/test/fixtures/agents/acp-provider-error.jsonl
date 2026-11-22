@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"acp-sess-2"}}
+{"jsonrpc":"2.0","id":3,"result":{}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-sess-2","update":{"sessionUpdate":"session_info_update","_meta":{"opencode/retry":{"attempt":1,"error":{"status":429,"message":"Too Many Requests","response":{"body":"{\"error\":{\"message\":\"Rate limited\",\"metadata\":{\"raw\":\"model:free is temporarily rate-limited upstream.\"}}}"}}}}}}}
+{"jsonrpc":"2.0","id":4,"error":{"code":-32000,"message":"Provider request failed"}}
