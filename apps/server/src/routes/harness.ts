@@ -1,0 +1,90 @@
+import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
+import type { HarnessAction, JobStreamMsg } from '@hubness/shared';
+import { HttpError } from '../errors.ts';
+import { agentsList, harnessAll, harnessOne, invalidateHarness } from '../harness.ts';
+import { agentOr404 } from '../agents/registry.ts';
+import { z } from 'zod';
+import { getJob, killJob, startJob, subscribeJob, writeJob } from '../terminal.ts';
+import { parseBody, pumpSSE, TermSizeSchema } from './http.ts';
+
+/**
+ * /api/harness: harness info and actions; /api/jobs: terminal
+ * jobs. Only actions from the harness's list are run (no arbitrary commands).
+ */
+export const harness = new Hono();
+export const jobs = new Hono();
+
+const DefaultModel = z.object({ model: z.string().max(200).nullish() });
+const JobInput = z.object({ data: z.string().max(4096, 'data: at most 4096 characters') });
+
+harness.get('/', async (c) => c.json(await harnessAll(c.req.query('refresh') === '1')));
+harness.get('/agents', async (c) => c.json(await agentsList()));
+/** One harness (a tab of the Harness page); ?refresh=1 re-checks versions online. */
+harness.get('/:kind', async (c) => c.json(await harnessOne(c.req.param('kind'), c.req.query('refresh') === '1')));
+
+harness.post('/:kind/actions/:action', async (c) => {
+  const agent = agentOr404(c.req.param('kind'));
+  const id = c.req.param('action') as HarnessAction['id'];
+  const b = await parseBody(c, TermSizeSchema, { lenient: true });
+  const { info } = await harnessOne(agent.kind);
+  const act = info.actions.find((a) => a.id === id);
+  if (!act) throw new HttpError(404, 'Action is not available');
+  if (!act.runnable) throw new HttpError(403, 'This command needs root — run it in a terminal yourself');
+
+  const job = startJob({
+    title: `${agent.label} · ${id}`,
+    command: act.command,
+    cols: b.cols,
+    rows: b.rows,
+    onExit: () => invalidateHarness(agent.kind),
+  });
+  return c.json(job, 201);
+});
+
+// ---------- provider credentials (accountMode: providers) ----------
+
+const ID_RE = /^[\w.:-]{1,120}$/;
+harness.post('/:kind/accounts/:provider/:account/:op', async (c) => {
+  const agent = agentOr404(c.req.param('kind'));
+  const { provider, account, op } = c.req.param();
+  if (!agent.accountOp) throw new HttpError(404, 'This agent has no provider accounts');
+  if (!ID_RE.test(provider) || !ID_RE.test(account)) throw new HttpError(400, 'Bad account id');
+  if (op !== 'switch' && op !== 'logout') throw new HttpError(400, 'op: switch | logout');
+  try {
+    return c.json({ ok: true, output: await agent.accountOp(provider, account, op) });
+  } finally {
+    invalidateHarness(agent.kind);
+  }
+});
+
+harness.put('/:kind/default-model', async (c) => {
+  const agent = agentOr404(c.req.param('kind'));
+  if (!agent.setDefaultModel) throw new HttpError(404, 'This agent has no default model setting');
+  const b = await parseBody(c, DefaultModel);
+  agent.setDefaultModel(b.model?.trim() || null);
+  invalidateHarness(agent.kind);
+  return c.json({ ok: true });
+});
+
+// ---------- terminal jobs ----------
+
+jobs.get('/:id/stream', (c) => {
+  const id = c.req.param('id');
+  const j = getJob(id);
+  if (!j) throw new HttpError(404, 'Job not found');
+  return streamSSE(c, (stream) =>
+    pumpSSE<JobStreamMsg>(stream, (push) => subscribeJob(id, push), {
+      first: { type: 'snapshot', job: j.info, output: j.output },
+      done: (m) => m.type === 'exit',
+    }),
+  );
+});
+
+jobs.post('/:id/input', async (c) => {
+  const b = await parseBody(c, JobInput);
+  if (!writeJob(c.req.param('id'), b.data)) throw new HttpError(409, 'The command is not running');
+  return c.json({ ok: true });
+});
+
+jobs.post('/:id/kill', (c) => c.json({ ok: killJob(c.req.param('id')) }));

@@ -1,0 +1,178 @@
+exports[`acp (codex): chunks, permission auto-allowed in bypass, tool output, diff edit, plan 1`] = `
+{
+  "agentSessionId": "acp-sess-1",
+  "statuses": [],
+  "events": [
+    {
+      "kind": "thinking",
+      "text": "Need to look at the file.",
+      "uid": "th#1"
+    },
+    {
+      "kind": "text",
+      "text": "Let me edit it.",
+      "streaming": false,
+      "uid": "t#1"
+    },
+    {
+      "kind": "tool",
+      "toolId": "call_1",
+      "name": "Bash",
+      "input": {
+        "command": "cat notes.txt"
+      },
+      "status": "ok",
+      "output": "hello",
+      "uid": "tool#1"
+    },
+    {
+      "kind": "tool",
+      "toolId": "call_2",
+      "name": "Edit",
+      "input": {
+        "file_path": "/work/notes.txt",
+        "old_string": "hello",
+        "new_string": "hello world"
+      },
+      "status": "ok",
+      "output": "diff /work/notes.txt",
+      "uid": "tool#2"
+    },
+    {
+      "kind": "tool",
+      "toolId": "plan:<run>",
+      "name": "TodoWrite",
+      "input": {
+        "todos": [
+          {
+            "content": "Read notes",
+            "status": "completed"
+          },
+          {
+            "content": "Edit notes",
+            "status": "completed"
+          }
+        ]
+      },
+      "status": "ok",
+      "uid": "plan#1"
+    },
+    {
+      "kind": "text",
+      "text": "Done: notes.txt now says hello world.",
+      "streaming": false,
+      "uid": "t#2"
+    },
+    {
+      "kind": "result",
+      "ok": true,
+      "model": "provider/model-a",
+      "uid": "res#1"
+    }
+  ]
+}
+`;
+
+exports[`acp (opencode): provider retry notice and the final error with its real cause 1`] = `
+{
+  "agentSessionId": "acp-sess-2",
+  "statuses": [],
+  "events": [
+    {
+      "kind": "notice",
+      "level": "info",
+      "text": "Provider error 429 model:free is temporarily rate-limited upstream. — retry #1",
+      "uid": "retry#1"
+    },
+    {
+      "kind": "notice",
+      "level": "error",
+      "text": "Provider request failed\\n429 model:free is temporarily rate-limited upstream.",
+      "uid": "err#1"
+    }
+  ]
+}
+`;
+
+exports[`claude-code: a failed turn shows the CLI error 1`] = `
+{
+  "agentSessionId": "sess-claude-2",
+  "statuses": [],
+  "events": [
+    {
+      "kind": "notice",
+      "level": "error",
+      "text": "API Error: 529 overloaded",
+      "uid": "err#1"
+    },
+    {
+      "kind": "result",
+      "ok": false,
+      "billing": "api",
+      "costUsd": 0,
+      "model": "claude-opus-5-5",
+      "uid": "res#1"
+    }
+  ]
+}
+`;
+
+exports[`claude-code: streaming text, thinking, tools ok / error, limits and result 1`] = `
+{
+  "agentSessionId": "sess-claude-1",
+  "statuses": [],
+  "events": [
+    {
+      "kind": "thinking",
+      "text": "List the folder first.",
+      "uid": "th#1"
+    },
+    {
+      "kind": "text",
+      "text": "Checking the files.",
+      "streaming": false,
+      "uid": "t#1"
+    },
+    {
+      "kind": "tool",
+      "toolId": "toolu_1",
+      "name": "Bash",
+      "input": {
+        "command": "ls",
+        "description": "List files"
+      },
+      "status": "ok",
+      "uid": "tool#1",
+      "output": "README.md\\nsrc"
+    },
+    {
+      "kind": "tool",
+      "toolId": "toolu_2",
+      "name": "Read",
+      "input": {
+        "file_path": "/work/missing.txt"
+      },
+      "status": "error",
+      "uid": "tool#2",
+      "output": "File does not exist."
+    },
+    {
+      "kind": "text",
+      "text": "There is a README and a src folder.",
+      "uid": "t#2"
+    },
+    {
+      "kind": "result",
+      "ok": true,
+      "billing": "subscription",
+      "costUsd": 0.164,
+      "limit": {
+        "window": "seven_day",
+        "utilization": 0.73
+      },
+      "model": "claude-opus-5-5",
+      "uid": "res#1"
+    }
+  ]
+}
+`;
