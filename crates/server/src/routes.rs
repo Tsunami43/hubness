@@ -1,7 +1,7 @@
 //! `/api` routes ported so far. Request bodies are checked at the boundary (`JsonBody`);
 //! the catalog keeps its own checks with specific messages.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -79,7 +79,9 @@ async fn new_repo(State(s): State<AppState>, JsonBody(b): JsonBody<NewRepoBody>)
 }
 
 async fn discover(State(s): State<AppState>, Query(q): Q) -> ApiResult<Json<Value>> {
-    s.with(|db, cfg| Ok(json!(catalog::discover_repos(db, cfg, q.get("path").map(String::as_str))?)))
+    let known: HashSet<String> = s.with(|db, _| Ok(crate::db::projects::list(db)?.into_iter().map(|p| p.path).collect()))?.0;
+    let projects_dir = s.config().projects_dir.clone();
+    crate::http::blocking(move || Ok(json!(catalog::discover_repos(&known, &projects_dir, q.get("path").map(String::as_str))?))).await
 }
 
 #[derive(Deserialize)]
@@ -158,10 +160,14 @@ async fn delete_project(State(s): State<AppState>, Path(id): Path<String>, Query
     // the container is removed off the async threads
     let pid = id.clone();
     let _ = tokio::task::spawn_blocking(move || crate::environments::stop_container(&pid)).await;
+    // a repository folder can be large: delete it off the async threads, without the database
+    if let Some(d) = dir.clone() {
+        let _ = crate::http::blocking(move || {
+            std::fs::remove_dir_all(&d).map_err(|e| HttpError::new(500, format!("Could not delete {}: {e}", d.display())))
+        })
+        .await?;
+    }
     s.with(|db, cfg| {
-        if let Some(d) = &dir {
-            std::fs::remove_dir_all(d).map_err(|e| HttpError::new(500, format!("Could not delete {}: {e}", d.display())))?;
-        }
         catalog::remove_project(db, cfg, &id, &is_active)?;
         Ok(json!({ "ok": true, "deleted": dir.as_ref().map(|d| crate::paths::to_string(d)) }))
     })

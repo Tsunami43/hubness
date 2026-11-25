@@ -438,8 +438,9 @@ async fn upload(
     let header = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
     let raw_name = header("x-filename");
     let name = percent_decode(if raw_name.is_empty() { "file" } else { &raw_name }).unwrap_or_else(|| "file".into());
-    let a = crate::attachments::save(std::path::Path::new(&cwd), &name, &header("content-type"), &body)?;
-    Ok((StatusCode::CREATED, axum::Json(a)))
+    let mime = header("content-type");
+    let a = crate::http::blocking(move || crate::attachments::save(std::path::Path::new(&cwd), &name, &mime, &body)).await?;
+    Ok((StatusCode::CREATED, a))
 }
 
 /// `decodeURIComponent`; `None` on a malformed sequence.
@@ -473,7 +474,7 @@ async fn attachment(State(s): State<AppState>, Path((id, file)): Path<(String, S
     };
     let mime = crate::attachments::serve_mime(&path);
     let disposition = if mime.starts_with("image/") || mime.starts_with("video/") { "inline" } else { "attachment" };
-    let bytes = std::fs::read(&path)?;
+    let bytes = tokio::fs::read(&path).await?;
     Ok((
         [
             (header::CONTENT_TYPE, mime),
@@ -637,7 +638,7 @@ async fn pane_file(
     Query(q): Query<PaneQuery>,
 ) -> ApiResult<axum::Json<hubness_core::FileContent>> {
     let (root, rel) = resolve_pane_file(&s, &id, q.path.as_deref().unwrap_or(""))?;
-    Ok(axum::Json(crate::files::read_file_safe(std::path::Path::new(&root), &rel)?))
+    crate::http::blocking(move || crate::files::read_file_safe(std::path::Path::new(&root), &rel)).await
 }
 
 async fn pane_diff(State(s): State<AppState>, Path(id): Path<String>, Query(q): Query<PaneQuery>) -> ApiResult<axum::Json<Value>> {
