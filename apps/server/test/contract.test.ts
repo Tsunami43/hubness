@@ -2,7 +2,7 @@ import { makeRepo, tmp } from './setup.ts';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, readlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 /**
@@ -105,6 +105,15 @@ chmodSync(fakeAcp, 0o755);
 process.env.HUBNESS_CODEX_ACP = fakeAcp;
 process.env.HUBNESS_OPENCODE_BIN = fakeAcp;
 const useFixture = (name: string) => writeFileSync(fixtureFile, join(import.meta.dirname, 'fixtures', 'agents', name));
+// the agents' own config files (MCP servers, skills, rules) live in a temporary HOME: the
+// tests never read or write the real ones
+const agentHome = join(tmp, 'home');
+mkdirSync(agentHome, { recursive: true });
+process.env.HOME = agentHome;
+process.env.XDG_CONFIG_HOME = join(tmp, 'xdg');
+process.env.CODEX_HOME = join(tmp, 'codex-home');
+delete process.env.CLAUDE_CONFIG_DIR;
+delete process.env.GROK_HOME;
 
 const { call, raw } = await makeClient();
 
@@ -1189,6 +1198,333 @@ test('harness: agents list, per-agent info, models, settings validation', async 
   assert.equal((await call('POST', '/harness/claude-code/accounts/p/a/switch')).status, 404, 'no provider accounts');
   assert.equal((await call('POST', '/harness/opencode/accounts/p/a/delete')).status, 400);
   assert.equal((await call('POST', '/harness/opencode/accounts/bad%20id/a/switch')).status, 400);
+});
+
+/** Write a file, creating its folders. */
+function put(path: string, content: string, mode?: number) {
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, content);
+  if (mode !== undefined) chmodSync(path, mode);
+}
+
+async function mcpProject(name: string): Promise<{ id: string; path: string }> {
+  const path = makeRepo(join(tmp, 'elsewhere', name));
+  const r = await call('POST', '/projects/import', { paths: [path] });
+  assert.equal(r.status, 201);
+  return { id: r.json[0].id, path };
+}
+
+test('harness MCP: the matrix from the agents own configs, add, connect, disconnect, delete', async () => {
+  const { parse: parseToml } = await import('smol-toml');
+  const { statSync } = await import('node:fs');
+  const proj = await mcpProject('mcp-project');
+  const claudeJson = join(agentHome, '.claude.json');
+  const codexToml = join(tmp, 'codex-home', 'config.toml');
+  const ocJson = join(tmp, 'xdg', 'opencode', 'opencode.json');
+  const grokToml = join(agentHome, '.grok', 'config.toml');
+  const claudeOrig = JSON.stringify(
+    {
+      numStartups: 3,
+      oauthAccount: { emailAddress: 'someone@example.com' },
+      mcpServers: { fs: { type: 'stdio', command: 'npx', args: ['-y', 'fs-server'], env: { TOKEN: 'secret-1' } } },
+      projects: { [proj.path]: { allowedTools: [], mcpServers: { 'local-only': { type: 'http', url: 'https://local.example/mcp', headers: { Authorization: 'Bearer secret-2' } } } } },
+    },
+    null,
+    2,
+  );
+  put(claudeJson, claudeOrig, 0o600);
+  put(join(proj.path, '.mcp.json'), JSON.stringify({ mcpServers: { team: { command: 'team-mcp' } } }));
+  const codexOrig = [
+    '# my codex config',
+    'model = "gpt-5"',
+    '',
+    '[mcp_servers.fs]',
+    'command = "npx"',
+    'args = ["-y", "fs-server"]',
+    '',
+    '[mcp_servers.fs.env]',
+    'TOKEN = "secret-3"',
+    '',
+    '# profiles below',
+    '[profiles.fast]',
+    'model = "gpt-5-mini"',
+    '',
+  ].join('\n');
+  put(codexToml, codexOrig);
+  const ocOrig = {
+    $schema: 'https://opencode.ai/config.json',
+    model: 'a/b',
+    mcp: { 'remote-docs': { type: 'remote', url: 'https://docs.example/mcp', headers: { 'X-Key': 'secret-4' }, enabled: false } },
+    agent: { reviewer: { description: 'Reviews code', model: 'a/b' } },
+    plugin: ['opencode-foo'],
+  };
+  put(ocJson, JSON.stringify(ocOrig, null, 2));
+  put(grokToml, '[cli]\ninstaller = "script"\n\n[mcp_servers.sse-one]\ntype = "sse"\nurl = "https://sse.example/sse"\n');
+
+  // ---- the matrix ----
+  const m = (await call('GET', '/harness/mcp')).json;
+  assert.deepEqual(
+    m.agents.map((a: any) => [a.kind, a.supported, a.configPath, a.transports, a.error]),
+    [
+      ['opencode', true, ocJson, ['stdio', 'http', 'sse'], null],
+      ['claude-code', true, claudeJson, ['stdio', 'http', 'sse'], null],
+      ['grok', true, grokToml, ['stdio', 'http', 'sse'], null],
+      ['codex', true, codexToml, ['stdio', 'http'], null],
+    ],
+  );
+  assert.deepEqual(
+    m.servers.map((s: any) => s.name),
+    ['hub', 'fs', 'remote-docs', 'sse-one'],
+  );
+  const [hub, fs, docs, sse] = m.servers;
+  assert.equal(hub.builtIn, true);
+  assert.deepEqual(hub.agents, { opencode: 'builtin', 'claude-code': 'builtin', grok: 'builtin', codex: 'builtin' });
+  assert.deepEqual(fs, {
+    name: 'fs',
+    transport: 'stdio',
+    command: 'npx',
+    args: ['-y', 'fs-server'],
+    env: ['TOKEN'],
+    url: null,
+    headers: [],
+    builtIn: false,
+    agents: { opencode: null, 'claude-code': 'user', grok: null, codex: 'user' },
+    entries: [
+      { agent: 'claude-code', scope: 'user', source: claudeJson, enabled: true },
+      { agent: 'codex', scope: 'user', source: codexToml, enabled: true },
+    ],
+  });
+  assert.equal(docs.transport, 'http');
+  assert.deepEqual(docs.headers, ['X-Key']);
+  assert.equal(docs.entries[0].enabled, false);
+  assert.equal(sse.transport, 'sse');
+  assert.doesNotMatch(JSON.stringify(m), /secret-/, 'env and header values are never sent');
+
+  const withProject = (await call('GET', `/harness/mcp?project=${proj.id}`)).json;
+  assert.deepEqual(
+    withProject.servers.map((s: any) => [s.name, s.agents['claude-code']]),
+    [
+      ['hub', 'builtin'],
+      ['fs', 'user'],
+      ['local-only', 'project'],
+      ['remote-docs', null],
+      ['sse-one', null],
+      ['team', 'project'],
+    ],
+  );
+  const local = withProject.servers.find((s: any) => s.name === 'local-only');
+  assert.deepEqual([local.transport, local.url, local.headers, local.entries[0].source], ['http', 'https://local.example/mcp', ['Authorization'], claudeJson]);
+  assert.equal(withProject.servers.find((s: any) => s.name === 'team').entries[0].source, join(proj.path, '.mcp.json'));
+  assert.doesNotMatch(JSON.stringify(withProject), /secret-/);
+  assert.equal((await call('GET', '/harness/mcp?project=missing')).status, 404);
+
+  // ---- add to several agents ----
+  const gh = { name: 'gh', transport: 'stdio', command: 'gh-mcp', args: ['--x'], env: { GH_TOKEN: 'secret-5' } };
+  const all = ['claude-code', 'codex', 'opencode', 'grok'];
+  assert.equal((await call('POST', '/harness/mcp', { ...gh, name: 'hub', agents: all })).status, 400, 'the built-in name');
+  assert.equal((await call('POST', '/harness/mcp', { ...gh, name: 'bad name', agents: all })).status, 400);
+  assert.equal((await call('POST', '/harness/mcp', { ...gh, command: ' ', agents: all })).status, 400);
+  assert.equal((await call('POST', '/harness/mcp', { ...gh, agents: [] })).status, 400);
+  assert.equal((await call('POST', '/harness/mcp', { ...gh, agents: ['nope'] })).status, 404);
+  assert.equal((await call('POST', '/harness/mcp', { ...gh, env: { 'BAD-KEY': 'x' }, agents: all })).status, 400);
+  assert.equal((await call('POST', '/harness/mcp', { name: 'x', transport: 'http', url: 'ftp://x', agents: all })).status, 400);
+  assert.equal((await call('POST', '/harness/mcp', { name: 'x', transport: 'sse', url: 'https://x.example/sse', agents: ['codex'] })).status, 400, 'Codex has no SSE');
+  assert.equal(readFileSync(codexToml, 'utf8'), codexOrig, 'refused requests write nothing');
+
+  const added = await call('POST', '/harness/mcp', { ...gh, agents: all });
+  assert.equal(added.status, 200);
+  const ghRow = added.json.servers.find((s: any) => s.name === 'gh');
+  assert.deepEqual(ghRow.agents, { opencode: 'user', 'claude-code': 'user', grok: 'user', codex: 'user' });
+  assert.deepEqual([ghRow.env, ghRow.args], [['GH_TOKEN'], ['--x']]);
+  assert.doesNotMatch(JSON.stringify(added.json), /secret-/);
+
+  const claude = JSON.parse(readFileSync(claudeJson, 'utf8'));
+  assert.deepEqual(claude.mcpServers.gh, { type: 'stdio', command: 'gh-mcp', args: ['--x'], env: { GH_TOKEN: 'secret-5' } });
+  assert.equal(claude.numStartups, 3, 'the rest of the file stays');
+  assert.deepEqual(Object.keys(claude), ['numStartups', 'oauthAccount', 'mcpServers', 'projects'], 'key order stays');
+  assert.equal(statSync(claudeJson).mode & 0o777, 0o600, 'the file mode stays');
+  assert.equal(readFileSync(`${claudeJson}.hubness.bak`, 'utf8'), claudeOrig, 'a backup of the original');
+  const codexText = readFileSync(codexToml, 'utf8');
+  for (const keep of ['# my codex config', '# profiles below', '[profiles.fast]', 'TOKEN = "secret-3"']) assert.ok(codexText.includes(keep), keep);
+  const codex: any = parseToml(codexText);
+  assert.deepEqual(codex.mcp_servers.gh, { command: 'gh-mcp', args: ['--x'], env: { GH_TOKEN: 'secret-5' } });
+  assert.deepEqual([codex.model, codex.profiles.fast.model, codex.mcp_servers.fs.env.TOKEN], ['gpt-5', 'gpt-5-mini', 'secret-3']);
+  assert.equal(readFileSync(`${codexToml}.hubness.bak`, 'utf8'), codexOrig);
+  const oc = JSON.parse(readFileSync(ocJson, 'utf8'));
+  assert.deepEqual(oc.mcp.gh, { type: 'local', command: ['gh-mcp', '--x'], environment: { GH_TOKEN: 'secret-5' }, enabled: true });
+  assert.deepEqual([oc.model, oc.plugin, oc.mcp['remote-docs'].enabled], ['a/b', ['opencode-foo'], false]);
+  const grok: any = parseToml(readFileSync(grokToml, 'utf8'));
+  assert.deepEqual(grok.mcp_servers.gh, { command: 'gh-mcp', args: ['--x'], env: { GH_TOKEN: 'secret-5' } });
+  assert.equal(grok.cli.installer, 'script');
+
+  // replacing keeps one definition; the backup is written once
+  const http = await call('POST', '/harness/mcp', { name: 'gh', transport: 'http', url: 'https://gh.example/mcp', headers: { Authorization: 'Bearer secret-6' }, agents: ['claude-code', 'codex'] });
+  assert.equal(http.status, 200);
+  assert.deepEqual(JSON.parse(readFileSync(claudeJson, 'utf8')).mcpServers.gh, { type: 'http', url: 'https://gh.example/mcp', headers: { Authorization: 'Bearer secret-6' } });
+  assert.deepEqual((parseToml(readFileSync(codexToml, 'utf8')) as any).mcp_servers.gh, { url: 'https://gh.example/mcp', http_headers: { Authorization: 'Bearer secret-6' } });
+  assert.equal(readFileSync(`${claudeJson}.hubness.bak`, 'utf8'), claudeOrig, 'the backup is kept from the first write');
+  assert.equal(readFileSync(`${codexToml}.hubness.bak`, 'utf8'), codexOrig);
+
+  // ---- connect: copied from another agent's definition ----
+  const toClaude = await call('PUT', '/harness/mcp/sse-one/agents/claude-code');
+  assert.equal(toClaude.status, 200);
+  assert.equal(toClaude.json.servers.find((s: any) => s.name === 'sse-one').agents['claude-code'], 'user');
+  assert.deepEqual(JSON.parse(readFileSync(claudeJson, 'utf8')).mcpServers['sse-one'], { type: 'sse', url: 'https://sse.example/sse' });
+  assert.equal((await call('PUT', '/harness/mcp/sse-one/agents/codex')).status, 400, 'Codex has no SSE');
+  assert.equal((await call('PUT', '/harness/mcp/fs/agents/opencode')).status, 200);
+  assert.deepEqual(JSON.parse(readFileSync(ocJson, 'utf8')).mcp.fs, { type: 'local', command: ['npx', '-y', 'fs-server'], environment: { TOKEN: 'secret-1' }, enabled: true }, 'secrets are copied server-side');
+  assert.equal((await call('PUT', '/harness/mcp/remote-docs/agents/grok')).status, 200);
+  assert.deepEqual((parseToml(readFileSync(grokToml, 'utf8')) as any).mcp_servers['remote-docs'], { url: 'https://docs.example/mcp', headers: { 'X-Key': 'secret-4' } });
+  assert.equal((await call('PUT', '/harness/mcp/fs/agents/claude-code')).status, 200, 'already connected: nothing to do');
+  assert.equal((await call('PUT', '/harness/mcp/nope/agents/grok')).status, 404);
+  assert.equal((await call('PUT', '/harness/mcp/fs/agents/nope')).status, 404);
+  assert.equal((await call('PUT', '/harness/mcp/hub/agents/grok')).status, 400, 'the built-in server is read-only');
+  assert.equal((await call('PUT', `/harness/mcp/team/agents/grok?project=${proj.id}`)).status, 200, 'a project server can be copied to a user config');
+  assert.deepEqual((parseToml(readFileSync(grokToml, 'utf8')) as any).mcp_servers.team, { command: 'team-mcp', args: [] });
+
+  // ---- disconnect ----
+  const off = await call('DELETE', '/harness/mcp/fs/agents/codex');
+  assert.equal(off.status, 200);
+  assert.deepEqual(off.json.servers.find((s: any) => s.name === 'fs').agents, { opencode: 'user', 'claude-code': 'user', grok: null, codex: null });
+  const afterOff = readFileSync(codexToml, 'utf8');
+  assert.doesNotMatch(afterOff, /mcp_servers\.fs|secret-3/, 'the server and its sub-tables are gone');
+  for (const keep of ['# my codex config', '# profiles below', '[profiles.fast]']) assert.ok(afterOff.includes(keep), keep);
+  assert.equal((await call('DELETE', '/harness/mcp/fs/agents/codex')).status, 404);
+  assert.equal((await call('DELETE', `/harness/mcp/team/agents/claude-code?project=${proj.id}`)).status, 409, 'project configs are not written');
+  assert.equal((await call('DELETE', '/harness/mcp/hub/agents/codex')).status, 400);
+
+  // ---- delete from every user config ----
+  const del = await call('DELETE', '/harness/mcp/gh');
+  assert.equal(del.status, 200);
+  assert.ok(!del.json.servers.some((s: any) => s.name === 'gh'));
+  assert.equal(JSON.parse(readFileSync(claudeJson, 'utf8')).mcpServers.gh, undefined);
+  assert.equal(JSON.parse(readFileSync(ocJson, 'utf8')).mcp.gh, undefined);
+  assert.equal((parseToml(readFileSync(grokToml, 'utf8')) as any).mcp_servers.gh, undefined);
+  assert.equal((parseToml(readFileSync(codexToml, 'utf8')) as any).mcp_servers?.gh, undefined);
+  assert.equal((await call('DELETE', '/harness/mcp/gh')).status, 404);
+  assert.equal((await call('DELETE', '/harness/mcp/hub')).status, 400);
+
+  // ---- a config that doesn't parse is reported and never touched ----
+  const brokenJson = '{ "mcp": { broken';
+  writeFileSync(ocJson, brokenJson);
+  const brokenToml = 'model = \n[mcp_servers.x\n';
+  const claudeBefore = readFileSync(claudeJson, 'utf8');
+  const listed = (await call('GET', '/harness/mcp')).json;
+  assert.match(listed.agents.find((a: any) => a.kind === 'opencode').error, /opencode\.json/);
+  assert.ok(listed.servers.some((s: any) => s.name === 'fs'), 'the other agents still list');
+  const refused = await call('POST', '/harness/mcp', { ...gh, agents: ['claude-code', 'opencode'] });
+  assert.equal(refused.status, 409);
+  assert.match(refused.json.error, /opencode\.json/);
+  assert.equal(readFileSync(ocJson, 'utf8'), brokenJson);
+  assert.equal(readFileSync(claudeJson, 'utf8'), claudeBefore, 'nothing is written when one config is unreadable');
+  assert.equal((await call('PUT', '/harness/mcp/fs/agents/opencode')).status, 409);
+  assert.equal((await call('DELETE', '/harness/mcp/fs/agents/opencode')).status, 409);
+  writeFileSync(codexToml, brokenToml);
+  assert.equal((await call('POST', '/harness/mcp', { ...gh, agents: ['codex'] })).status, 409);
+  assert.equal(readFileSync(codexToml, 'utf8'), brokenToml);
+  writeFileSync(ocJson, JSON.stringify(ocOrig));
+  writeFileSync(codexToml, codexOrig);
+});
+
+test('harness extensions: skills, rules, subagents, commands, plugins; rules read and save', async () => {
+  const proj = await mcpProject('ext-project');
+  const H = agentHome;
+  const cl = join(H, '.claude');
+  put(join(cl, 'skills', 'pdf', 'SKILL.md'), '---\nname: pdf\ndescription: >\n  Read PDFs.\n  Use it for forms.\nallowed-tools:\n  - Read\n---\n# PDF\n');
+  put(join(cl, 'skills', 'broken', 'SKILL.md'), 'no frontmatter here');
+  mkdirSync(join(cl, 'skills', 'notaskill'), { recursive: true });
+  put(join(cl, 'CLAUDE.md'), '# Global rules\nBe kind.\n');
+  put(join(cl, 'agents', 'reviewer.md'), "---\nname: code-reviewer\ndescription: 'Reviews diffs: it''s strict'\nmodel: sonnet\n---\nYou review.\n");
+  put(join(cl, 'agents', 'notes.txt'), 'not an agent');
+  put(join(cl, 'commands', 'deploy.md'), '---\ndescription: "Deploy it"\n---\nRun the deploy.\n');
+  put(join(cl, 'commands', 'frontend', 'lint.md'), '\n# Lint the UI\nRun the linter.\n');
+  put(join(proj.path, '.claude', 'skills', 'proj-skill', 'SKILL.md'), '---\ndescription: Project only # a comment\n---\n');
+  put(join(proj.path, 'CLAUDE.md'), 'Project rules\n');
+  const pluginDir = join(H, 'plugin-cache', 'demo');
+  put(join(cl, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'demo@market': [{ scope: 'user', installPath: pluginDir, version: '1.2.0' }] } }));
+  put(join(cl, 'settings.json'), JSON.stringify({ enabledPlugins: { 'demo@market': true } }));
+  put(join(pluginDir, 'skills', 'demo-skill', 'SKILL.md'), '---\nname: demo-skill\ndescription: From a plugin\n---\n');
+
+  const ext = await call('GET', `/harness/claude-code/extensions?project=${proj.id}`);
+  assert.equal(ext.status, 200);
+  assert.equal(ext.json.kind, 'claude-code');
+  assert.deepEqual(ext.json.skills, [
+    { name: 'broken', description: '', path: join(cl, 'skills', 'broken', 'SKILL.md'), scope: 'user' },
+    { name: 'pdf', description: 'Read PDFs. Use it for forms.', path: join(cl, 'skills', 'pdf', 'SKILL.md'), scope: 'user' },
+    { name: 'proj-skill', description: 'Project only', path: join(proj.path, '.claude', 'skills', 'proj-skill', 'SKILL.md'), scope: 'project' },
+    { name: 'demo-skill', description: 'From a plugin', path: join(pluginDir, 'skills', 'demo-skill', 'SKILL.md'), scope: 'plugin' },
+  ]);
+  assert.deepEqual(ext.json.rules, [
+    { label: 'CLAUDE.md', path: join(cl, 'CLAUDE.md'), scope: 'user', exists: true, size: 24, preview: '# Global rules\nBe kind.' },
+    { label: 'CLAUDE.md', path: join(proj.path, 'CLAUDE.md'), scope: 'project', exists: true, size: 14, preview: 'Project rules' },
+    { label: 'CLAUDE.local.md', path: join(proj.path, 'CLAUDE.local.md'), scope: 'project', exists: false, size: 0, preview: null },
+  ]);
+  assert.deepEqual(ext.json.agents, [{ name: 'code-reviewer', description: "Reviews diffs: it's strict", model: 'sonnet', path: join(cl, 'agents', 'reviewer.md'), scope: 'user' }]);
+  assert.deepEqual(ext.json.commands, [
+    { name: 'deploy', description: 'Deploy it', path: join(cl, 'commands', 'deploy.md'), scope: 'user' },
+    { name: 'frontend:lint', description: 'Lint the UI', path: join(cl, 'commands', 'frontend', 'lint.md'), scope: 'user' },
+  ]);
+  assert.deepEqual(ext.json.plugins, [{ name: 'demo@market', version: '1.2.0', enabled: true, path: pluginDir, scope: 'plugin' }]);
+  // without a project: user and plugin only
+  const userOnly = (await call('GET', '/harness/claude-code/extensions')).json;
+  assert.deepEqual(userOnly.rules.map((r: any) => r.scope), ['user']);
+  assert.ok(!userOnly.skills.some((s: any) => s.scope === 'project'));
+
+  // Codex, OpenCode, Grok read their own folders
+  const cx = join(tmp, 'codex-home');
+  put(join(cx, 'skills', 'cx-skill', 'SKILL.md'), '---\nname: cx-skill\ndescription: |\n  Line one\n  Line two\n---\n');
+  put(join(cx, 'prompts', 'fix.md'), '---\ndescription: Fix the bug\n---\n');
+  const codexExt = (await call('GET', `/harness/codex/extensions?project=${proj.id}`)).json;
+  assert.deepEqual(codexExt.skills, [{ name: 'cx-skill', description: 'Line one\nLine two', path: join(cx, 'skills', 'cx-skill', 'SKILL.md'), scope: 'user' }]);
+  assert.deepEqual(codexExt.rules.map((r: any) => [r.label, r.path, r.exists]), [
+    ['AGENTS.md', join(cx, 'AGENTS.md'), false],
+    ['AGENTS.md', join(proj.path, 'AGENTS.md'), false],
+  ]);
+  assert.deepEqual(codexExt.commands, [{ name: 'fix', description: 'Fix the bug', path: join(cx, 'prompts', 'fix.md'), scope: 'user' }]);
+  assert.deepEqual([codexExt.agents, codexExt.plugins], [[], []]);
+
+  const ocDir = join(tmp, 'xdg', 'opencode');
+  put(join(ocDir, 'agent', 'helper.md'), '---\ndescription: Helps\nmodel: a/b\n---\n');
+  put(join(ocDir, 'commands', 'ship.md'), 'Ship it\n');
+  put(join(ocDir, 'opencode.json'), JSON.stringify({ agent: { reviewer: { description: 'Reviews code', model: 'a/b' } }, plugin: ['opencode-foo'] }));
+  const ocExt = (await call('GET', '/harness/opencode/extensions')).json;
+  assert.deepEqual(ocExt.agents, [
+    { name: 'helper', description: 'Helps', model: 'a/b', path: join(ocDir, 'agent', 'helper.md'), scope: 'user' },
+    { name: 'reviewer', description: 'Reviews code', model: 'a/b', path: join(ocDir, 'opencode.json'), scope: 'user' },
+  ]);
+  assert.deepEqual(ocExt.commands, [{ name: 'ship', description: 'Ship it', path: join(ocDir, 'commands', 'ship.md'), scope: 'user' }]);
+  assert.deepEqual(ocExt.plugins, [{ name: 'opencode-foo', version: null, enabled: true, path: join(ocDir, 'opencode.json'), scope: 'user' }]);
+  assert.deepEqual(ocExt.rules.map((r: any) => r.path), [join(ocDir, 'AGENTS.md')]);
+
+  const gk = join(H, '.grok');
+  put(join(gk, 'skills', 'g1', 'SKILL.md'), '---\nname: g1\ndescription: Grok skill\n---\n');
+  put(join(gk, 'AGENTS.md'), 'Grok rules');
+  const grokExt = (await call('GET', '/harness/grok/extensions')).json;
+  assert.deepEqual(grokExt.skills.map((s: any) => [s.name, s.description]), [['g1', 'Grok skill']]);
+  assert.deepEqual(grokExt.rules, [{ label: 'AGENTS.md', path: join(gk, 'AGENTS.md'), scope: 'user', exists: true, size: 10, preview: 'Grok rules' }]);
+  assert.equal((await call('GET', '/harness/nope/extensions')).status, 404);
+  assert.equal((await call('GET', '/harness/codex/extensions?project=missing')).status, 404);
+
+  // ---- rules: only the files the listing names ----
+  const rules = (p: string, extra = '') => `/harness/claude-code/rules?path=${encodeURIComponent(p)}${extra}`;
+  const got = await call('GET', rules(join(cl, 'CLAUDE.md')));
+  assert.deepEqual(got.json, { path: join(cl, 'CLAUDE.md'), exists: true, content: '# Global rules\nBe kind.\n' });
+  assert.equal((await call('PUT', rules(join(cl, 'CLAUDE.md')), { content: 'Be brief.\n' })).status, 200);
+  assert.equal(readFileSync(join(cl, 'CLAUDE.md'), 'utf8'), 'Be brief.\n');
+  const local = join(proj.path, 'CLAUDE.local.md');
+  assert.deepEqual((await call('GET', rules(local, `&project=${proj.id}`))).json, { path: local, exists: false, content: '' });
+  assert.equal((await call('PUT', rules(local, `&project=${proj.id}`), { content: 'mine' })).status, 200, 'a missing listed file is created');
+  assert.equal(readFileSync(local, 'utf8'), 'mine');
+  assert.equal((await call('GET', rules(local))).status, 403, 'a project file is listed only with its project');
+  assert.equal((await call('GET', rules('/etc/passwd'))).status, 403);
+  assert.equal((await call('PUT', rules(join(cl, 'settings.json')), { content: '{}' })).status, 403);
+  assert.notEqual(readFileSync(join(cl, 'settings.json'), 'utf8'), '{}');
+  assert.equal((await call('GET', '/harness/claude-code/rules')).status, 400);
+  assert.equal((await call('PUT', rules(join(cl, 'CLAUDE.md')), { content: 5 })).status, 400);
+  assert.equal((await call('GET', `/harness/nope/rules?path=${encodeURIComponent(join(cl, 'CLAUDE.md'))}`)).status, 404);
+  const codexRules = join(cx, 'AGENTS.md');
+  assert.equal((await call('PUT', `/harness/codex/rules?path=${encodeURIComponent(codexRules)}`, { content: '# Codex\n' })).status, 200);
+  assert.equal(readFileSync(codexRules, 'utf8'), '# Codex\n');
 });
 
 test('removing a project together with its folder', async () => {

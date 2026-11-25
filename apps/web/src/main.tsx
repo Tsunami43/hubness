@@ -22,6 +22,7 @@ import { KeyboardPage } from './pages/settings/KeyboardPage';
 import { GitAccessPage } from './pages/settings/GitAccessPage';
 import { UsersPage } from './pages/settings/UsersPage';
 import { HarnessDetail, HarnessIndex, HarnessLayout } from './pages/HarnessPage';
+import { HarnessMcp } from './pages/HarnessMcp';
 import { HomePage } from './pages/HomePage';
 import { SystemIndex, SystemLayout, SystemSection } from './pages/SystemPage';
 import { SessionRedirect } from './pages/SessionRedirect';
@@ -66,6 +67,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="session/:id" element={<SessionRedirect />} />
             <Route path="harness" element={<HarnessLayout />}>
               <Route index element={<HarnessIndex />} />
+              <Route path="mcp" element={<HarnessMcp />} />
               <Route path=":kind" element={<HarnessDetail />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

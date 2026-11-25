@@ -6,6 +6,7 @@ import { HttpError } from '../../errors.ts';
 import { runOnce, shq } from '../../terminal.ts';
 import { action, cachedLatest, cmpVersion, notFound, parseVersion, readJson, resolveBin, runCli, versionInfo, type Json } from '../kit.ts';
 import type { AgentModule } from '../types.ts';
+import { opencodeExtensions, opencodeMcp } from './extensions.ts';
 import { OPENCODE_BIN, opencodeAdapter, opencodeModels, opencodeVersion } from './adapter.ts';
 
 /**
@@ -208,4 +209,6 @@ export const opencodeModule: AgentModule = {
     return r.output;
   },
   statePaths: () => ['.config/opencode', '.local/share/opencode', '.local/state/opencode'].map((d) => join(homedir(), d)),
+  mcp: opencodeMcp,
+  extensions: opencodeExtensions,
 };

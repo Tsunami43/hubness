@@ -7,6 +7,8 @@ import { agentOr404 } from '../agents/registry.ts';
 import { z } from 'zod';
 import { getJob, killJob, startJob, subscribeJob, writeJob } from '../terminal.ts';
 import { parseBody, pumpSSE, TermSizeSchema } from './http.ts';
+import { extensionsOf, projectDirOf, readRules, saveRules } from '../extensions.ts';
+import { mcpAdd, mcpConnect, mcpDelete, mcpDisconnect, mcpMatrix } from '../mcp-servers.ts';
 
 /**
  * /api/harness: harness info and actions; /api/jobs: terminal
@@ -18,8 +20,49 @@ export const jobs = new Hono();
 const DefaultModel = z.object({ model: z.string().max(200).nullish() });
 const JobInput = z.object({ data: z.string().max(4096, 'data: at most 4096 characters') });
 
+const McpBody = z.object({
+  name: z.string().max(64),
+  transport: z.enum(['stdio', 'http', 'sse']),
+  command: z.string().max(1000).nullish(),
+  args: z.array(z.string().max(2000)).max(100).nullish(),
+  env: z.record(z.string(), z.string()).nullish(),
+  url: z.string().max(2000).nullish(),
+  headers: z.record(z.string(), z.string()).nullish(),
+  agents: z.array(z.string().max(64)).max(20),
+});
+const RulesBody = z.object({ content: z.string() });
+
 harness.get('/', async (c) => c.json(await harnessAll(c.req.query('refresh') === '1')));
 harness.get('/agents', async (c) => c.json(await agentsList()));
+
+// ---------- MCP servers in the agents' own configs (before /:kind) ----------
+
+const project = (c: { req: { query(k: string): string | undefined } }) => projectDirOf(c.req.query('project'));
+
+harness.get('/mcp', (c) => c.json(mcpMatrix(project(c))));
+harness.post('/mcp', async (c) => {
+  const b = await parseBody(c, McpBody);
+  const dir = project(c);
+  return c.json(
+    mcpAdd(
+      { name: b.name, transport: b.transport, command: b.command ?? undefined, args: b.args ?? undefined, env: b.env ?? undefined, url: b.url ?? undefined, headers: b.headers ?? undefined, agents: b.agents },
+      dir,
+    ),
+  );
+});
+harness.put('/mcp/:name/agents/:kind', (c) => c.json(mcpConnect(c.req.param('name'), c.req.param('kind'), project(c))));
+harness.delete('/mcp/:name/agents/:kind', (c) => c.json(mcpDisconnect(c.req.param('name'), c.req.param('kind'), project(c))));
+harness.delete('/mcp/:name', (c) => c.json(mcpDelete(c.req.param('name'), project(c))));
+
+// ---------- skills, rules, subagents, commands ----------
+
+harness.get('/:kind/extensions', (c) => c.json(extensionsOf(agentOr404(c.req.param('kind')).kind, project(c))));
+harness.get('/:kind/rules', (c) => c.json(readRules(agentOr404(c.req.param('kind')).kind, project(c), c.req.query('path'))));
+harness.put('/:kind/rules', async (c) => {
+  const kind = agentOr404(c.req.param('kind')).kind;
+  const b = await parseBody(c, RulesBody);
+  return c.json(saveRules(kind, project(c), c.req.query('path'), b.content));
+});
 /** One harness (a tab of the Harness page); ?refresh=1 re-checks versions online. */
 harness.get('/:kind', async (c) => c.json(await harnessOne(c.req.param('kind'), c.req.query('refresh') === '1')));
 

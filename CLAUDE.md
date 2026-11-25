@@ -53,6 +53,9 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
 - `manifest.ts` — project manifest `.hub/hub.yaml` (links, hosts, containers, units),
   shown in the UI and passed to the agent as context.
 - `mcp/hub-mcp.ts` — stdio MCP server attached to agent sessions (`open_pane` tool).
+- `mcp-servers.ts`, `extensions.ts` — Harness → MCP (servers × agents, written to each agent's
+  own config through `agents/mcp-config.ts`) and each agent's skills / rules / subagents /
+  commands; every agent module declares its own paths (`agents/<kind>/extensions.ts`).
 - `system/` — host monitoring and the "ask about this" flow for containers, units, packages.
 - `csrf.ts` — mutating `/api` requests require JSON or the `X-Hubness-Request` header.
 

@@ -1,7 +1,9 @@
 //! Harness (the web app's Harness page): a tab per agent CLI — version and updates, sign-in
 //! and plan, provider accounts, limits, models and the default model, usage. Install, update,
 //! sign in and sign out run as terminal jobs inside the TUI (interactive, so device codes and
-//! prompts work); commands that need root are only shown and copied.
+//! prompts work); commands that need root are only shown and copied. The first tab is MCP
+//! servers across the agents; each agent tab also lists its skills, rules, subagents,
+//! commands and plugins (`[` / `]` switch the section).
 
 use crossterm::event::{KeyCode, KeyEvent};
 use hubness_client::Method;
@@ -12,9 +14,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{Value, json};
 
+use super::harness_ext::{ExtView, SECTIONS};
+use super::harness_mcp::McpTab;
 use super::kit::{bar_with, copy, num, report, row, s, since, until};
 use super::tabs::{Tab, Tabs};
-use crate::core::{Action, Ctx, Handled, Screen};
+use crate::core::{Action, Ctx, Handled, Hit, Screen};
 use crate::ui::term::JobTerm;
 use crate::ui::{Theme, block};
 
@@ -36,15 +40,13 @@ impl HarnessScreen {
         if list.is_empty() {
             return;
         }
-        let tabs: Vec<Tab> = list
-            .iter()
-            .map(|a| {
-                let kind = s(&a["kind"], "").to_string();
-                let id = kind.clone();
-                let label = s(&a["label"], &kind).to_string();
-                Tab::new(id, label, Box::new(AgentTab::new(&kind)))
-            })
-            .collect();
+        let mut tabs: Vec<Tab> = vec![Tab::new("mcp", "MCP", Box::new(McpTab::new()))];
+        tabs.extend(list.iter().map(|a| {
+            let kind = s(&a["kind"], "").to_string();
+            let id = kind.clone();
+            let label = s(&a["label"], &kind).to_string();
+            Tab::new(id, label, Box::new(AgentTab::new(&kind)))
+        }));
         let mut tabs = Tabs::new(tabs);
         if let Some(i) = self.initial.as_deref().and_then(|k| tabs.tabs.iter().position(|t| t.id == k)) {
             tabs.active = i;
@@ -141,6 +143,10 @@ impl Screen for HarnessScreen {
 
     fn captures_text(&self) -> bool {
         self.tabs.as_ref().is_some_and(|t| t.captures_text())
+    }
+
+    fn mode(&self) -> Option<&'static str> {
+        self.tabs.as_ref().and_then(|t| t.mode())
     }
 
     fn on_paste(&mut self, text: &str, ctx: &mut Ctx) {
@@ -274,6 +280,9 @@ pub struct AgentTab {
     area: Rect,
     /// A provider account picked for an operation: (provider, account id).
     account: Option<(String, String)>,
+    /// 0 — the overview; 1… — a section of SECTIONS (skills, rules…).
+    view: usize,
+    ext: ExtView,
 }
 
 impl AgentTab {
@@ -288,6 +297,8 @@ impl AgentTab {
             job: None,
             area: Rect::new(0, 0, 100, 30),
             account: None,
+            view: 0,
+            ext: ExtView::new(kind),
         }
     }
 
@@ -638,6 +649,42 @@ impl AgentTab {
     }
 }
 
+impl AgentTab {
+    fn set_view(&mut self, view: usize, ctx: &mut Ctx) {
+        self.view = view % (SECTIONS.len() + 1);
+        self.ext.reset_selection();
+        if self.view > 0 && !self.ext.loaded {
+            self.ext.load(ctx);
+        }
+    }
+
+    /// The section pills: Overview, Skills 3, Rules 1… (clickable).
+    fn draw_views(&self, f: &mut Frame, area: Rect, ctx: &Ctx) {
+        let t = Theme::get();
+        let mut spans = vec![Span::raw(" ")];
+        let mut x = area.x + 1;
+        let names = std::iter::once(("Overview".to_string(), 0)).chain(
+            SECTIONS
+                .iter()
+                .enumerate()
+                .map(|(i, (label, _))| (self.ext.count(i).map(|n| format!("{label} {n}")).unwrap_or(label.to_string()), i + 1)),
+        );
+        for (label, i) in names {
+            let text = format!(" {label} ");
+            let w = text.chars().count() as u16;
+            ctx.click(
+                Rect { x, y: area.y, width: w.min((area.x + area.width).saturating_sub(x)), height: 1 },
+                Hit::Click(format!("view:{i}")),
+            );
+            spans.push(Span::styled(text, if i == self.view { t.key_style() } else { t.dim_style() }));
+            spans.push(Span::raw(" "));
+            x += w + 1;
+        }
+        spans.push(Span::styled("  [ ] switch", t.muted_style()));
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+    }
+}
+
 impl Screen for AgentTab {
     fn title(&self) -> String {
         self.kind.clone()
@@ -650,7 +697,28 @@ impl Screen for AgentTab {
     }
 
     fn captures_text(&self) -> bool {
-        self.job.as_ref().is_some_and(|j| j.term.running && j.focused)
+        self.job.as_ref().is_some_and(|j| j.term.running && j.focused) || self.ext.editing()
+    }
+
+    fn mode(&self) -> Option<&'static str> {
+        self.ext.mode()
+    }
+
+    fn hints(&self) -> Vec<(String, String)> {
+        self.ext.hints().unwrap_or_else(|| self.actions().into_iter().map(|a| (a.key.to_string(), a.label)).collect())
+    }
+
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        if self.job.is_some() {
+            return;
+        }
+        if let Some(v) = id.strip_prefix("view:").and_then(|v| v.parse().ok()) {
+            if !self.ext.editing() {
+                self.set_view(v, ctx);
+            }
+        } else if self.view > 0 {
+            self.ext.on_click(id, self.view - 1, ctx);
+        }
     }
 
     fn actions(&self) -> Vec<Action> {
@@ -665,7 +733,17 @@ impl Screen for AgentTab {
             a.push(Action::new("O", "Open the link shown in the terminal"));
             return a;
         }
+        if self.ext.editing() {
+            return vec![];
+        }
+        let sections = [Action::new("[", "Previous section (overview, skills, rules…)"), Action::new("]", "Next section")];
+        if self.view > 0 {
+            let mut a = self.ext.actions(self.view - 1);
+            a.extend(sections);
+            return a;
+        }
         let mut a = vec![Action::new("r", "Refresh (re-check version, update, sign-in)")];
+        a.extend(sections);
         if self.data.is_null() {
             return a;
         }
@@ -704,6 +782,15 @@ impl Screen for AgentTab {
                 _ => {}
             }
             return;
+        }
+        if self.view > 0 && self.ext.on_action(key, self.view - 1, ctx) {
+            return;
+        }
+        match key {
+            "[" => return self.set_view(self.view + SECTIONS.len(), ctx),
+            "]" => return self.set_view(self.view + 1, ctx),
+            _ if self.view > 0 => return,
+            _ => {}
         }
         match key {
             "r" => self.load(ctx, true),
@@ -774,6 +861,9 @@ impl Screen for AgentTab {
                 _ => Handled::No,
             };
         }
+        if self.view > 0 {
+            return self.ext.on_key(k, self.view - 1, ctx);
+        }
         match k.code {
             KeyCode::Down | KeyCode::Char('j') => self.scroll = (self.scroll + 1).min(self.max_scroll),
             KeyCode::Up | KeyCode::Char('k') => self.scroll = self.scroll.saturating_sub(1),
@@ -789,6 +879,8 @@ impl Screen for AgentTab {
     fn on_paste(&mut self, text: &str, ctx: &mut Ctx) {
         if let Some(job) = self.job.as_mut().filter(|j| j.term.running) {
             job.input(text, ctx);
+        } else if self.ext.editing() {
+            self.ext.on_paste(text);
         }
     }
 
@@ -819,6 +911,10 @@ impl Screen for AgentTab {
     }
 
     fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
+        if matches!(key, "ext" | "ext-project" | "rules-open" | "rules-saved" | "ext-editor-cmd" | "ext-discard") {
+            self.ext.on_task(key, result, ctx);
+            return;
+        }
         match key {
             "info" => {
                 self.refreshing = false;
@@ -962,6 +1058,15 @@ impl Screen for AgentTab {
             );
             let title = format!("{} — {state}", job.term.title);
             job.term.draw(f, term, block(title, job.term.running));
+            return;
+        }
+        let [views, area] = Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).areas(area);
+        if !self.ext.editing() {
+            self.draw_views(f, views, ctx);
+        }
+        if self.view > 0 {
+            let body = if self.ext.editing() { Rect { y: views.y, height: area.height + 1, ..area } } else { area };
+            self.ext.draw(f, body, self.view - 1, ctx);
             return;
         }
         self.area = area;

@@ -13,6 +13,7 @@ pub mod context;
 pub mod db;
 pub mod environments;
 pub mod error;
+pub mod extensions;
 pub mod files;
 pub mod git;
 pub mod git_auth;
