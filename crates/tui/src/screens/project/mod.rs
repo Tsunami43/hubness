@@ -8,6 +8,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use serde_json::Value;
 
+pub mod form;
+pub mod run;
+pub mod secrets;
+pub mod sessions;
+pub mod settings;
+pub mod shell;
+pub mod termpane;
+
 use super::tabs::{Tab, Tabs};
 use super::todo::Todo;
 use crate::core::{Action, Ctx, Handled, Screen};
@@ -22,14 +30,14 @@ pub struct ProjectScreen {
 impl ProjectScreen {
     pub fn new(id: &str) -> Self {
         let tabs = vec![
-            Tab::new("sessions", "Sessions", Box::new(Todo("Sessions"))),
+            Tab::new("sessions", "Sessions", Box::new(sessions::SessionsTab::new(sessions::Scope::Project(id.to_string())))),
             Tab::new("files", "Files", Box::new(Todo("Files"))),
             Tab::new("search", "Search", Box::new(Todo("Search"))),
             Tab::new("git", "Git", Box::new(Todo("Git"))),
-            Tab::new("run", "Run", Box::new(Todo("Run"))),
-            Tab::new("shell", "Shell", Box::new(Todo("Shell"))),
-            Tab::new("secrets", "Secrets", Box::new(Todo("Secrets"))),
-            Tab::new("settings", "Settings", Box::new(Todo("Settings"))),
+            Tab::new("run", "Run", Box::new(run::RunTab::new(id))),
+            Tab::new("shell", "Shell", Box::new(shell::ShellTab::project(id))),
+            Tab::new("secrets", "Secrets", Box::new(secrets::SecretsTab::new(id))),
+            Tab::new("settings", "Settings", Box::new(settings::SettingsTab::new(id))),
         ];
         Self { id: id.to_string(), project: Value::Null, tabs: Tabs::new(tabs) }
     }
@@ -49,12 +57,21 @@ impl Screen for ProjectScreen {
         let t = Theme::get();
         let [head, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
         let p = &self.project;
+        // the shared list is kept fresh by the Settings tab (rename)
+        let name = ctx
+            .shared
+            .projects
+            .iter()
+            .find(|x| x["id"] == self.id.as_str())
+            .and_then(|x| x["name"].as_str())
+            .or(p["name"].as_str())
+            .unwrap_or("…");
         let repo = &p["repo"];
         let branch = repo["branch"].as_str().map(|b| format!("  {b}")).unwrap_or_default();
         let provider = repo["providerLabel"].as_str().map(|l| format!(" · {l}")).unwrap_or_default();
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!(" {}", p["name"].as_str().unwrap_or("…")), t.bold()),
+                Span::styled(format!(" {}", name), t.bold()),
                 Span::styled(format!("{branch}{provider}   {}", p["path"].as_str().unwrap_or_default()), t.muted_style()),
             ])),
             head,

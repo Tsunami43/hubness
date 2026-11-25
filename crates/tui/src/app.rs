@@ -520,7 +520,8 @@ fn draw_modal(f: &mut Frame, area: Rect, modal: &Modal, input: &TextInput) {
             input.draw(f, r, block(title.clone(), true), true, "");
         }
         Modal::Confirm { title, message, danger, .. } => {
-            let lines = message.lines().count() as u16 + 4;
+            // wrapped lines count too (62 columns inside, with slack for word wrapping)
+            let lines = message.lines().map(|l| l.chars().count().div_ceil(56).max(1)).sum::<usize>() as u16 + 4;
             let r = centered(area, 64, lines.max(5));
             f.render_widget(Clear, r);
             let b = block(title.clone(), true);

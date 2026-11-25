@@ -1,5 +1,6 @@
 //! Screens of the TUI, one per web app route. `make` builds the screen for a route.
 
+pub mod composer;
 pub mod feed;
 pub mod group;
 pub mod home;

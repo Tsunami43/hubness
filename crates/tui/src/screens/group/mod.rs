@@ -7,8 +7,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use serde_json::Value;
 
+pub mod repos;
+pub mod sessions;
+pub mod settings;
+pub mod shell;
+
 use super::tabs::{Tab, Tabs};
-use super::todo::Todo;
 use crate::core::{Action, Ctx, Handled, Screen};
 use crate::ui::Theme;
 
@@ -21,10 +25,10 @@ pub struct GroupScreen {
 impl GroupScreen {
     pub fn new(id: &str) -> Self {
         let tabs = vec![
-            Tab::new("sessions", "Sessions", Box::new(Todo("Sessions"))),
-            Tab::new("repos", "Repositories", Box::new(Todo("Repositories"))),
-            Tab::new("shell", "Shell", Box::new(Todo("Shell"))),
-            Tab::new("settings", "Settings", Box::new(Todo("Settings"))),
+            Tab::new("sessions", "Sessions", Box::new(sessions::tab(id))),
+            Tab::new("repos", "Repositories", Box::new(repos::ReposTab::new(id))),
+            Tab::new("shell", "Shell", Box::new(shell::tab(id))),
+            Tab::new("settings", "Settings", Box::new(settings::SettingsTab::new(id))),
         ];
         Self { id: id.to_string(), group: Value::Null, tabs: Tabs::new(tabs) }
     }
@@ -43,13 +47,14 @@ impl Screen for GroupScreen {
     fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx) {
         let t = Theme::get();
         let [head, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
-        let p = &self.group;
-        let branch = format!("  {} repositories", p["projectIds"].as_array().map(|a| a.len()).unwrap_or(0));
-        let provider = String::new();
+        // the shared list is kept fresh by the tabs (rename, members)
+        let p = ctx.shared.groups.iter().find(|g| g["id"] == self.id.as_str()).unwrap_or(&self.group);
+        let repos = format!("  {} repositories", p["projectIds"].as_array().map(|a| a.len()).unwrap_or(0));
+        let path = self.group["workspace"]["path"].as_str().or(p["folder"].as_str()).unwrap_or_default();
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(format!(" {}", p["name"].as_str().unwrap_or("…")), t.bold()),
-                Span::styled(format!("{branch}{provider}   {}", p["folder"].as_str().unwrap_or_default()), t.muted_style()),
+                Span::styled(format!("{repos}   {path}"), t.muted_style()),
             ])),
             head,
         );
