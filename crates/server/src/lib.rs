@@ -14,9 +14,11 @@ pub mod error;
 pub mod home;
 pub mod http;
 pub mod inbox;
+pub mod kanban;
 pub mod paths;
 pub mod routes;
 pub mod runtime;
+pub mod secrets;
 pub mod sessions;
 pub mod workspaces;
 

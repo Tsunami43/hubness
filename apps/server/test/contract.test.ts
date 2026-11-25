@@ -474,3 +474,63 @@ test('claude-code approvals and stop', async () => {
   assert.deepEqual(events.at(-1), { uid: 'stop', kind: 'notice', level: 'info', text: 'Stopped' });
   assert.deepEqual((await call('POST', `/sessions/${s.id}/stop`)).json, { ok: false }, 'nothing left to stop');
 });
+
+test('project secrets: names only, validation, removal', async () => {
+  const repo = makeRepo(join(tmp, 'elsewhere', 'secrets'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const empty = (await call('GET', `/projects/${p.id}/secrets`)).json;
+  assert.deepEqual(empty, { secrets: [], unreadable: [], keySource: 'file' });
+  assert.equal((await call('PUT', `/projects/${p.id}/secrets/1BAD`, { value: 'x' })).status, 400);
+  assert.equal((await call('PUT', `/projects/${p.id}/secrets/PATH`, { value: 'x' })).status, 400, 'reserved');
+  assert.equal((await call('PUT', `/projects/${p.id}/secrets/HUBNESS_X`, { value: 'x' })).status, 400, 'reserved prefix');
+  assert.equal((await call('PUT', `/projects/${p.id}/secrets/API_TOKEN`, { value: '' })).status, 400);
+  assert.equal((await call('PUT', `/projects/missing/secrets/API_TOKEN`, { value: 'x' })).status, 404);
+  const saved = await call('PUT', `/projects/${p.id}/secrets/API_TOKEN`, { value: 's3cr3t' });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json.map((x: any) => x.name), ['API_TOKEN']);
+  assert.ok(!JSON.stringify(saved.json).includes('s3cr3t'), 'values never reach the client');
+  await call('PUT', `/projects/${p.id}/secrets/ANOTHER`, { value: 'v' });
+  const listed = (await call('GET', `/projects/${p.id}/secrets`)).json;
+  assert.deepEqual(listed.secrets.map((x: any) => x.name), ['ANOTHER', 'API_TOKEN']);
+  assert.deepEqual(listed.unreadable, []);
+  assert.deepEqual((await call('DELETE', `/projects/${p.id}/secrets/ANOTHER`)).json.map((x: any) => x.name), ['API_TOKEN']);
+});
+
+test('kanban cards and starting an agent from a card', async () => {
+  const repo = makeRepo(join(tmp, 'elsewhere', 'board'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  assert.equal((await call('POST', `/projects/${p.id}/cards`, { title: '   ' })).status, 400);
+  assert.equal((await call('POST', `/projects/${p.id}/cards`, { title: 'x', column: 'later' })).status, 400);
+  assert.equal((await call('POST', '/projects/missing/cards', { title: 'x' })).status, 404);
+  const a = await call('POST', `/projects/${p.id}/cards`, { title: ' First ' });
+  assert.equal(a.status, 201);
+  assert.equal(a.json.title, 'First');
+  assert.equal(a.json.column, 'todo');
+  assert.equal(a.json.position, 1);
+  assert.equal(a.json.description, '');
+  assert.equal(a.json.sessionId, null);
+  const b = (await call('POST', `/projects/${p.id}/cards`, { title: 'Second', description: 'Details', column: 'todo' })).json;
+  assert.equal(b.position, 2);
+  const moved = await call('PATCH', `/cards/${a.json.id}`, { column: 'done' });
+  assert.equal(moved.json.column, 'done');
+  assert.equal(moved.json.position, 1, 'last in the new column');
+  assert.equal((await call('PATCH', `/cards/${a.json.id}`, { position: 7.5, title: '' })).json.position, 7.5);
+  assert.equal((await call('PATCH', '/cards/missing', { title: 'x' })).status, 404);
+  assert.deepEqual((await call('GET', `/projects/${p.id}/cards`)).json.map((c: any) => c.id), [a.json.id, b.id], 'ordered by column, position');
+
+  useFixture('claude-tool-turn.jsonl');
+  assert.equal((await call('POST', `/cards/${b.id}/start`, { agent: { kind: 'nope' } })).status, 400);
+  const started = await call('POST', `/cards/${b.id}/start`, { agent: { kind: 'claude-code' } });
+  assert.equal(started.status, 201);
+  assert.equal(started.json.cardId, b.id);
+  assert.equal(started.json.projectId, p.id);
+  assert.equal(started.json.title, 'Second');
+  const card = (await call('GET', `/projects/${p.id}/cards`)).json.find((c: any) => c.id === b.id);
+  assert.equal(card.sessionId, started.json.id);
+  assert.equal(card.column, 'doing');
+  assert.equal((await feed(started.json.id))[0].text, 'Second\n\nDetails', 'prompt = title + description');
+  await waitFor(started.json.id, (x) => x.status !== 'running' && x.status !== 'waiting', 'the card turn');
+
+  assert.deepEqual((await call('DELETE', `/cards/${a.json.id}`)).json, { ok: true });
+  assert.equal((await call('GET', `/projects/${p.id}/cards`)).json.length, 1);
+});

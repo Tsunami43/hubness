@@ -67,6 +67,8 @@ pub struct Turn {
     pub extra_dirs: Vec<String>,
     pub system_prompt: Option<String>,
     pub wrap: Wrap,
+    /// Extra environment for the agent process (project secrets, if allowed).
+    pub env: Vec<(String, String)>,
     seq: Mutex<i64>,
     cache: Mutex<HashMap<String, HubEvent>>,
     log: Mutex<Option<File>>,
@@ -242,12 +244,12 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
             Some(id) => groups::get(&db, id)?,
             None => None,
         };
-        if let Some(p) = &project
-            && environments::saved_runtime(&db, &p.id)?.share_secrets_with_agents == Some(true)
-        {
-            // TODO(rust-port): secrets.ts (AES-256-GCM) — refuse rather than run without them
-            return Err(HttpError::new(501, "Sharing project secrets with agents is not supported by the Rust server yet"));
-        }
+        let env = match &project {
+            Some(p) if environments::saved_runtime(&db, &p.id)?.share_secrets_with_agents == Some(true) => {
+                crate::secrets::env(&db, &cfg.data_dir, &p.id)?
+            }
+            _ => vec![],
+        };
         if session.title.is_empty() || DEFAULT_TITLES.contains(&session.title.as_str()) {
             let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
             let title = if t.encode_utf16().count() > 60 { format!("{}…", truncate(&t, 57)) } else { t };
@@ -297,6 +299,7 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
             extra_dirs: members.iter().map(|p| p.path.clone()).collect(),
             system_prompt: context::session_system_prompt(&hub_instructions, scope_ctx),
             wrap,
+            env,
             seq: Mutex::new(repo::next_seq(&db, session_id)?),
             cache: Mutex::default(),
             log: Mutex::default(),
@@ -328,8 +331,7 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
                 if !failed && let Ok(db) = state.db() {
                     let card: Option<String> = repo::get(&db, &id).ok().flatten().and_then(|s| s.card_id);
                     if let Some(card) = card {
-                        let _ =
-                            db.execute("UPDATE cards SET col = 'review', updated_at = ? WHERE id = ? AND col = 'doing'", (db::now(), card));
+                        let _ = crate::kanban::card_to_review(&db, &card);
                     }
                 }
             });

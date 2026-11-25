@@ -219,6 +219,64 @@ pub struct DiscoverResult {
     pub repos: Vec<DiscoveredRepo>,
 }
 
+/// Serialize a float the way JavaScript prints numbers: integral values without `.0`.
+pub fn js_number<S: serde::Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() < 9_007_199_254_740_992.0 { s.serialize_i64(*v as i64) } else { s.serialize_f64(*v) }
+}
+
+/// A project secret: the value never leaves the server.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretInfo {
+    pub name: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CardColumn {
+    Todo,
+    Doing,
+    Review,
+    Done,
+}
+
+impl CardColumn {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::Doing => "doing",
+            Self::Review => "review",
+            Self::Done => "done",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "doing" => Self::Doing,
+            "review" => Self::Review,
+            "done" => Self::Done,
+            _ => Self::Todo,
+        }
+    }
+}
+
+/// A kanban card of a project.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Card {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub description: String,
+    pub column: CardColumn,
+    #[serde(serialize_with = "js_number")]
+    pub position: f64,
+    pub session_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 // ---------- sessions ----------
 
 /// Agent of a session.

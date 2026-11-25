@@ -28,6 +28,8 @@ pub fn api() -> Router<AppState> {
         .route("/groups", get(list_groups).post(create_group))
         .route("/groups/{id}", get(group_detail).patch(update_group).delete(delete_group))
         .merge(crate::sessions::routes())
+        .merge(crate::kanban::routes())
+        .merge(crate::secrets::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 

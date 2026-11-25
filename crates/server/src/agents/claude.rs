@@ -240,6 +240,7 @@ pub fn start(turn: Arc<Turn>) -> Result<Started, String> {
         .current_dir(&turn.cwd)
         .env_clear()
         .envs(child_env())
+        .envs(turn.env.iter().cloned())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

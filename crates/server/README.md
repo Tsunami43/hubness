@@ -36,11 +36,11 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Agents | Claude Code (stream-json, approvals, limits) | done |
 | Agents | Codex and OpenCode (ACP), Grok; the hub MCP server (`open_pane`); image attachments | todo |
 | Context | system prompt: hub instructions, project, group | done (manifest section todo) |
-| Secrets | sharing project secrets with agents | todo (such turns answer 501) |
+| Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write, search, watch | todo |
 | Git | status, diff, log, branches, operations | todo |
 | Environment | runs, shells, jobs, preview proxy, secrets, sandbox | todo |
-| Kanban | cards | todo |
+| Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |
 | Harness | agent install/accounts/models | todo |
 | System | containers, units, packages, overview, ask | todo |
 
