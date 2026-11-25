@@ -7,7 +7,7 @@
 //! no-prompt mode) is described in `Spec`; the client itself is agent-agnostic. Codex,
 //! OpenCode and Grok specs are at the bottom.
 //!
-//! TODO(rust-port): the hub MCP server (`open_pane`) and image attachments.
+//! TODO(rust-port): image attachments.
 
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -38,6 +38,8 @@ pub struct Spec {
     pub label: &'static str,
     /// Command that launches the agent's ACP server: (cmd, args, extra env).
     pub command: fn(&Turn, PermissionMode) -> Launch,
+    /// Pass hub MCP servers as the ACP mcpServers parameter (otherwise via command/env).
+    pub mcp_via_param: bool,
     /// `_meta` for session/new and session/load (e.g. Grok's yolo mode).
     pub session_meta: Option<fn(PermissionMode) -> Value>,
     /// Agent mode id (session/set_mode) for our permission mode, if the agent declares it.
@@ -563,7 +565,19 @@ impl Client {
                 p.insert("sessionId".into(), json!(s));
             }
             p.insert("cwd".into(), json!(self.turn.cwd));
-            p.insert("mcpServers".into(), json!([]));
+            let servers: Vec<Value> = if self.spec.mcp_via_param {
+                self.turn
+                    .mcp_servers
+                    .iter()
+                    .map(|m| {
+                        let env: Vec<Value> = m.env.iter().map(|(k, v)| json!({ "name": k, "value": v })).collect();
+                        json!({ "name": m.name, "command": m.command, "args": m.args, "env": env })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            p.insert("mcpServers".into(), json!(servers));
             if extra_dirs && !self.turn.extra_dirs.is_empty() {
                 p.insert("additionalDirectories".into(), json!(self.turn.extra_dirs));
             }
@@ -849,6 +863,7 @@ pub static CODEX: Spec = Spec {
         let cmd = c.remove(0);
         (cmd, c, vec![])
     },
+    mcp_via_param: true,
     session_meta: None,
     mode_ids: &[
         (PermissionMode::Ask, "read-only"),
@@ -902,10 +917,21 @@ pub fn describe_opencode_retry(u: &Value) -> Option<(String, String)> {
 pub static OPENCODE: Spec = Spec {
     kind: "opencode",
     label: "Opencode",
-    command: |_, mode| {
-        let config = json!({ "permission": opencode_permissions(mode), "mcp": {} });
+    command: |turn, mode| {
+        let mcp: Map<String, Value> = turn
+            .mcp_servers
+            .iter()
+            .map(|m| {
+                let mut command = vec![m.command.clone()];
+                command.extend(m.args.iter().cloned());
+                let env: Map<String, Value> = m.env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+                (m.name.clone(), json!({ "type": "local", "command": command, "environment": env, "enabled": true }))
+            })
+            .collect();
+        let config = json!({ "permission": opencode_permissions(mode), "mcp": mcp });
         (opencode_bin(), vec!["acp".into()], vec![("OPENCODE_CONFIG_CONTENT".into(), config.to_string())])
     },
+    mcp_via_param: false,
     session_meta: None,
     mode_ids: &[],
     native_permissions: true,
@@ -918,6 +944,7 @@ pub static GROK: Spec = Spec {
     kind: "grok",
     label: "Grok CLI",
     command: |_, _| (grok_bin(), vec!["agent".into(), "stdio".into()], vec![]),
+    mcp_via_param: true,
     session_meta: Some(|mode| json!({ "yoloMode": mode == PermissionMode::Bypass })),
     mode_ids: &[],
     native_permissions: false,

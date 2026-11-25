@@ -17,6 +17,7 @@ pub mod http;
 pub mod inbox;
 pub mod kanban;
 pub mod manifest;
+pub mod mcp;
 pub mod paths;
 pub mod routes;
 pub mod runtime;
@@ -43,6 +44,8 @@ pub struct AppState {
     bus: bus::Bus,
     runtime: runtime::Runtime,
     watches: watch::Watches,
+    /// The hub's own URL for agents' MCP servers (set once the listener is bound).
+    self_url: Arc<std::sync::OnceLock<String>>,
 }
 
 impl AppState {
@@ -59,6 +62,7 @@ impl AppState {
             bus: bus::Bus::default(),
             runtime: runtime::Runtime::default(),
             watches: watch::Watches::default(),
+            self_url: Arc::default(),
         })
     }
 
@@ -96,6 +100,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let cfg = state.config.clone();
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await?;
     let addr = listener.local_addr()?;
+    let _ = state.self_url.set(format!("http://127.0.0.1:{}", addr.port()));
     println!("hubness: http://{}:{}  (data: {})", addr.ip(), addr.port(), cfg.data_dir.display());
     let rt = state.runtime.clone();
     axum::serve(listener, app(state))

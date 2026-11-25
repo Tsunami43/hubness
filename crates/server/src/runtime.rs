@@ -69,6 +69,8 @@ pub struct Turn {
     pub wrap: Wrap,
     /// Extra environment for the agent process (project secrets, if allowed).
     pub env: Vec<(String, String)>,
+    /// Hub MCP servers (open_pane).
+    pub mcp_servers: Vec<crate::mcp::McpServer>,
     seq: Mutex<i64>,
     cache: Mutex<HashMap<String, HubEvent>>,
     log: Mutex<Option<File>>,
@@ -306,6 +308,7 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
             system_prompt: context::session_system_prompt(&hub_instructions, scope_ctx),
             wrap,
             env,
+            mcp_servers: state.self_url.get().and_then(|url| crate::mcp::hub_mcp(url, session_id)).into_iter().collect(),
             seq: Mutex::new(repo::next_seq(&db, session_id)?),
             cache: Mutex::default(),
             log: Mutex::default(),

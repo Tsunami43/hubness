@@ -20,6 +20,7 @@ type Call = (method: string, url: string, body?: unknown, headers?: Record<strin
 const target = process.env.HUBNESS_CONTRACT_SERVER ?? 'ts';
 const repoRoot = resolve(import.meta.dirname, '../../..');
 let child: ChildProcess | null = null;
+let rustBase = '';
 
 async function startRust(): Promise<string> {
   const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
@@ -58,7 +59,7 @@ async function makeClient(): Promise<{ call: Call; raw: Fetcher }> {
     return { status: res.status, json };
   };
   if (target === 'rust') {
-    const base = await startRust();
+    const base = (rustBase = await startRust());
     const raw: Fetcher = (u, init) => fetch(base + u, init);
     return { raw, call: (method, url, body, headers) => send(raw, method, url, body, headers) };
   }
@@ -740,4 +741,34 @@ test('ACP agents: codex turn (bypass and ask with approval), opencode provider e
     { uid: 'retry', kind: 'notice', level: 'info', text: 'Provider error 429 model:free is temporarily rate-limited upstream. — retry #1' },
     { uid: 'err', kind: 'notice', level: 'error', text: 'Provider request failed\n429 model:free is temporarily rate-limited upstream.' },
   ]);
+});
+
+test('hub MCP server: open_pane and close_pane reach the session (rust: `hubness mcp`)', { skip: target !== 'rust' && 'the TS server runs in-process (no listener)' }, async () => {
+  const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
+  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
+  const mcp = spawn(bin, ['mcp'], { env: { ...process.env, HUB_URL: rustBase, HUB_SESSION_ID: s.id }, stdio: ['pipe', 'pipe', 'inherit'] });
+  const { createInterface } = await import('node:readline');
+  const replies = createInterface({ input: mcp.stdout! })[Symbol.asyncIterator]();
+  const rpc = async (id: number, method: string, params: unknown = {}) => {
+    mcp.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+    return JSON.parse((await replies.next()).value as string);
+  };
+  assert.equal((await rpc(1, 'initialize', { protocolVersion: '2025-06-18' })).result.serverInfo.name, 'hubness');
+  mcp.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+  assert.deepEqual((await rpc(2, 'tools/list')).result.tools.map((t: any) => t.name), ['open_pane', 'close_pane']);
+  const bad = await rpc(3, 'tools/call', { name: 'open_pane', arguments: { kind: 'video', target: 'x' } });
+  assert.equal(bad.result.isError, true);
+  const opened = await rpc(4, 'tools/call', { name: 'open_pane', arguments: { kind: 'url', target: 'http://localhost:5173', title: 'App' } });
+  assert.deepEqual(opened.result, { content: [{ type: 'text', text: 'Opened url panel: http://localhost:5173' }], isError: false });
+  const live = await openStream(`/sessions/${s.id}/stream`);
+  const snap = await live.next();
+  assert.equal(snap.pane.target, 'http://localhost:5173');
+  assert.equal(snap.pane.title, 'App');
+  assert.equal((await rpc(5, 'tools/call', { name: 'close_pane', arguments: {} })).result.isError, false);
+  let m = await live.next();
+  while (m.type !== 'pane') m = await live.next();
+  assert.equal(m.pane, null);
+  assert.equal((await rpc(6, 'nope')).error.code, -32601);
+  live.close();
+  mcp.stdin!.end();
 });

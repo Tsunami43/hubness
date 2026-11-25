@@ -4,7 +4,7 @@
 //! `control_request`/`can_use_tool` on stdout and `control_response` on stdin
 //! (`--permission-prompt-tool stdio`). Resume — `--resume <session_id>`.
 //!
-//! TODO(rust-port): the hub MCP server (`open_pane`) and image attachments.
+//! TODO(rust-port): image attachments.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::Stdio;
@@ -78,6 +78,22 @@ fn build_args(turn: &Turn) -> Vec<String> {
     }
     if let Some(p) = &turn.system_prompt {
         args.extend(["--append-system-prompt".into(), p.clone()]);
+    }
+    if !turn.mcp_servers.is_empty() {
+        let servers: serde_json::Map<String, Value> = turn
+            .mcp_servers
+            .iter()
+            .map(|m| {
+                let env: serde_json::Map<String, Value> = m.env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+                (m.name.clone(), json!({ "command": m.command, "args": m.args, "env": env }))
+            })
+            .collect();
+        args.extend(["--mcp-config".into(), json!({ "mcpServers": servers }).to_string()]);
+        // hub tools are safe (they only show a pane), so don't ask for permission
+        args.push("--allowedTools".into());
+        for m in &turn.mcp_servers {
+            args.extend([format!("mcp__{}__open_pane", m.name), format!("mcp__{}__close_pane", m.name)]);
+        }
     }
     if let Some(id) = &s.agent_session_id {
         args.extend(["--resume".into(), id.clone()]);

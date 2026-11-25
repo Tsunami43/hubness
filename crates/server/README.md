@@ -6,6 +6,7 @@ are not ported yet answer `404 {"error": "Not found"}`.
 
 ```sh
 cargo run -p hubness -- serve      # http://127.0.0.1:8787, data in ./.data
+cargo run -p hubness -- mcp        # the hub MCP server (agents get it automatically)
 pnpm test:contract:rust            # apps/server/test/contract.test.ts against this server
 ```
 
@@ -36,7 +37,8 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Sessions | attachments, convert to project, pane file/diff | todo |
 | Agents | Claude Code (stream-json, approvals, limits) | done |
 | Agents | Codex, OpenCode and Grok over ACP (load/resume, models, modes, client-side policy, provider retries) | done |
-| Agents | the hub MCP server (`open_pane`); image attachments | todo |
+| MCP | `hubness mcp`: the hub MCP server (`open_pane`, `close_pane`) attached to every agent session | done |
+| Agents | image attachments | todo |
 | Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |
