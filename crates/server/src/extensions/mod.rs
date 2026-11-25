@@ -150,6 +150,7 @@ pub fn routes() -> Router<AppState> {
         .route("/harness/mcp/{name}/agents/{kind}", put(mcp_connect_route).delete(mcp_disconnect_route))
         .route("/harness/{kind}/extensions", get(extensions_route))
         .route("/harness/{kind}/rules", get(rules_get).put(rules_put))
+        .route("/harness/{kind}/file", get(file_get))
 }
 
 #[derive(Deserialize)]
@@ -305,6 +306,28 @@ async fn rules_get(State(s): State<AppState>, UrlPath(kind): UrlPath<String>, Qu
     }
     let content = std::fs::read_to_string(&path).map_err(|_| HttpError::new(422, "The file is not UTF-8 text"))?;
     Ok(axum::Json(json!({ "path": p(&path), "exists": true, "content": content })))
+}
+
+/// A skill, subagent or command file the listing names, read-only (markdown files only: an
+/// agent defined inside a JSON config is never served, the config may hold secrets).
+async fn file_get(State(s): State<AppState>, UrlPath(kind): UrlPath<String>, Query(q): Query<ExtQuery>) -> ApiResult<axum::Json<Value>> {
+    let kind = agent_or_404(&kind)?;
+    let dir = project_dir(&s, &q)?;
+    let path = q.path.as_deref().filter(|p| !p.is_empty()).ok_or_else(|| HttpError::bad_request("path is required"))?;
+    let ext = extensions_of(kind, dir.as_deref());
+    let listed = ["skills", "agents", "commands"].iter().any(|k| ext[*k].as_array().is_some_and(|a| a.iter().any(|x| x["path"] == path)));
+    if !listed || !path.ends_with(".md") {
+        return Err(HttpError::new(403, "Not an extension file of this agent"));
+    }
+    let file = PathBuf::from(path);
+    if !is_file(&file) {
+        return Ok(axum::Json(json!({ "path": path, "exists": false, "content": "" })));
+    }
+    if std::fs::metadata(&file)?.len() > MAX_RULES {
+        return Err(HttpError::new(413, "The file is too large to show here"));
+    }
+    let content = std::fs::read_to_string(&file).map_err(|_| HttpError::new(422, "The file is not UTF-8 text"))?;
+    Ok(axum::Json(json!({ "path": path, "exists": true, "content": content })))
 }
 
 #[derive(Deserialize)]

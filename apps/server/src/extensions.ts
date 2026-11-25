@@ -211,3 +211,17 @@ export function saveRules(kind: string, projectDir: string | null, path: string 
   writeConfig(p, content, false);
   return { path: p, exists: true, content };
 }
+
+/**
+ * A skill, subagent or command file the listing names, read-only (markdown files only: an
+ * agent defined inside a JSON config is never served, the config may hold secrets).
+ */
+export function readListedFile(kind: string, projectDir: string | null, path: string | undefined): RulesFileContent {
+  if (!path) throw new HttpError(400, 'path is required');
+  const ext = extensionsOf(kind, projectDir);
+  const listed = [...ext.skills, ...ext.agents, ...ext.commands].some((x) => x.path === path);
+  if (!listed || !path.endsWith('.md')) throw new HttpError(403, 'Not an extension file of this agent');
+  if (!isFile(path)) return { path, exists: false, content: '' };
+  if (statSync(path).size > MAX_RULES) throw new HttpError(413, 'The file is too large to show here');
+  return { path, exists: true, content: readFileSync(path, 'utf8') };
+}

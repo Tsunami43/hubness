@@ -7,7 +7,7 @@ import { agentOr404 } from '../agents/registry.ts';
 import { z } from 'zod';
 import { getJob, killJob, startJob, subscribeJob, writeJob } from '../terminal.ts';
 import { parseBody, pumpSSE, TermSizeSchema } from './http.ts';
-import { extensionsOf, projectDirOf, readRules, saveRules } from '../extensions.ts';
+import { extensionsOf, projectDirOf, readListedFile, readRules, saveRules } from '../extensions.ts';
 import { mcpAdd, mcpConnect, mcpDelete, mcpDisconnect, mcpMatrix } from '../mcp-servers.ts';
 import { mcpCatalog } from '../mcp-catalog.ts';
 import { AGENTS } from '../agents/registry.ts';
@@ -93,6 +93,7 @@ harness.get('/extensions', (c) => {
   return c.json({ agents: AGENTS.map((a) => extensionsOf(a.kind, dir)) });
 });
 harness.get('/:kind/extensions', (c) => c.json(extensionsOf(agentOr404(c.req.param('kind')).kind, project(c))));
+harness.get('/:kind/file', (c) => c.json(readListedFile(agentOr404(c.req.param('kind')).kind, project(c), c.req.query('path'))));
 harness.get('/:kind/rules', (c) => c.json(readRules(agentOr404(c.req.param('kind')).kind, project(c), c.req.query('path'))));
 harness.put('/:kind/rules', async (c) => {
   const kind = agentOr404(c.req.param('kind')).kind;

@@ -1553,6 +1553,21 @@ test('harness extensions: skills, rules, subagents, commands, plugins; rules rea
   assert.equal((await call('PUT', `/harness/codex/rules?path=${encodeURIComponent(codexRules)}`, { content: '# Codex\n' })).status, 200);
   assert.equal(readFileSync(codexRules, 'utf8'), '# Codex\n');
 
+  // ---- skill / subagent / command files: read-only, only listed markdown files ----
+  const file = (kind: string, p: string) => `/harness/${kind}/file?path=${encodeURIComponent(p)}`;
+  assert.deepEqual((await call('GET', file('claude-code', join(cl, 'agents', 'reviewer.md')))).json, {
+    path: join(cl, 'agents', 'reviewer.md'),
+    exists: true,
+    content: "---\nname: code-reviewer\ndescription: 'Reviews diffs: it''s strict'\nmodel: sonnet\n---\nYou review.\n",
+  });
+  assert.equal((await call('GET', file('claude-code', join(cl, 'commands', 'deploy.md')))).json.content, '---\ndescription: "Deploy it"\n---\nRun the deploy.\n');
+  assert.equal((await call('GET', file('claude-code', join(cl, 'skills', 'pdf', 'SKILL.md')))).status, 200);
+  assert.equal((await call('GET', file('opencode', join(ocDir, 'opencode.json')))).status, 403, 'an agent defined in a JSON config is not served');
+  assert.equal((await call('GET', file('claude-code', join(cl, 'CLAUDE.md')))).status, 403);
+  assert.equal((await call('GET', file('claude-code', '/etc/passwd'))).status, 403);
+  assert.equal((await call('GET', file('codex', join(cl, 'agents', 'reviewer.md')))).status, 403, 'another agent\'s file');
+  assert.equal((await call('GET', '/harness/claude-code/file')).status, 400);
+
   // ---- every agent at once ----
   const all = await call('GET', `/harness/extensions?project=${proj.id}`);
   assert.equal(all.status, 200);
