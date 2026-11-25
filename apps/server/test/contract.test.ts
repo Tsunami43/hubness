@@ -534,3 +534,29 @@ test('kanban cards and starting an agent from a card', async () => {
   assert.deepEqual((await call('DELETE', `/cards/${a.json.id}`)).json, { ok: true });
   assert.equal((await call('GET', `/projects/${p.id}/cards`)).json.length, 1);
 });
+
+test('project manifest .hub/hub.yaml', async () => {
+  const repo = makeRepo(join(tmp, 'elsewhere', 'manifest'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const path = join(repo, '.hub', 'hub.yaml');
+  assert.deepEqual((await call('GET', `/projects/${p.id}/manifest`)).json, { exists: false, path, manifest: null, services: [] });
+  const created = await call('POST', `/projects/${p.id}/manifest`);
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.json, {
+    exists: true,
+    path,
+    manifest: { links: {}, ssh: [], services: [], units: [], docs: ['AGENTS.md'], notes: 'Anything agents should always know about this project.\n' },
+    services: [],
+  });
+  writeFileSync(path, 'links:\n  grafana: http://localhost:3000\n  port: 8080\nssh: prod\nservices: [hubness-no-such-container]\n');
+  const m = (await call('GET', `/projects/${p.id}/manifest`)).json;
+  assert.deepEqual(m.manifest, { links: { grafana: 'http://localhost:3000', port: '8080' }, ssh: ['prod'], services: ['hubness-no-such-container'], units: [], docs: [] });
+  assert.deepEqual(m.services, [{ name: 'hubness-no-such-container', state: 'missing', status: 'not found' }]);
+  assert.equal((await call('POST', `/projects/${p.id}/manifest`)).json.manifest.ssh[0], 'prod', 'an existing manifest is kept');
+  writeFileSync(path, 'links: [unclosed\n');
+  const broken = (await call('GET', `/projects/${p.id}/manifest`)).json;
+  assert.equal(broken.exists, true);
+  assert.equal(broken.manifest, null);
+  assert.equal(typeof broken.error, 'string');
+  assert.equal((await call('GET', '/projects/missing/manifest')).status, 404);
+});

@@ -15,6 +15,7 @@ pub mod home;
 pub mod http;
 pub mod inbox;
 pub mod kanban;
+pub mod manifest;
 pub mod paths;
 pub mod routes;
 pub mod runtime;

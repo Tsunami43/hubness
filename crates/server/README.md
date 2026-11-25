@@ -27,7 +27,8 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Projects | `GET /projects`, `GET /projects/discover`, `POST /projects/import`, `PATCH /projects/:id`, `DELETE /projects/:id` | done (`?files=1` → 501) |
 | Settings | `GET /settings`, `PUT /settings` | done |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (local symlink workspace) | done |
-| Projects | `GET /projects/:id` (repo info), `new-repo`, `clone`, manifest, `groups/:id/context` | todo |
+| Manifest | `GET/POST /projects/:id/manifest`, manifest section of the agent context | done |
+| Projects | `GET /projects/:id` (repo info), `new-repo`, `clone`, `groups/:id/context` | todo |
 | Git logins | `/git-credentials` (needs the AES-256-GCM secrets format) | todo |
 | Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
 | Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
@@ -35,7 +36,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Sessions | attachments, convert to project, pane file/diff | todo |
 | Agents | Claude Code (stream-json, approvals, limits) | done |
 | Agents | Codex and OpenCode (ACP), Grok; the hub MCP server (`open_pane`); image attachments | todo |
-| Context | system prompt: hub instructions, project, group | done (manifest section todo) |
+| Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write, search, watch | todo |
 | Git | status, diff, log, branches, operations | todo |

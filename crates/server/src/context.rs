@@ -3,8 +3,6 @@
 //! Levels, from general to specific: hub-wide session instructions → group → project →
 //! session. A more specific level wins on conflict. AGENTS.md / CLAUDE.md in repositories
 //! are read by the agents themselves.
-//!
-//! TODO(rust-port): the `.hub/hub.yaml` manifest section (`manifestPrompt`).
 
 use hubness_core::{GitProviderId, Project, ProjectGroup};
 
@@ -25,7 +23,14 @@ pub fn session_system_prompt(hub_instructions: &str, scope: Option<String>) -> O
 
 /// Project session context: description and instructions. `None` — nothing to add.
 pub fn project_context(p: &Project) -> Option<String> {
-    let s = join_non_empty(vec![section("Project", &p.description), section("Project instructions", &p.instructions)], "\n\n");
+    let s = join_non_empty(
+        vec![
+            section("Project", &p.description),
+            section("Project instructions", &p.instructions),
+            crate::manifest::prompt(p).unwrap_or_default(),
+        ],
+        "\n\n",
+    );
     (!s.is_empty()).then_some(s)
 }
 
@@ -64,7 +69,7 @@ pub fn group_context(g: &ProjectGroup, repos: &[Project]) -> String {
             .iter()
             .map(|p| {
                 let instr = if p.instructions.is_empty() { String::new() } else { format!("Instructions: {}", p.instructions) };
-                let extra = join_non_empty(vec![p.description.clone(), instr], "\n");
+                let extra = join_non_empty(vec![p.description.clone(), instr, crate::manifest::prompt(p).unwrap_or_default()], "\n");
                 if extra.is_empty() { String::new() } else { format!("### {}\n{extra}", p.name) }
             })
             .collect(),

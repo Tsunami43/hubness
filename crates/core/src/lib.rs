@@ -224,6 +224,36 @@ pub fn js_number<S: serde::Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error>
     if v.is_finite() && v.fract() == 0.0 && v.abs() < 9_007_199_254_740_992.0 { s.serialize_i64(*v as i64) } else { s.serialize_f64(*v) }
 }
 
+/// Project manifest `.hub/hub.yaml`: links, SSH hosts, containers, units, documents.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Manifest {
+    /// Name → URL, in file order.
+    pub links: serde_json::Map<String, serde_json::Value>,
+    pub ssh: Vec<String>,
+    pub services: Vec<String>,
+    pub units: Vec<String>,
+    pub docs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServiceState {
+    pub name: String,
+    pub state: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ManifestResponse {
+    pub exists: bool,
+    pub path: String,
+    pub manifest: Option<Manifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub services: Vec<ServiceState>,
+}
+
 /// A project secret: the value never leaves the server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
