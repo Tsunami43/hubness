@@ -156,6 +156,7 @@ export const api = {
   updateProject: (id: string, patch: { name?: string; description?: string; instructions?: string }) => req<Project>('PATCH', `/projects/${id}`, patch),
 
   sessions: (scope: { projectId?: string; groupId?: string } = {}) => req<Session[]>('GET', `/sessions${q(scope)}`),
+  session: (id: string) => req<Session>('GET', `/sessions/${id}`),
   allSessions: () => req<Session[]>('GET', '/sessions?all=1'),
   archivedSessions: () => req<Session[]>('GET', '/sessions?archived=1'),
   archiveSession: (id: string) => req<Session>('POST', `/sessions/${id}/archive`),
