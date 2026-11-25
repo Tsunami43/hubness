@@ -11,6 +11,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+pub use reqwest::Method;
+
 #[derive(Clone)]
 pub struct Client {
     base: String,
@@ -20,6 +22,10 @@ pub struct Client {
 impl Client {
     /// `base` is the hub URL, e.g. `http://127.0.0.1:8787`; `token` — the hub's access token
     /// when it requires one (sent as `Authorization: Bearer`).
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
     pub fn new(base: &str, token: Option<&str>) -> anyhow::Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(t) = token.filter(|t| !t.is_empty()) {
@@ -100,6 +106,24 @@ impl Client {
     pub async fn approve(&self, session_id: &str, request_id: &str, allow: bool) -> anyhow::Result<()> {
         let body = json!({ "decision": if allow { "allow" } else { "deny" } });
         self.send::<Value, _>(reqwest::Method::POST, &format!("/sessions/{session_id}/approvals/{request_id}"), &body).await.map(|_| ())
+    }
+
+    /// Attach a file to the next message of a session (raw bytes; the name in X-Filename).
+    pub async fn upload(&self, session_id: &str, name: &str, mime: &str, bytes: Vec<u8>) -> anyhow::Result<Value> {
+        let encoded: String = name
+            .bytes()
+            .map(|b| if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+            .collect();
+        let res = self
+            .http
+            .post(self.url(&format!("/sessions/{session_id}/attachments")))
+            .header("X-Hubness-Request", "1")
+            .header("Content-Type", mime)
+            .header("X-Filename", encoded)
+            .body(bytes)
+            .send()
+            .await?;
+        Self::decode(res).await
     }
 
     pub async fn archive(&self, session_id: &str) -> anyhow::Result<Session> {
