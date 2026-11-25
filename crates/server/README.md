@@ -25,7 +25,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | --- | --- | --- |
 | Core | `GET /health`, CSRF guard, `{error}` responses, web app + SPA fallback | done |
 | Database | open, WAL, migrations v1–v3 | done |
-| Projects | `GET /projects`, `GET /projects/discover`, `POST /projects/import`, `PATCH /projects/:id`, `DELETE /projects/:id` | done (`?files=1` → 501) |
+| Projects | `GET /projects`, `GET /projects/discover`, `POST /projects/import`, `PATCH /projects/:id`, `DELETE /projects/:id` | done (incl. `?files=1&confirm=` with the TS safety checks) |
 | Settings | `GET /settings`, `PUT /settings` | done |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (local symlink workspace) | done |
 | Manifest | `GET/POST /projects/:id/manifest`, manifest section of the agent context | done |

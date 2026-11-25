@@ -106,13 +106,22 @@ async fn update_project(
 
 /// Remove a project from the hub. Files stay on disk.
 async fn delete_project(State(s): State<AppState>, Path(id): Path<String>, Query(q): Q) -> ApiResult<Json<Value>> {
-    if q.get("files").map(String::as_str) == Some("1") {
-        // TODO(rust-port): port deletableFolder() and its safety checks before enabling this
-        return Err(HttpError::new(501, "Deleting project files is not supported by the Rust server yet"));
-    }
+    let with_files = q.get("files").map(String::as_str) == Some("1");
     s.with(|db, cfg| {
-        catalog::remove_project(db, cfg, &id, &|sid| s.runtime.is_active(sid))?;
-        Ok(json!({ "ok": true, "deleted": null }))
+        let is_active = |sid: &str| s.runtime.is_active(sid);
+        let p = catalog::assert_removable(db, &id, &is_active)?;
+        // irreversible: the folder name in ?confirm guards against an accidental call
+        let dir = if with_files { catalog::deletable_folder(db, cfg, &p)? } else { None };
+        if let Some(d) = &dir
+            && q.get("confirm").map(String::as_str) != Some(crate::paths::basename(d).as_str())
+        {
+            return Err(HttpError::bad_request("confirm must be the name of the project folder"));
+        }
+        if let Some(d) = &dir {
+            std::fs::remove_dir_all(d).map_err(|e| HttpError::new(500, format!("Could not delete {}: {e}", d.display())))?;
+        }
+        catalog::remove_project(db, cfg, &id, &is_active)?;
+        Ok(json!({ "ok": true, "deleted": dir.map(|d| crate::paths::to_string(&d)) }))
     })
 }
 

@@ -557,3 +557,55 @@ mod tests {
         assert_eq!(slug("!!!"), "");
     }
 }
+
+// ---------- deleting a project's folder ----------
+
+fn real_or_resolved(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| paths::normalize(p))
+}
+
+/// `child` is `parent` or inside it.
+fn inside(child: &Path, parent: &Path) -> bool {
+    child.starts_with(parent)
+}
+
+/// The folder "delete with files" may remove: the project's own repository and nothing
+/// wider. `None` — the folder is already gone (only the hub record is left to remove).
+/// Refuses system folders (/, home, the hub's folders), folders holding the hub itself (its
+/// data, its binary, the folder it runs from), folders that are not a git repository root,
+/// and folders that contain another project.
+pub fn deletable_folder(db: &Connection, config: &Config, p: &Project) -> ApiResult<Option<PathBuf>> {
+    let path = Path::new(&p.path);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let dir = real_or_resolved(path);
+    let shown = dir.display();
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+    let guarded: Vec<PathBuf> =
+        [home, config.hub_home.clone(), config.projects_dir.clone(), config.inbox_dir.clone(), config.home_project_dir.clone()]
+            .iter()
+            .map(|g| real_or_resolved(g))
+            .collect();
+    let depth = dir.components().filter(|c| matches!(c, std::path::Component::Normal(_))).count();
+    if depth < 2 || guarded.contains(&dir) {
+        return Err(HttpError::bad_request(format!("Refusing to delete {shown}: a system folder")));
+    }
+    let mut hub_paths = vec![real_or_resolved(&config.data_dir)];
+    if let Ok(exe) = std::env::current_exe() {
+        hub_paths.push(real_or_resolved(&exe));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        hub_paths.push(real_or_resolved(&cwd));
+    }
+    if hub_paths.iter().any(|h| inside(h, &dir)) {
+        return Err(HttpError::bad_request(format!("Refusing to delete {shown}: it contains the hub itself")));
+    }
+    if !dir.is_dir() || !dir.join(".git").exists() {
+        return Err(HttpError::bad_request(format!("Refusing to delete {shown}: not the root of a git repository")));
+    }
+    if let Some(nested) = projects::list(db)?.into_iter().find(|o| o.id != p.id && inside(&real_or_resolved(Path::new(&o.path)), &dir)) {
+        return Err(HttpError::new(409, format!("Refusing to delete {shown}: project \"{}\" lives inside", nested.name)));
+    }
+    Ok(Some(dir))
+}

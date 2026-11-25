@@ -1187,3 +1187,23 @@ test('harness: agents list, per-agent info, models, settings validation', async 
   assert.equal((await call('POST', '/harness/opencode/accounts/p/a/delete')).status, 400);
   assert.equal((await call('POST', '/harness/opencode/accounts/bad%20id/a/switch')).status, 400);
 });
+
+test('removing a project together with its folder', async () => {
+  const { mkdirSync } = await import('node:fs');
+  const outer = makeRepo(join(tmp, 'elsewhere', 'outer'));
+  const inner = makeRepo(join(outer, 'inner'));
+  const [po, pi] = (await call('POST', '/projects/import', { paths: [outer, inner] })).json;
+  assert.equal((await call('DELETE', `/projects/${po.id}?files=1&confirm=outer`)).status, 409, 'another project lives inside');
+  assert.equal((await call('DELETE', `/projects/${pi.id}?files=1`)).status, 400, 'confirm is required');
+  assert.equal((await call('DELETE', `/projects/${pi.id}?files=1&confirm=wrong`)).status, 400);
+  const gone = await call('DELETE', `/projects/${pi.id}?files=1&confirm=inner`);
+  assert.deepEqual(gone.json, { ok: true, deleted: inner });
+  assert.ok(!existsSync(inner));
+  mkdirSync(join(tmp, 'elsewhere', 'plain'));
+  const repo2 = makeRepo(join(tmp, 'elsewhere', 'plain', 'repo2'));
+  const [p2] = (await call('POST', '/projects/import', { paths: [repo2] })).json;
+  const { rmSync } = await import('node:fs');
+  rmSync(join(repo2, '.git'), { recursive: true });
+  assert.match((await call('DELETE', `/projects/${p2.id}?files=1&confirm=repo2`)).json.error, /not the root of a git repository/);
+  assert.ok(existsSync(repo2));
+});
