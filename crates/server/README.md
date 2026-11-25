@@ -35,7 +35,8 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Sandbox | bubblewrap wrap for project/group agent runs (same hidden paths as TS) | done |
 | Sessions | attachments, convert to project, pane file/diff | todo |
 | Agents | Claude Code (stream-json, approvals, limits) | done |
-| Agents | Codex and OpenCode (ACP), Grok; the hub MCP server (`open_pane`); image attachments | todo |
+| Agents | Codex, OpenCode and Grok over ACP (load/resume, models, modes, client-side policy, provider retries) | done |
+| Agents | the hub MCP server (`open_pane`); image attachments | todo |
 | Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |
@@ -46,7 +47,6 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | System | containers, units, packages, overview, ask | todo |
 
 Known gaps in ported routes: the background refresh of repository metadata on
-`GET /projects` is not ported; sessions of agents other than Claude Code get an error
-notice in the feed. Session events are passed through as JSON (`HubEvent` is
+`GET /projects` is not ported. Session events are passed through as JSON (`HubEvent` is
 not typed in Rust yet); `serde_json` keeps key order and exact floats so the output is
 byte-identical to the TS server.

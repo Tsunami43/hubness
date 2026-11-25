@@ -88,6 +88,15 @@ writeFileSync(
 );
 chmodSync(fakeClaude, 0o755);
 process.env.HUBNESS_CLAUDE_BIN = fakeClaude;
+// ACP agents (Codex adapter, OpenCode) replay the same fixture file in ACP mode
+const fakeAcp = join(tmp, 'fake-acp');
+writeFileSync(
+  fakeAcp,
+  `#!/bin/sh\nREPLAY_MODE=acp REPLAY_FIXTURE="$(cat ${fixtureFile})" exec ${process.execPath} --disable-warning=ExperimentalWarning ${replayAgent}\n`,
+);
+chmodSync(fakeAcp, 0o755);
+process.env.HUBNESS_CODEX_ACP = fakeAcp;
+process.env.HUBNESS_OPENCODE_BIN = fakeAcp;
 const useFixture = (name: string) => writeFileSync(fixtureFile, join(import.meta.dirname, 'fixtures', 'agents', name));
 
 const { call, raw } = await makeClient();
@@ -691,4 +700,44 @@ test('live file changes over /watch', async () => {
   while (!m.git) m = await stream.next();
   assert.equal(m.git, true, 'staging changes the index');
   stream.close();
+});
+
+test('ACP agents: codex turn (bypass and ask with approval), opencode provider error', async () => {
+  useFixture('acp-tool-turn.jsonl');
+  const s = (await call('POST', '/sessions', { agent: { kind: 'codex', permissionMode: 'bypass' }, prompt: 'fix the notes' })).json;
+  const done = await waitFor(s.id, (x) => x.status === 'idle', 'the codex turn');
+  assert.equal(done.agentSessionId, 'acp-sess-1');
+  const events = (await feed(s.id)).map(({ durationMs: _d, toolId, ...e }: any) => ({ ...e, ...(toolId ? { toolId: toolId.replace(/^plan:.*/, 'plan:<run>') } : {}) }));
+  assert.deepEqual(events, [
+    { uid: 'u', kind: 'user', text: 'fix the notes' },
+    { uid: 'th', kind: 'thinking', text: 'Need to look at the file.' },
+    { uid: 't', kind: 'text', text: 'Let me edit it.', streaming: false },
+    { uid: 'tool', kind: 'tool', name: 'Bash', input: { command: 'cat notes.txt' }, status: 'ok', output: 'hello', toolId: 'call_1' },
+    { uid: 'tool', kind: 'tool', name: 'Edit', input: { file_path: '/work/notes.txt', old_string: 'hello', new_string: 'hello world' }, status: 'ok', output: 'diff /work/notes.txt', toolId: 'call_2' },
+    { uid: 'plan', kind: 'tool', name: 'TodoWrite', input: { todos: [{ content: 'Read notes', status: 'completed' }, { content: 'Edit notes', status: 'completed' }] }, status: 'ok', toolId: 'plan:<run>' },
+    { uid: 't', kind: 'text', text: 'Done: notes.txt now says hello world.', streaming: false },
+    { uid: 'res', kind: 'result', ok: true, model: 'provider/model-a' },
+  ]);
+
+  const asked = (await call('POST', '/sessions', { agent: { kind: 'codex', permissionMode: 'ask' }, prompt: 'fix the notes' })).json;
+  await waitFor(asked.id, (x) => x.status === 'waiting', 'the codex permission request');
+  const ap = (await feed(asked.id)).find((e: any) => e.kind === 'approval');
+  assert.equal(ap.toolName, 'Bash');
+  assert.deepEqual(ap.input, { command: 'cat notes.txt' });
+  assert.match(ap.requestId, /^0:/);
+  assert.deepEqual((await call('POST', `/sessions/${asked.id}/approvals/${ap.requestId}`, { decision: 'allow' })).json, { ok: true });
+  await waitFor(asked.id, (x) => x.status === 'idle', 'the codex turn after approval');
+  const after = await feed(asked.id);
+  assert.equal(after.find((e: any) => e.kind === 'approval').status, 'allowed');
+  assert.equal(after.at(-1).kind, 'result');
+
+  useFixture('acp-provider-error.jsonl');
+  const oc = (await call('POST', '/sessions', { agent: { kind: 'opencode' }, prompt: 'hi' })).json;
+  const failed = await waitFor(oc.id, (x) => x.status !== 'running' && x.status !== 'waiting', 'the opencode turn');
+  assert.equal(failed.status, 'error');
+  assert.equal(failed.agentSessionId, 'acp-sess-2');
+  assert.deepEqual((await feed(oc.id)).slice(1), [
+    { uid: 'retry', kind: 'notice', level: 'info', text: 'Provider error 429 model:free is temporarily rate-limited upstream. — retry #1' },
+    { uid: 'err', kind: 'notice', level: 'error', text: 'Provider request failed\n429 model:free is temporarily rate-limited upstream.' },
+  ]);
 });

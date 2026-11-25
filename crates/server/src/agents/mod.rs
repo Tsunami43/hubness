@@ -1,6 +1,8 @@
 //! Agents known to the hub. The core talks to agents only through `start` and `RunHandle`
-//! (the TS `AgentModule`/`AgentAdapter`). Ported so far: Claude Code.
+//! (the TS `AgentModule`/`AgentAdapter`): Claude Code (stream-json) and the ACP agents
+//! Codex, OpenCode and Grok.
 
+pub mod acp;
 pub mod claude;
 
 use std::sync::Arc;
@@ -75,7 +77,9 @@ pub type Started = (Arc<dyn RunHandle>, JoinHandle<()>);
 pub fn start(kind: &str, turn: Arc<Turn>) -> Result<Started, String> {
     match kind {
         "claude-code" => claude::start(turn),
-        k if is_known(k) => Err(format!("Agent “{k}” is not supported by the Rust server yet — use the TypeScript server for it")),
+        "codex" => acp::start(&acp::CODEX, turn),
+        "opencode" => acp::start(&acp::OPENCODE, turn),
+        "grok" => acp::start(&acp::GROK, turn),
         k => Err(format!("Agent “{k}” is not supported anymore — start a new session")),
     }
 }

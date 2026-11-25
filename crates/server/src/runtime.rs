@@ -166,6 +166,12 @@ impl Turn {
         }
     }
 
+    /// Full session history (for agents without their own memory).
+    pub fn history(&self) -> Vec<HubEvent> {
+        let sid = self.session().id;
+        self.state.db().ok().and_then(|db| repo::events(&db, &sid).ok()).unwrap_or_default()
+    }
+
     pub fn kv_set(&self, key: &str, value: &Value) {
         if let Ok(db) = self.state.db() {
             let _ = kv::set(&db, key, value);
