@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-26
+
+### Fixed
+
+- Release builds: both macOS targets build on Apple silicon runners (the Intel and
+  macOS 14 images are gone), so 0.2.1 is the first release with binaries.
+- `install.sh` passes shellcheck (a literal `~` shown to the user and matched on input).
+- CI actions moved to their Node 24 majors.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added

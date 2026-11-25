@@ -313,9 +313,11 @@ setup_hub() {
     say ""
     ask "Start the hub now as a background service?" "Y/n"
     case "$answer" in [nN]*) return 1 ;; esac
+    # shellcheck disable=SC2088 # shown to the user as typed; expanded just below
     ask "Where should the hub keep its data (database, logs, keys)?" "~/.local/share/hubness"
     DATA_DIR="$answer"
   fi
+  # shellcheck disable=SC2088 # matching a literal ~ the user typed
   case "$DATA_DIR" in
     "~") DATA_DIR="$HOME" ;;
     "~/"*) DATA_DIR="$HOME/${DATA_DIR#"~/"}" ;;
