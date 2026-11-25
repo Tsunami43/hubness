@@ -84,12 +84,21 @@ impl Turn {
         self.session.lock().expect("turn lock").clone()
     }
 
+    /// The session id (without cloning the whole session, as `session()` does).
+    fn session_id(&self) -> String {
+        self.session.lock().expect("turn lock").id.clone()
+    }
+
     fn stored(&self, uid: &str) -> Option<HubEvent> {
         if let Some(e) = self.cache.lock().expect("turn lock").get(uid) {
             return Some(e.clone());
         }
+        self.stored_in_db(uid)
+    }
+
+    fn stored_in_db(&self, uid: &str) -> Option<HubEvent> {
         let db = self.state.db().ok()?;
-        let sid = self.session().id;
+        let sid = self.session_id();
         db.query_row("SELECT data FROM events WHERE session_id = ? AND uid = ?", [&sid, uid], |r| r.get::<_, String>(0))
             .ok()
             .and_then(|d| serde_json::from_str(&d).ok())
@@ -101,14 +110,18 @@ impl Turn {
 
     /// Create or replace an event. `persist = false`: broadcast only (delta streaming).
     pub fn put(&self, uid: &str, body: Value, persist: bool) {
-        let prev = self.stored(uid);
-        let seq = prev.as_ref().and_then(|p| p["seq"].as_i64()).unwrap_or_else(|| {
+        // only seq and ts of the previous version are kept: read them without cloning it
+        // (a streamed message is replaced on every delta and keeps growing)
+        let seq_ts = |p: &Value| (p["seq"].as_i64(), p["ts"].as_str().map(String::from));
+        let cached = self.cache.lock().expect("turn lock").get(uid).map(seq_ts);
+        let (seq, ts) = cached.or_else(|| self.stored_in_db(uid).as_ref().map(seq_ts)).unwrap_or_default();
+        let seq = seq.unwrap_or_else(|| {
             let mut s = self.seq.lock().expect("turn lock");
             let v = *s;
             *s += 1;
             v
         });
-        let ts = prev.as_ref().and_then(|p| p["ts"].as_str().map(String::from)).unwrap_or_else(db::now);
+        let ts = ts.unwrap_or_else(db::now);
         // body first, then the service fields (the key order of the TS server)
         let mut ev = Map::new();
         if let Value::Object(b) = body {
@@ -119,7 +132,7 @@ impl Turn {
         ev.insert("ts".into(), json!(ts));
         let ev = Value::Object(ev);
         self.cache.lock().expect("turn lock").insert(uid.to_string(), ev.clone());
-        let sid = self.session().id;
+        let sid = self.session_id();
         if persist && let Ok(db) = self.state.db() {
             let _ = repo::put_event(&db, &sid, &ev);
         }
@@ -145,7 +158,7 @@ impl Turn {
     }
 
     pub fn set_status(&self, status: SessionStatus) {
-        set_status(&self.state, &self.session().id, status);
+        set_status(&self.state, &self.session_id(), status);
     }
 
     pub fn set_agent_session_id(&self, id: &str) {
@@ -172,7 +185,7 @@ impl Turn {
 
     /// Full session history (for agents without their own memory).
     pub fn history(&self) -> Vec<HubEvent> {
-        let sid = self.session().id;
+        let sid = self.session_id();
         self.state.db().ok().and_then(|db| repo::events(&db, &sid).ok()).unwrap_or_default()
     }
 
@@ -187,7 +200,7 @@ impl Turn {
     }
 
     fn last_is_error(&self) -> bool {
-        let sid = self.session().id;
+        let sid = self.session_id();
         let Ok(db) = self.state.db() else { return false };
         let last: Option<String> =
             db.query_row("SELECT data FROM events WHERE session_id = ? ORDER BY seq DESC LIMIT 1", [&sid], |r| r.get(0)).ok();

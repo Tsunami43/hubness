@@ -153,11 +153,11 @@ pub fn next_seq(db: &Connection, session_id: &str) -> rusqlite::Result<i64> {
 pub fn put_event(db: &Connection, session_id: &str, ev: &HubEvent) -> rusqlite::Result<()> {
     let uid = ev.get("uid").and_then(|v| v.as_str()).unwrap_or_default();
     let seq = ev.get("seq").and_then(|v| v.as_i64()).unwrap_or_default();
-    db.execute(
+    db.prepare_cached(
         "INSERT INTO events (session_id, uid, seq, data) VALUES (?, ?, ?, ?)
          ON CONFLICT(session_id, uid) DO UPDATE SET data = excluded.data",
-        (session_id, uid, seq, ev.to_string()),
-    )?;
+    )?
+    .execute((session_id, uid, seq, ev.to_string()))?;
     Ok(())
 }
 

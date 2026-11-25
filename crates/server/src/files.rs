@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::error::{ApiResult, HttpError};
-use crate::http::JsonBody;
+use crate::http::{JsonBody, blocking};
 use crate::{AppState, catalog, paths};
 
 const HIDDEN_IN_TREE: &[&str] = &[".git"];
@@ -356,7 +356,7 @@ struct PathQuery {
 }
 
 async fn browse_route(Query(q): Query<PathQuery>) -> ApiResult<axum::Json<BrowseResponse>> {
-    Ok(axum::Json(browse(q.path.as_deref())?))
+    blocking(move || browse(q.path.as_deref())).await
 }
 
 async fn tree_route(
@@ -364,11 +364,13 @@ async fn tree_route(
     UrlPath(id): UrlPath<String>,
     Query(q): Query<PathQuery>,
 ) -> ApiResult<axum::Json<Vec<FsEntry>>> {
-    Ok(axum::Json(list_tree(&root_of(&s, &id)?, q.path.as_deref().unwrap_or(""))?))
+    let root = root_of(&s, &id)?;
+    blocking(move || list_tree(&root, q.path.as_deref().unwrap_or(""))).await
 }
 
 async fn files_route(State(s): State<AppState>, UrlPath(id): UrlPath<String>) -> ApiResult<axum::Json<Value>> {
-    Ok(axum::Json(json!({ "files": list_files(&root_of(&s, &id)?, 20_000)? })))
+    let root = root_of(&s, &id)?;
+    blocking(move || Ok(json!({ "files": list_files(&root, 20_000)? }))).await
 }
 
 async fn read_route(
@@ -378,7 +380,7 @@ async fn read_route(
 ) -> ApiResult<axum::Json<FileContent>> {
     let root = root_of(&s, &id)?;
     let rel = q.path.filter(|p| !p.is_empty()).ok_or_else(|| HttpError::bad_request("path is required"))?;
-    Ok(axum::Json(read_file_safe(&root, &rel)?))
+    blocking(move || read_file_safe(&root, &rel)).await
 }
 
 fn require(v: &str, field: &str) -> ApiResult<()> {
@@ -402,7 +404,8 @@ async fn write_route(
     JsonBody(b): JsonBody<WriteBody>,
 ) -> ApiResult<axum::Json<FileContent>> {
     require(&b.path, "path")?;
-    Ok(axum::Json(write_file_safe(&root_of(&s, &id)?, &b.path, &b.content, b.base_hash.as_deref())?))
+    let root = root_of(&s, &id)?;
+    blocking(move || write_file_safe(&root, &b.path, &b.content, b.base_hash.as_deref())).await
 }
 
 #[derive(Deserialize)]
@@ -417,7 +420,8 @@ async fn create_route(
     JsonBody(b): JsonBody<CreateBody>,
 ) -> ApiResult<(StatusCode, axum::Json<Value>)> {
     require(&b.path, "path")?;
-    let path = create_entry(&root_of(&s, &id)?, &b.path, b.dir.unwrap_or(false))?;
+    let root = root_of(&s, &id)?;
+    let path = blocking(move || create_entry(&root, &b.path, b.dir.unwrap_or(false))).await?.0;
     Ok((StatusCode::CREATED, axum::Json(json!({ "path": path }))))
 }
 
@@ -434,7 +438,8 @@ async fn rename_route(
 ) -> ApiResult<axum::Json<Value>> {
     require(&b.from, "from")?;
     require(&b.to, "to")?;
-    Ok(axum::Json(json!({ "path": rename_entry(&root_of(&s, &id)?, &b.from, &b.to)? })))
+    let root = root_of(&s, &id)?;
+    blocking(move || Ok(json!({ "path": rename_entry(&root, &b.from, &b.to)? }))).await
 }
 
 #[derive(Deserialize)]
@@ -448,8 +453,12 @@ async fn delete_route(
     JsonBody(b): JsonBody<DeleteBody>,
 ) -> ApiResult<axum::Json<Value>> {
     require(&b.path, "path")?;
-    delete_entry(&root_of(&s, &id)?, &b.path)?;
-    Ok(axum::Json(json!({ "ok": true })))
+    let root = root_of(&s, &id)?;
+    blocking(move || {
+        delete_entry(&root, &b.path)?;
+        Ok(json!({ "ok": true }))
+    })
+    .await
 }
 
 #[derive(Deserialize)]

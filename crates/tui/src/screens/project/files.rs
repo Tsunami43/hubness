@@ -510,18 +510,25 @@ impl FilesTab {
         let focused = focus == Focus::Viewer;
         let height = body.height.saturating_sub(2) as usize;
         self.view_height = height.max(1);
-        let (title, lines): (String, Vec<Line>) = if let Some(diff) = &file.diff {
-            (format!("{} — git diff · d file", file.path), diff.clone())
+        // only the rows on screen are built (a file can have thousands of lines)
+        let (title, shown): (String, Vec<Line>) = if let Some(diff) = &file.diff {
+            file.scroll = file.scroll.min(diff.len().saturating_sub(height));
+            (format!("{} — git diff · d file", file.path), diff.iter().skip(file.scroll).take(height).cloned().collect())
         } else if file.data.is_null() {
             (file.path.clone(), vec![Line::styled("loading…", t.muted_style())])
         } else if file.data["binary"] == true {
             (file.path.clone(), vec![Line::styled(format!("Binary file ({})", size(&file.data)), t.muted_style())])
         } else {
+            let truncated = file.data["truncated"] == true;
+            let total = file.lines.len() + usize::from(truncated);
+            file.scroll = file.scroll.min(total.saturating_sub(height));
             let width = file.lines.len().to_string().len();
             let mut out: Vec<Line> = file
                 .lines
                 .iter()
                 .enumerate()
+                .skip(file.scroll)
+                .take(height)
                 .map(|(i, l)| {
                     let n = i + 1;
                     let marked = file.mark == Some(n);
@@ -535,15 +542,12 @@ impl FilesTab {
                     if marked { line.style(Style::default().add_modifier(Modifier::UNDERLINED)) } else { line }
                 })
                 .collect();
-            if file.data["truncated"] == true {
+            if truncated && out.len() < height {
                 out.push(Line::styled(format!("… truncated ({}) — too large to show whole", size(&file.data)), t.muted_style()));
             }
             let hint = if file.editable() { " · e edit · d diff" } else { " · d diff" };
             (format!("{}{hint}", file.path), out)
         };
-        let max = lines.len().saturating_sub(height);
-        file.scroll = file.scroll.min(max);
-        let shown: Vec<Line> = lines.into_iter().skip(file.scroll).take(height).collect();
         f.render_widget(Paragraph::new(shown).block(block(title, focused)), body);
     }
 

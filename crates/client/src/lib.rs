@@ -215,15 +215,11 @@ impl Client {
                 }
             };
             let mut body = res.bytes_stream();
-            let mut buf = String::new();
+            let mut events = SseBuffer::default();
             while let Some(chunk) = body.next().await {
                 let Ok(chunk) = chunk else { break };
-                buf.push_str(&String::from_utf8_lossy(&chunk));
-                while let Some(end) = buf.find("\n\n") {
-                    let event: String = buf.drain(..end + 2).collect();
-                    if let Some(msg) = parse_event(&event)
-                        && tx.send(serde_json::from_str::<T>(&msg).map_err(Into::into)).is_err()
-                    {
+                for msg in events.push(&chunk) {
+                    if tx.send(serde_json::from_str::<T>(&msg).map_err(Into::into)).is_err() {
                         return;
                     }
                 }
@@ -238,6 +234,31 @@ impl Client {
 
     pub fn global_stream(&self) -> mpsc::UnboundedReceiver<anyhow::Result<GlobalStreamMsg>> {
         self.stream("/stream")
+    }
+}
+
+/// Splits an SSE byte stream into events. Bytes are kept until an event is complete, as a
+/// chunk may end inside a UTF-8 character.
+#[derive(Default)]
+struct SseBuffer {
+    buf: Vec<u8>,
+    /// Where to look for the end of the event next (a large snapshot comes in many chunks).
+    from: usize,
+}
+
+impl SseBuffer {
+    /// Add a chunk; the `data:` payloads of the events it completes.
+    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.buf.extend_from_slice(chunk);
+        let mut out = vec![];
+        while let Some(end) = self.buf[self.from..].windows(2).position(|w| w == b"\n\n").map(|i| self.from + i) {
+            let event: Vec<u8> = self.buf.drain(..end + 2).collect();
+            self.from = 0;
+            out.extend(parse_event(&String::from_utf8_lossy(&event)));
+        }
+        // the last byte may be the first half of the separator
+        self.from = self.buf.len().saturating_sub(1);
+        out
     }
 }
 
@@ -258,7 +279,7 @@ fn parse_event(event: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_event;
+    use super::{SseBuffer, parse_event};
 
     #[test]
     fn sse_events() {
@@ -266,5 +287,17 @@ mod tests {
         assert_eq!(parse_event("event: ping\ndata: \n\n"), None);
         assert_eq!(parse_event(": comment\n\n"), None);
         assert_eq!(parse_event("data: a\ndata: b\n\n").as_deref(), Some("a\nb"));
+    }
+
+    #[test]
+    fn sse_chunks_split_anywhere() {
+        let stream = "data: {\"t\":\"привет\"}\n\nevent: ping\ndata: \n\ndata: 2\n\n".as_bytes();
+        // every split point, including inside a Cyrillic letter and between the two newlines
+        for at in 0..stream.len() {
+            let mut b = SseBuffer::default();
+            let mut got = b.push(&stream[..at]);
+            got.extend(b.push(&stream[at..]));
+            assert_eq!(got, vec!["{\"t\":\"привет\"}".to_string(), "2".to_string()], "split at {at}");
+        }
     }
 }

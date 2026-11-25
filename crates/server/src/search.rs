@@ -66,7 +66,12 @@ pub async fn search_files(root: &Path, opts: Options) -> ApiResult<SearchResult>
         return Err(HttpError::bad_request(format!("Invalid regular expression: {e}")));
     }
     let cwd = std::fs::canonicalize(root)?;
-    if has_rg() { search_rg(&cwd, &opts).await } else { search_walk(&cwd, &opts) }
+    if has_rg() {
+        search_rg(&cwd, &opts).await
+    } else {
+        // the fallback reads every file itself: off the async threads
+        Ok(crate::http::blocking(move || search_walk(&cwd, &opts)).await?.0)
+    }
 }
 
 async fn search_rg(cwd: &Path, opts: &Options) -> ApiResult<SearchResult> {

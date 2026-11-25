@@ -31,9 +31,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::AppState;
 use crate::error::{ApiResult, HttpError};
 use crate::http::JsonBody;
+use crate::{AppState, paths};
 
 /// Output kept for a late subscriber (bytes; the TS server counts UTF-16 units).
 const OUTPUT_LIMIT: usize = 512 * 1024;
@@ -101,10 +101,6 @@ fn job(id: &str) -> Option<JobRef> {
     jobs.get(id).cloned()
 }
 
-fn home() -> String {
-    std::env::var("HOME").unwrap_or_else(|_| "/".into())
-}
-
 /// A pty pair of the given size; both ends close on exec (stdio gets dup2'ed copies).
 fn open_pty(cols: u16, rows: u16) -> std::io::Result<(OwnedFd, OwnedFd)> {
     let mut master = -1;
@@ -156,7 +152,10 @@ pub fn start_job(opts: JobOpts) -> JobInfo {
 
     let spawned = open_pty(cols, rows).and_then(|(master, slave)| {
         let mut cmd = Command::new("/bin/bash");
-        cmd.arg("-c").arg(&opts.command).current_dir(opts.cwd.clone().unwrap_or_else(home)).env_clear();
+        cmd.arg("-c")
+            .arg(&opts.command)
+            .current_dir(opts.cwd.clone().map(std::path::PathBuf::from).unwrap_or_else(paths::home))
+            .env_clear();
         cmd.envs(crate::config::child_env()).envs(opts.env.iter().map(|(k, v)| (k, v)));
         // a POSIX shell, not the user's fish/zsh, for scripts that use $SHELL
         cmd.env("SHELL", "/bin/bash").env("TERM", "xterm-256color").env("COLORTERM", "truecolor");

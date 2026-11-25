@@ -2,6 +2,8 @@
 //! approvals (incl. AskUserQuestion), model / permission mode, the pane next to the chat,
 //! stop, rename, archive and moving an Inbox chat into a project.
 
+use std::collections::HashMap;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use hubness_client::Method;
 use ratatui::Frame;
@@ -14,7 +16,7 @@ use serde_json::{Value, json};
 use super::feed::{Detail, event_lines};
 use crate::core::{Action, Ctx, Handled, Route, Screen};
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::{Theme, block, code, markdown, tail};
+use crate::ui::{Theme, block, code, markdown, tail_range, wrap};
 
 pub const MODES: &[(&str, &str)] = &[
     ("ask", "Ask — edits and commands need approval"),
@@ -46,6 +48,10 @@ pub struct SessionView {
     /// AskUserQuestion answers being collected: (request id, questions, answers so far).
     asking: Option<(String, Vec<Value>, serde_json::Map<String, Value>)>,
     loaded: bool,
+    /// Rendered (markdown, highlighted) and wrapped lines per event uid, so a frame only
+    /// renders events that changed. Valid for `feed_key`.
+    feed_cache: HashMap<String, Vec<Line<'static>>>,
+    feed_key: Option<(Detail, u16, Theme)>,
 }
 
 impl SessionView {
@@ -66,6 +72,8 @@ impl SessionView {
             suggestion: Value::Null,
             asking: None,
             loaded: false,
+            feed_cache: HashMap::new(),
+            feed_key: None,
         }
     }
 
@@ -78,6 +86,7 @@ impl SessionView {
     }
 
     fn upsert(&mut self, ev: Value) {
+        self.feed_cache.remove(&event_key(&ev, self.events.len()));
         match self.events.iter_mut().find(|e| e["uid"] == ev["uid"]) {
             Some(e) => *e = ev,
             None => self.events.push(ev),
@@ -356,6 +365,7 @@ impl Screen for SessionView {
             Some("snapshot") => {
                 self.session = msg["session"].clone();
                 self.events = msg["events"].as_array().cloned().unwrap_or_default();
+                self.feed_cache.clear();
                 self.pane = msg["pane"].clone();
             }
             Some("event") => self.upsert(msg["event"].clone()),
@@ -496,10 +506,23 @@ impl Screen for SessionView {
         } else {
             (body, None)
         };
-        let mut lines: Vec<Line> = vec![];
-        for e in &self.events {
-            lines.extend(event_lines(e, self.detail));
+        let fb = block(
+            if self.focus == Focus::Feed { "feed — j/k scroll · Enter reply · y/n approve" } else { "feed" },
+            self.focus == Focus::Feed,
+        );
+        let inner = fb.inner(feed_area);
+        let width = inner.width as usize;
+        let key = (self.detail, inner.width, t);
+        if self.feed_key != Some(key) {
+            self.feed_cache.clear();
+            self.feed_key = Some(key);
         }
+        for (i, e) in self.events.iter().enumerate() {
+            self.feed_cache
+                .entry(event_key(e, i))
+                .or_insert_with(|| event_lines(e, self.detail).into_iter().flat_map(|l| wrap(l, width)).collect());
+        }
+        let mut lines: Vec<Line> = vec![];
         if self.events.is_empty() {
             lines.push(Line::styled(
                 if self.session.is_null() { "Loading…" } else { "No messages yet — write one below." },
@@ -516,13 +539,17 @@ impl Screen for SessionView {
                 t.accent_style(),
             ));
         }
-        let fb = block(
-            if self.focus == Focus::Feed { "feed — j/k scroll · Enter reply · y/n approve" } else { "feed" },
-            self.focus == Focus::Feed,
-        );
-        let inner = fb.inner(feed_area);
-        self.scroll = self.scroll.min(lines.len());
-        let visible = tail(lines, inner.width as usize, inner.height as usize, self.scroll);
+        let extra: Vec<Line> = lines.into_iter().flat_map(|l| wrap(l, width)).collect();
+        // only the visible rows are cloned
+        let rows: Vec<&Line<'static>> = self
+            .events
+            .iter()
+            .enumerate()
+            .flat_map(|(i, e)| self.feed_cache.get(&event_key(e, i)).into_iter().flatten())
+            .chain(extra.iter())
+            .collect();
+        self.scroll = self.scroll.min(rows.len());
+        let visible: Vec<Line> = rows[tail_range(rows.len(), inner.height as usize, self.scroll)].iter().map(|l| (*l).clone()).collect();
         f.render_widget(Paragraph::new(visible).block(fb), feed_area);
 
         if let Some(pa) = pane_area {
@@ -539,7 +566,10 @@ impl Screen for SessionView {
                     v.push(Line::styled("O (in the feed) opens it in your browser.", t.muted_style()));
                     v
                 }
-                _ => self.pane_body.clone().unwrap_or_else(|| vec![Line::styled("Loading…", t.muted_style())]),
+                _ => match &self.pane_body {
+                    Some(lines) => lines.iter().take(pi.height as usize).cloned().collect(),
+                    None => vec![Line::styled("Loading…", t.muted_style())],
+                },
             };
             let shown: Vec<Line> = body.into_iter().take(pi.height as usize).collect();
             f.render_widget(Paragraph::new(shown).block(pb), pa);
@@ -564,4 +594,9 @@ impl Screen for SessionView {
         let cb = block(hint, self.focus == Focus::Composer);
         self.composer.draw(f, composer, cb, self.focus == Focus::Composer, "Ask the agent…");
     }
+}
+
+/// The feed cache key of an event: its uid (the position for an event without one).
+fn event_key(e: &Value, index: usize) -> String {
+    e["uid"].as_str().map(String::from).unwrap_or_else(|| format!("#{index}"))
 }

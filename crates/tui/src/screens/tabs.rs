@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::core::{Action, Ctx, Handled, Hit, Screen};
 use crate::ui::Theme;
 
-#[allow(dead_code)] // `id` is for tabs that open other tabs (select_id)
 pub struct Tab {
+    /// A stable name to pick the tab by (the agent kind on the Harness screen).
     pub id: String,
     pub label: String,
     pub screen: Box<dyn Screen>,
@@ -60,7 +60,6 @@ impl Tabs {
         self.call(i, ctx, |s, c| s.on_show(c));
     }
 
-    #[allow(dead_code)]
     pub fn select_id(&mut self, id: &str, ctx: &mut Ctx) {
         if let Some(i) = self.tabs.iter().position(|t| t.id == id) {
             self.select(i, ctx);

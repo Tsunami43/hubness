@@ -24,7 +24,8 @@ use serde::Deserialize;
 use crate::config::Config;
 use crate::db::{groups, projects};
 use crate::error::{ApiResult, HttpError};
-use crate::http::JsonBody;
+use crate::http::{JsonBody, blocking};
+use crate::paths::home;
 use crate::terminal::shq;
 use crate::{AppState, catalog, paths};
 
@@ -62,10 +63,6 @@ pub fn project_sandbox(db: &Connection, p: &Project) -> rusqlite::Result<bool> {
         return Ok(false); // the system project (questions about the server) runs without a sandbox
     }
     Ok(saved_runtime(db, &p.id)?.sandbox.unwrap_or_else(sandbox_available))
-}
-
-fn home() -> PathBuf {
-    std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"))
 }
 
 /// Agent state folders — writable (login, history, caches) for every registered agent.
@@ -588,11 +585,6 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/projects/{id}/environment", get(get_environment).put(put_environment))
         .route("/projects/{id}/environment/container/remove", post(remove_container))
-}
-
-/// Docker calls block for up to seconds: run the handler off the async threads.
-pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> ApiResult<T> + Send + 'static) -> ApiResult<Json<T>> {
-    tokio::task::spawn_blocking(f).await.map_err(|e| HttpError::new(500, e.to_string()))?.map(Json)
 }
 
 async fn get_environment(State(s): State<AppState>, UrlPath(id): UrlPath<String>) -> ApiResult<Json<EnvironmentStatus>> {

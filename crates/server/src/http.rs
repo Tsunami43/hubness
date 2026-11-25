@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde::de::{DeserializeOwned, Deserializer};
 
-use crate::error::HttpError;
+use crate::error::{ApiResult, HttpError};
 
 /// A JSON request body checked against `T`. Unlike `axum::Json` it does not require a
 /// content type (the CSRF guard handles that) and any mismatch is a 400 `{error}` that
@@ -49,6 +49,13 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for LenientBody<T> {
             HttpError::bad_request(if path == "." { inner } else { format!("{path}: {inner}") })
         })
     }
+}
+
+/// Run blocking work of a handler (file system walks, child processes, docker calls) on
+/// the blocking thread pool, so it never stalls the async threads that serve other
+/// requests and streams.
+pub async fn blocking<T: Send + 'static>(f: impl FnOnce() -> ApiResult<T> + Send + 'static) -> ApiResult<axum::Json<T>> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| HttpError::new(500, e.to_string()))?.map(axum::Json)
 }
 
 /// For `Option<Option<T>>` fields: absent → `None`, `null` → `Some(None)`, value → `Some(Some(v))`.

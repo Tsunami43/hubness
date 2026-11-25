@@ -105,16 +105,16 @@ pub fn list_projects(db: &Connection) -> ApiResult<Vec<Project>> {
     Ok(list)
 }
 
-/// Repositories in a folder (default: the projects folder) not yet added to the hub.
-pub fn discover_repos(db: &Connection, config: &Config, path: Option<&str>) -> ApiResult<DiscoverResult> {
+/// Repositories in a folder (default: the projects folder) not in `known` (the paths of the
+/// hub's projects). Walks the disk: call it off the async threads, without the database.
+pub fn discover_repos(known: &HashSet<String>, projects_dir: &Path, path: Option<&str>) -> ApiResult<DiscoverResult> {
     let root = match path.map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => paths::resolve(p),
-        None => config.projects_dir.clone(),
+        None => projects_dir.to_path_buf(),
     };
     if !root.is_dir() {
         return Err(HttpError::bad_request("Folder not found"));
     }
-    let known: HashSet<String> = projects::list(db)?.into_iter().map(|p| p.path).collect();
     let repos = scan_repos(&root)
         .into_iter()
         .map(|r| paths::to_string(&r))
