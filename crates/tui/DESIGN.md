@@ -68,6 +68,14 @@ Files tab: open a file, `e` (or `Enter` in the viewer) starts the editor in Vim 
 in the status line). `i` / `a` / `o` type, `Esc` stops typing, `:w` / `Ctrl+S` save, `:q` or
 `Esc` closes, `:q!` discards.
 
+## Harness
+
+- The MCP tab is the matrix of MCP servers × agents: `j` / `k` pick a server, `[` / `]` (or
+  `←` / `→`, `Tab`) pick the agent column, `Enter` connects / disconnects it, `a` adds a server,
+  `x` removes it from every agent, `P` shows a project's servers too.
+- An agent tab has sections: `[` / `]` switch between the overview, skills, rules, agents,
+  commands and plugins; `Enter` shows an item, `e` on a rules file opens it in the editor.
+
 ## Rules for screens
 
 - Open in NORMAL: no input or terminal takes the keys until `i` / `/` / `Enter`.
