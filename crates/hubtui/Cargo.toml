@@ -1,5 +1,6 @@
 [package]
-name = "hubness"
+name = "hubtui"
+description = "Terminal UI for a hubness hub (client only, no server code)"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -8,6 +9,4 @@ license.workspace = true
 [dependencies]
 anyhow = "1.0.105"
 clap = { version = "4.6.10", features = ["derive", "env"] }
-hubness-server = { version = "0.1.0", path = "../server" }
 hubness-tui = { version = "0.1.0", path = "../tui" }
-tokio = { version = "1.54.1", features = ["full"] }

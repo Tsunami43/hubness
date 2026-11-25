@@ -20,6 +20,8 @@ pub struct Config {
     pub home_project_dir: PathBuf,
     /// The built web app (`pnpm build`), served from the same origin.
     pub web_dist: PathBuf,
+    /// `HUBNESS_WEB_DIST` was set: serve that folder even when the web app is embedded.
+    pub web_dist_explicit: bool,
     /// Access token (`HUBNESS_TOKEN`); `None` — no authentication (loopback only).
     pub token: Option<String>,
 }
@@ -43,6 +45,7 @@ impl Config {
             &var("HUBNESS_HOME").map(|h| resolve(&h)).unwrap_or_else(|| home.join("hub")),
             &resolve(&var("HUBNESS_WEB_DIST").unwrap_or_else(|| "apps/web/dist".into())),
         );
+        config.web_dist_explicit = var("HUBNESS_WEB_DIST").is_some();
         config.token = var("HUBNESS_TOKEN").map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
         Ok(config)
     }
@@ -60,6 +63,7 @@ impl Config {
             projects_dir: hub_home.join("projects"),
             home_project_dir: hub_home.join("home"),
             web_dist: web_dist.to_path_buf(),
+            web_dist_explicit: false,
             token: None,
         }
     }

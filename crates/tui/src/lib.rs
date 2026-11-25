@@ -4,6 +4,7 @@
 //! (`--url`, `--token`) and shares every session with the web app.
 
 mod app;
+pub mod cli;
 pub mod core;
 mod screens;
 pub mod ui;

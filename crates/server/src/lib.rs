@@ -37,13 +37,13 @@ pub mod sessions;
 pub mod system;
 pub mod terminal;
 pub mod watch;
+pub mod web;
 pub mod workspaces;
 
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use rusqlite::Connection;
-use tower_http::services::{ServeDir, ServeFile};
 
 pub use config::Config;
 use error::{ApiResult, HttpError};
@@ -105,12 +105,7 @@ pub fn app(state: AppState) -> Router {
         .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
         .layer(axum::middleware::from_fn(http::csrf_guard))
         .layer(axum::middleware::from_fn(auth::guard));
-    let mut router = Router::new().nest("/api", api);
-    let dist = &state.config.web_dist;
-    if dist.is_dir() {
-        let spa = ServeDir::new(dist).fallback(ServeFile::new(dist.join("index.html")));
-        router = router.fallback_service(spa);
-    }
+    let router = web::attach(Router::new().nest("/api", api), &state.config);
     router.with_state(state)
 }
 
@@ -119,7 +114,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     // never open the hub to other machines without a token
     if !auth::is_loopback(&config.host) && config.token.is_none() {
         anyhow::bail!(
-            "HUBNESS_HOST={} is reachable from other machines: set HUBNESS_TOKEN first (generate one with `hubness token`)",
+            "HUBNESS_HOST={} is reachable from other machines: set HUBNESS_TOKEN first (generate one with `hubcli token`)",
             config.host
         );
     }

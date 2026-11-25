@@ -37,7 +37,46 @@ own machine or server and work with them from one browser UI — on a desktop or
 - Optional: `bwrap` (bubblewrap) for the sandbox environment, Docker and systemd for the
   System page
 
-## Quick start
+## Install
+
+`install.sh` builds from this checkout and installs into `~/.cargo/bin`. There are two
+flavors:
+
+| Command | Installs | Needs |
+| --- | --- | --- |
+| `./install.sh full` | `hubcli` — the hub (server with the web app compiled in) — and `hubtui`, plus a systemd user service `hubness` | Rust, Node.js 24, pnpm (or `npx`) |
+| `./install.sh tui` | `hubtui` — only the terminal client, no server code | Rust |
+
+```sh
+git clone <repo-url> hubness && cd hubness
+./install.sh full                 # hub on http://127.0.0.1:8787, started as a user service
+./install.sh full --port 9000     # another port; --host sets the address (loopback by default)
+./install.sh full --no-service    # no systemd unit: start `hubcli serve` yourself
+./install.sh tui                  # just the terminal client
+./install.sh full --dry-run       # show every step without changing anything
+./install.sh uninstall            # stop the service, remove the binaries (--purge: data too)
+```
+
+`full` keeps its settings in `~/.config/hubness/hub.env` (created once with
+`HUBNESS_HOST=127.0.0.1`, `HUBNESS_PORT=8787` and the data folder
+`~/.local/share/hubness`) and manages the hub with `systemctl --user status|restart hubness`
+and `journalctl --user -u hubness`. To upgrade, pull and run the same command again. On a
+server, `sudo loginctl enable-linger $USER` keeps the hub running after you log out.
+
+**Remote access.** Run the hub on a server with `./install.sh full` and only the client on
+your laptop with `./install.sh tui`. The simplest way to connect keeps the hub on loopback
+and forwards its port over SSH:
+
+```sh
+ssh -N -L 8787:127.0.0.1:8787 you@server   # in one terminal
+hubtui                                    # in another (or: hubtui --url http://127.0.0.1:8787)
+```
+
+To listen on a network address instead, see
+[Remote access](crates/server/README.md#remote-access) for the authentication the hub
+requires, and keep it behind HTTPS or a VPN.
+
+## Quick start (development)
 
 ```sh
 git clone <repo-url> hubness
@@ -90,6 +129,7 @@ The repository is a pnpm workspace:
 apps/server      Hono API, agent runtime, SQLite (node:sqlite)
 apps/web         React 19, Vite, Tailwind CSS 4
 packages/shared  Shared TypeScript types
+crates/          Rust server, API client, TUI; the hubcli and hubtui binaries
 ```
 
 See [CLAUDE.md](CLAUDE.md) for architecture notes and [CONTRIBUTING.md](CONTRIBUTING.md)

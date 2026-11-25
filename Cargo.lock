@@ -1234,7 +1234,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
-name = "hubness"
+name = "hubcli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1281,6 +1281,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "mime_guess",
  "notify",
  "percent-encoding",
  "regex",
@@ -1304,6 +1305,7 @@ name = "hubness-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "crossterm",
  "edtui",
  "futures-util",
@@ -1316,6 +1318,15 @@ dependencies = [
  "tokio",
  "tui-term",
  "vt100",
+]
+
+[[package]]
+name = "hubtui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hubness-tui",
 ]
 
 [[package]]

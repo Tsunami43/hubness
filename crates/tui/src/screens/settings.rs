@@ -568,7 +568,7 @@ impl Screen for Connection {
             Line::raw(""),
             Line::styled("This app", t.accent_style()),
             row("hubness TUI", format!("v{}", env!("CARGO_PKG_VERSION")), W),
-            row("Connect elsewhere", "hubness tui --url http://host:8787 --token …", W),
+            row("Connect elsewhere", "hubtui --url http://host:8787 --token …", W),
             Line::raw(""),
             Line::styled(
                 "  The TUI is a client of the hub's API: every session, project and setting is shared with the web app.",
