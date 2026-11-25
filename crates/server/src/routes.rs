@@ -37,6 +37,7 @@ pub fn api() -> Router<AppState> {
         .merge(crate::manifest::routes())
         .merge(crate::files::routes())
         .merge(crate::git::routes())
+        .merge(crate::harness::routes())
         .merge(crate::git_auth::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }

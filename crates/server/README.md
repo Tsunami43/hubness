@@ -46,7 +46,8 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Git | `/projects/:id/git/*`: status, diff, branches, log, show, stashes, every `POST /git/:op` operation | done |
 | Environment | runs, shells, jobs, preview proxy, secrets, sandbox | todo |
 | Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |
-| Harness | agent install/accounts/models | todo |
+| Harness | `/agents`, `/agents/:kind/models`, `/harness`, `/harness/agents`, `/harness/:kind` (versions, latest checks, auth, limits, models), default model, provider account ops | done |
+| Harness | `POST /harness/:kind/actions/:action` (needs terminal jobs) | todo |
 | System | containers, units, packages, overview, ask | todo |
 
 Known gaps in ported routes: the background refresh of repository metadata on

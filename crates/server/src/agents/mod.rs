@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 use crate::runtime::Turn;
 
 /// Registered agent kinds, in the order of the TS registry.
-pub const KINDS: &[&str] = &["claude-code", "codex", "opencode", "grok"];
+pub const KINDS: &[&str] = &["opencode", "claude-code", "grok", "codex"];
 
 pub fn is_known(kind: &str) -> bool {
     KINDS.contains(&kind)

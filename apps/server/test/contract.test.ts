@@ -69,10 +69,13 @@ async function makeClient(): Promise<{ call: Call; raw: Fetcher }> {
   const { csrfGuard } = await import('../src/csrf.ts');
   const { HttpError } = await import('../src/errors.ts');
   const { ensureHomeProject } = await import('../src/system/ask.ts');
+  const { harness, jobs } = await import('../src/routes/harness.ts');
   ensureHomeProject();
   const app = new Hono();
   app.onError((err, c) => c.json({ error: err.message }, err instanceof HttpError ? (err.status as 400) : 500));
   app.use('/api/*', csrfGuard);
+  app.route('/api/harness', harness);
+  app.route('/api/jobs', jobs);
   app.route('/api', api);
   app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
   const raw: Fetcher = async (u, init) => app.request(u, init);
@@ -1153,4 +1156,34 @@ test('pane file and diff of a session', async () => {
   const staged = (await call('GET', `/sessions/${s.id}/diff?path=fresh.txt`)).json.diff;
   assert.match(staged, /\+new/);
   assert.equal((await call('GET', `/sessions/missing/file?path=a.txt`)).status, 404);
+});
+
+test('harness: agents list, per-agent info, models, settings validation', async () => {
+  const agents = (await call('GET', '/agents')).json;
+  assert.deepEqual(agents.agents.map((a: any) => a.kind), ['opencode', 'claude-code', 'grok', 'codex']);
+  assert.equal(agents.defaultKind, 'claude-code');
+  for (const a of agents.agents) {
+    assert.equal(typeof a.available, 'boolean');
+    assert.equal(typeof a.detail, 'string');
+    assert.ok(['options', 'search'].includes(a.modelStyle));
+  }
+  assert.deepEqual((await call('GET', '/harness/agents')).json.defaultKind, 'claude-code');
+  assert.equal((await call('GET', '/agents/nope/models')).status, 404);
+  assert.ok(Array.isArray((await call('GET', '/agents/codex/models')).json.models));
+  for (const kind of ['codex', 'grok']) {
+    const h = (await call('GET', `/harness/${kind}`)).json;
+    assert.equal(typeof h.checkedAt, 'string');
+    assert.equal(h.info.kind, kind);
+    assert.equal(h.info.protocol, 'acp');
+    assert.ok(['up-to-date', 'update-available', 'unknown', 'not-installed'].includes(h.info.version.status));
+    assert.ok(Array.isArray(h.info.actions) && h.info.actions.every((x: any) => typeof x.command === 'string'));
+    assert.equal(h.info.defaultModelEdit, null);
+  }
+  assert.equal((await call('GET', '/harness/nope')).status, 404);
+  assert.equal((await call('PUT', '/harness/claude-code/default-model', { model: 'bad model!' })).status, 400);
+  assert.equal((await call('PUT', '/harness/grok/default-model', { model: 'x' })).status, 404);
+  assert.equal((await call('PUT', '/harness/nope/default-model', { model: 'x' })).status, 404);
+  assert.equal((await call('POST', '/harness/claude-code/accounts/p/a/switch')).status, 404, 'no provider accounts');
+  assert.equal((await call('POST', '/harness/opencode/accounts/p/a/delete')).status, 400);
+  assert.equal((await call('POST', '/harness/opencode/accounts/bad%20id/a/switch')).status, 400);
 });

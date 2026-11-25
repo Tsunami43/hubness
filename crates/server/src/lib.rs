@@ -16,6 +16,7 @@ pub mod files;
 pub mod git;
 pub mod git_auth;
 pub mod git_providers;
+pub mod harness;
 pub mod home;
 pub mod http;
 pub mod inbox;
@@ -53,6 +54,7 @@ pub struct AppState {
     /// The hub's own URL for agents' MCP servers (set once the listener is bound).
     self_url: Arc<std::sync::OnceLock<String>>,
     meta: catalog::MetaRefresh,
+    harness: harness::Caches,
 }
 
 impl AppState {
@@ -71,6 +73,7 @@ impl AppState {
             watches: watch::Watches::default(),
             self_url: Arc::default(),
             meta: Default::default(),
+            harness: Default::default(),
         })
     }
 
