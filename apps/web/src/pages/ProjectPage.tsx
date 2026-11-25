@@ -8,7 +8,11 @@ import { RepoWorkspace, useGitByRepo, type Tool } from '../components/RepoWorksp
 import { SessionsTool } from '../components/SessionsTool';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { LanguageBar } from '../components/LanguageBar';
-import { EnvironmentSection, PreviewPanel, ptySize, RunButton, RunPanel, SecretsPanel, ShellPanel, useRuns } from '../components/ProjectTools';
+import { RunButton, RunPanel, useRuns } from '../components/project/runs';
+import { PreviewPanel } from '../components/project/preview';
+import { ptySize, ShellPanel } from '../components/project/shell';
+import { EnvironmentSection } from '../components/project/environment';
+import { SecretsPanel } from '../components/project/secrets';
 import { Button, ErrorLine, Field, inputCls, Spinner } from '../components/ui';
 import { Select } from '../components/Select';
 import { confirmDialog } from '../components/Confirm';
