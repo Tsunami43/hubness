@@ -293,3 +293,138 @@ export interface RulesFileContent {
   exists: boolean;
   content: string;
 }
+
+/** Every agent's extensions at once (GET /api/harness/extensions), agents in UI order. */
+export interface HarnessExtensionsAll {
+  agents: HarnessExtensions[];
+}
+
+// ---- Harness: MCP catalog (the official MCP Registry, proxied by the hub) ----
+
+/** An environment variable or header an install option asks for. */
+export interface McpCatalogVar {
+  name: string;
+  description: string;
+  required: boolean;
+  /** A secret: entered in a masked field, written only into the agents' configs. */
+  secret: boolean;
+  /** A prefilled value or template from the registry (e.g. `Bearer {token}`). */
+  value: string | null;
+}
+
+/** One way to run a catalog server, ready for POST /api/harness/mcp. */
+export interface McpInstallOption {
+  kind: 'npm' | 'pypi' | 'docker' | 'remote';
+  transport: McpTransport;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  env: McpCatalogVar[];
+  headers: McpCatalogVar[];
+}
+
+export interface McpCatalogEntry {
+  /** The registry id (e.g. io.github.upstash/context7). */
+  id: string;
+  title: string;
+  description: string;
+  version: string | null;
+  repository: string | null;
+  website: string | null;
+  /** A short config name for the server (letters, digits, - and _). */
+  suggestedName: string;
+  /** Installable options (stdio packages from npm / PyPI / Docker, and remotes); may be empty. */
+  options: McpInstallOption[];
+}
+
+export interface McpCatalogResponse {
+  entries: McpCatalogEntry[];
+  /** Pass as ?cursor= for the next page (null — no more). */
+  nextCursor: string | null;
+  /** popular — the hub's built-in list (an empty search); registry — the MCP Registry. */
+  source: 'popular' | 'registry';
+}
+
+// ---- Harness: skills across the agents ----
+
+/** user — the agent's own skills folder (writable); project / plugin — shown, read-only. */
+export type SkillScope = 'user' | 'project' | 'plugin';
+
+export interface SkillEntry {
+  agent: AgentKind;
+  scope: SkillScope;
+  /** The skill folder. */
+  path: string;
+}
+
+/** A skill (a folder with SKILL.md, keyed by the folder name), as a row of the matrix. */
+export interface SkillRow {
+  name: string;
+  description: string;
+  /** Per agent: the scope it has the skill in (user wins over project, project over plugin), or null. */
+  agents: Record<AgentKind, SkillScope | null>;
+  entries: SkillEntry[];
+}
+
+export interface SkillAgentInfo {
+  kind: AgentKind;
+  label: string;
+  /** The hub can write this agent's skills. */
+  supported: boolean;
+  /** The user skills folder the hub writes (null when unsupported). */
+  dir: string | null;
+}
+
+export interface SkillsResponse {
+  skills: SkillRow[];
+  agents: SkillAgentInfo[];
+}
+
+export interface SkillFile {
+  /** Relative to the skill folder. */
+  path: string;
+  size: number;
+}
+
+export interface SkillContent {
+  name: string;
+  agent: AgentKind;
+  scope: SkillScope;
+  /** The skill folder. */
+  path: string;
+  /** SKILL.md as text. */
+  content: string;
+  files: SkillFile[];
+}
+
+/** A new skill: SKILL.md with name / description frontmatter and the body. */
+export interface SkillCreateInput {
+  name: string;
+  description: string;
+  body: string;
+  agents: AgentKind[];
+  /** Replace an existing different skill of the same name (the old one goes to the hub trash). */
+  replace?: boolean;
+}
+
+export interface SkillImportFound {
+  name: string;
+  description: string;
+  /** The folder inside the repository. */
+  path: string;
+}
+
+export interface SkillImportPreview {
+  /** Pass to POST /api/harness/skills/import (valid for a limited time). */
+  id: string;
+  /** The URL that was cloned. */
+  url: string;
+  skills: SkillImportFound[];
+}
+
+export interface SkillImportInput {
+  id: string;
+  skills: string[];
+  agents: AgentKind[];
+  replace?: boolean;
+}

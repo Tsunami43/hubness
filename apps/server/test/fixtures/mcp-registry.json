@@ -1,0 +1,70 @@
+{
+  "servers": [
+    {
+      "server": {
+        "name": "io.example/browser-mcp",
+        "title": "Browser",
+        "description": "Drive a browser.",
+        "version": "1.2.0",
+        "repository": { "url": "https://example.com/browser", "source": "github" },
+        "websiteUrl": "https://browser.example",
+        "packages": [
+          {
+            "registryType": "npm",
+            "identifier": "@example/browser",
+            "version": "1.2.0",
+            "transport": { "type": "stdio" },
+            "packageArguments": [
+              { "type": "named", "name": "--root", "isRequired": true, "valueHint": "dir" },
+              { "type": "named", "name": "--headless", "isRequired": true, "format": "boolean" },
+              { "type": "named", "name": "--port", "default": "9000" },
+              { "type": "named", "name": "--optional" },
+              { "type": "positional", "value": "serve" }
+            ],
+            "environmentVariables": [
+              { "name": "BROWSER_TOKEN", "description": "Token", "isRequired": true, "isSecret": true },
+              { "name": "BROWSER_MODE", "default": "fast" },
+              { "name": "bad-name" }
+            ]
+          },
+          { "registryType": "npm", "identifier": "@example/browser-http", "transport": { "type": "streamable-http", "url": "http://localhost:1/mcp" } },
+          { "registryType": "mcpb", "identifier": "https://example.com/x.mcpb", "transport": { "type": "stdio" } }
+        ],
+        "remotes": [
+          { "type": "streamable-http", "url": "https://browser.example/mcp", "headers": [{ "name": "Authorization", "description": "Bearer token", "isRequired": true, "isSecret": true, "value": "Bearer {token}" }] },
+          { "type": "sse", "url": "https://browser.example/sse" },
+          { "type": "websocket", "url": "wss://browser.example" }
+        ]
+      },
+      "_meta": {}
+    },
+    {
+      "server": {
+        "name": "io.example/mcp-server-py",
+        "description": "A Python one.",
+        "version": "0.3.0",
+        "packages": [
+          { "registryType": "pypi", "identifier": "py-mcp", "version": "0.3.0", "transport": { "type": "stdio" }, "packageArguments": [{ "type": "positional", "isRequired": true, "valueHint": "path" }] },
+          {
+            "registryType": "oci",
+            "identifier": "ghcr.io/example/py-mcp",
+            "version": "0.3.0",
+            "transport": { "type": "stdio" },
+            "environmentVariables": [{ "name": "API_KEY", "isSecret": true }]
+          },
+          {
+            "registryType": "oci",
+            "identifier": "ghcr.io/example/py-mcp:edge",
+            "runtimeHint": "podman",
+            "transport": { "type": "stdio" },
+            "runtimeArguments": [{ "type": "named", "name": "-i", "isRequired": true, "format": "boolean" }]
+          }
+        ]
+      }
+    },
+    { "server": { "name": "io.example/browser-mcp", "description": "A duplicate." } },
+    { "server": { "description": "No name." } },
+    { "server": { "name": "io.example/nothing", "packages": [{ "registryType": "nuget", "identifier": "X", "transport": { "type": "stdio" } }] } }
+  ],
+  "metadata": { "nextCursor": "io.example/nothing:1.0.0", "count": 5 }
+}

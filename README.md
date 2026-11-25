@@ -150,6 +150,7 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `HUBNESS_HOME` | `~/hub` | Hub working folder: `inbox`, `projects`, `home` |
 | `HUBNESS_SECRET_KEY` | generated | Key for project secrets (comma-separated for rotation) |
 | `HUBNESS_PREVIEW_PORTS` | `8790-8809` | Port range for the preview proxy |
+| `HUBNESS_MCP_REGISTRY` | `https://registry.modelcontextprotocol.io` | MCP Registry searched by Harness → MCP servers → Catalog |
 | `HUBNESS_CLAUDE_BIN`, `HUBNESS_OPENCODE_BIN`, `HUBNESS_GROK_BIN` | binary name | Agent CLI paths |
 | `HUBNESS_CODEX_ACP` | pinned `npx` command | Codex ACP adapter command |
 

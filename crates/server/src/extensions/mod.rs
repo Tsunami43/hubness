@@ -5,14 +5,16 @@
 //! agents read from their folders. Config edits keep everything else in the file, are atomic,
 //! keep a one-time `<file>.hubness.bak` and never touch a file that doesn't parse.
 
+mod catalog;
 mod items;
 mod mcp;
+mod skills;
 
 use std::path::{Path, PathBuf};
 
 use axum::Router;
 use axum::extract::{Path as UrlPath, Query, State};
-use axum::routing::{delete, get, put};
+use axum::routing::{delete, get, post, put};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use toml_edit::DocumentMut;
@@ -137,6 +139,13 @@ fn read_toml_file(file: &Path) -> ApiResult<Option<DocumentMut>> {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/harness/mcp", get(mcp_get).post(mcp_post))
+        .route("/harness/mcp/catalog", get(catalog_get))
+        .route("/harness/extensions", get(extensions_all))
+        .route("/harness/skills", get(skills_get).post(skills_post))
+        .route("/harness/skills/import/preview", post(skills_preview))
+        .route("/harness/skills/import", post(skills_import))
+        .route("/harness/skills/{name}", get(skill_get).delete(skill_delete_route))
+        .route("/harness/skills/{name}/agents/{kind}", put(skill_connect_route).delete(skill_disconnect_route))
         .route("/harness/mcp/{name}", delete(mcp_delete_route))
         .route("/harness/mcp/{name}/agents/{kind}", put(mcp_connect_route).delete(mcp_disconnect_route))
         .route("/harness/{kind}/extensions", get(extensions_route))
@@ -147,6 +156,9 @@ pub fn routes() -> Router<AppState> {
 struct ExtQuery {
     project: Option<String>,
     path: Option<String>,
+    q: Option<String>,
+    cursor: Option<String>,
+    agent: Option<String>,
 }
 
 /// The folder of `?project=<id>` (None without one).
@@ -192,6 +204,83 @@ async fn mcp_delete_route(
 ) -> ApiResult<axum::Json<Value>> {
     let dir = project_dir(&s, &q)?;
     Ok(axum::Json(mcp_delete(&name, dir.as_deref())?))
+}
+
+async fn catalog_get(Query(q): Query<ExtQuery>) -> ApiResult<axum::Json<Value>> {
+    Ok(axum::Json(catalog::mcp_catalog(q.q.as_deref(), q.cursor.as_deref()).await?))
+}
+
+/// Every agent's extensions at once (the cross-agent Rules / Subagents / Commands / Plugins pages).
+async fn extensions_all(State(s): State<AppState>, Query(q): Query<ExtQuery>) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    let agents: Vec<Value> = crate::harness::LABELS.iter().map(|(kind, _, _)| extensions_of(kind, dir.as_deref())).collect();
+    Ok(axum::Json(json!({ "agents": agents })))
+}
+
+// ---------- skills across the agents ----------
+
+async fn skills_get(State(s): State<AppState>, Query(q): Query<ExtQuery>) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    Ok(axum::Json(skills::skills_matrix(dir.as_deref())))
+}
+
+async fn skills_post(
+    State(s): State<AppState>,
+    Query(q): Query<ExtQuery>,
+    JsonBody(b): JsonBody<skills::SkillBody>,
+) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    Ok(axum::Json(skills::skill_create(&s.config().data_dir, b, dir.as_deref())?))
+}
+
+#[derive(Deserialize)]
+struct PreviewBody {
+    url: String,
+}
+
+async fn skills_preview(State(s): State<AppState>, JsonBody(b): JsonBody<PreviewBody>) -> ApiResult<axum::Json<Value>> {
+    Ok(axum::Json(skills::skill_import_preview(&s.config().data_dir, &b.url).await?))
+}
+
+async fn skills_import(
+    State(s): State<AppState>,
+    Query(q): Query<ExtQuery>,
+    JsonBody(b): JsonBody<skills::ImportBody>,
+) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    Ok(axum::Json(skills::skill_import(&s.config().data_dir, b, dir.as_deref())?))
+}
+
+async fn skill_get(State(s): State<AppState>, UrlPath(name): UrlPath<String>, Query(q): Query<ExtQuery>) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    Ok(axum::Json(skills::skill_content(&name, q.agent.as_deref(), dir.as_deref())?))
+}
+
+async fn skill_delete_route(
+    State(s): State<AppState>,
+    UrlPath(name): UrlPath<String>,
+    Query(q): Query<ExtQuery>,
+) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    Ok(axum::Json(skills::skill_delete(&s.config().data_dir, &name, dir.as_deref())?))
+}
+
+async fn skill_connect_route(
+    State(s): State<AppState>,
+    UrlPath((name, kind)): UrlPath<(String, String)>,
+    Query(q): Query<ExtQuery>,
+) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    Ok(axum::Json(skills::skill_connect(&name, &kind, dir.as_deref())?))
+}
+
+async fn skill_disconnect_route(
+    State(s): State<AppState>,
+    UrlPath((name, kind)): UrlPath<(String, String)>,
+    Query(q): Query<ExtQuery>,
+) -> ApiResult<axum::Json<Value>> {
+    let dir = project_dir(&s, &q)?;
+    Ok(axum::Json(skills::skill_disconnect(&s.config().data_dir, &name, &kind, dir.as_deref())?))
 }
 
 async fn extensions_route(
