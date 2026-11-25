@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-26
+
+### Fixed
+
+- The hub builds on macOS (`openpty` takes mutable pointers there); CI now builds and tests
+  on macOS on every push, so 0.2.2 is the first release with binaries.
+
 ## [0.2.1] - 2026-11-26
 
 ### Fixed

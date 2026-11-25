@@ -105,9 +105,10 @@ fn job(id: &str) -> Option<JobRef> {
 fn open_pty(cols: u16, rows: u16) -> std::io::Result<(OwnedFd, OwnedFd)> {
     let mut master = -1;
     let mut slave = -1;
-    let size = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
-    // SAFETY: openpty writes two fds into the out pointers; name/termios may be null
-    let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), &size) };
+    let mut size = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    // SAFETY: openpty writes two fds into the out pointers; name/termios may be null.
+    // Mutable pointers fit both signatures (Linux takes *const termios/winsize, macOS *mut).
+    let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &mut size) };
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }
