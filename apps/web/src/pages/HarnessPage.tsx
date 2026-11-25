@@ -9,7 +9,6 @@ import {
   LogIn,
   LogOut,
   Play,
-  Plug,
   Plus,
   RefreshCw,
   Repeat,
@@ -25,7 +24,7 @@ import { Button, ErrorLine, Spinner } from '../components/ui';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../components/SubmenuLayout';
 import { sheetTermSize, TerminalSheet } from '../components/Terminal';
 import { ModelPicker } from '../components/ModelPicker';
-import { ExtensionsCard } from '../components/HarnessExtensions';
+import { EXTENSION_PAGES, ExtensionsSummary } from '../components/HarnessExtensions';
 import { t, tOptional } from '../i18n';
 import type { MessageKey } from '../i18n/en';
 
@@ -45,6 +44,15 @@ const KEYWORDS = [
   'providers', 'models', 'default model', 'stats', 'tokens', 'acp', 'skills', 'rules', 'agents', 'commands', 'plugins',
   'версия', 'обновление', 'вход', 'аккаунт', 'подписка', 'лимиты', 'провайдеры', 'модели', 'навыки', 'правила', 'агенты', 'команды', 'плагины',
 ];
+
+const EXT_KEYWORDS: Record<(typeof EXTENSION_PAGES)[number]['to'], string[]> = {
+  mcp: ['mcp', 'servers', 'tools', 'catalog', 'registry', 'серверы', 'инструменты', 'каталог'],
+  skills: ['skills', 'skill.md', 'import', 'навыки', 'скиллы', 'импорт'],
+  rules: ['rules', 'claude.md', 'agents.md', 'memory', 'правила', 'память'],
+  subagents: ['subagents', 'agents', 'субагенты', 'агенты'],
+  commands: ['commands', 'slash', 'prompts', 'команды', 'слеш'],
+  plugins: ['plugins', 'marketplace', 'плагины'],
+};
 
 /**
  * Harness: agent submenu with search. Like System, nothing heavy is read up front: the menu
@@ -75,15 +83,17 @@ export function HarnessLayout() {
     }
   };
 
-  // MCP servers across the agents first, then the agents in the server's (registry) order
-  const mcpItem: SubmenuItem = {
-    to: 'mcp',
-    label: t('mcp.menu'),
-    hint: t('mcp.menuHint'),
-    icon: <Plug className="size-4" />,
-    keywords: ['mcp', 'servers', 'tools', 'серверы', 'инструменты'],
-  };
-  const items: SubmenuItem[] = [mcpItem, ...(agents ?? []).map((a) => ({
+  // the cross-agent Extensions pages first, then the agents in the server's (registry) order
+  const extItems: SubmenuItem[] = EXTENSION_PAGES.map(({ to, icon: Icon, label, hint }) => ({
+    to,
+    label: t(label),
+    hint: t(hint),
+    icon: <Icon className="size-4" />,
+    group: t('ext.group'),
+    keywords: EXT_KEYWORDS[to],
+  }));
+  const items: SubmenuItem[] = [...extItems, ...(agents ?? []).map((a) => ({
+    group: t('harness.agentsGroup'),
     to: a.kind,
     label: a.label,
     hint: a.version ? `v${a.version}` : undefined,
@@ -167,7 +177,7 @@ function HarnessTab({ kind }: { kind: AgentKind }) {
         </Button>
       </div>
       <AgentCard info={info} />
-      <ExtensionsCard kind={kind} />
+      <ExtensionsSummary kind={kind} />
     </div>
   );
 }
