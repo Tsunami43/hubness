@@ -36,11 +36,13 @@ pub struct ConnectForm {
     pub busy: Option<String>,
     /// The hub the user came from (Esc goes back to it).
     pub back: Option<String>,
+    /// The address was filled in for the user: the first typed character replaces it.
+    prefilled: bool,
 }
 
 impl ConnectForm {
     pub fn new(address: &str, hubs: Vec<Hub>, error: Option<String>, back: Option<String>) -> Self {
-        Self { input: TextInput::new(address), hubs, selected: None, error, busy: None, back }
+        Self { input: TextInput::new(address), hubs, selected: None, error, busy: None, back, prefilled: !address.is_empty() }
     }
 
     pub fn paste(&mut self, text: &str) {
@@ -72,6 +74,10 @@ impl ConnectForm {
                 return ConnectEvent::Connect(self.input.value().trim().to_string());
             }
             (None, _) => {
+                let typed = matches!(k.code, KeyCode::Char(_)) && !k.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
+                if std::mem::take(&mut self.prefilled) && typed {
+                    self.input.clear();
+                }
                 if self.input.on_key(k) == InputEvent::Changed {
                     self.error = None;
                 }
