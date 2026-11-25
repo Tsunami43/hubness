@@ -108,7 +108,7 @@ fn open_pty(cols: u16, rows: u16) -> std::io::Result<(OwnedFd, OwnedFd)> {
     let mut size = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
     // SAFETY: openpty writes two fds into the out pointers; name/termios may be null.
     // Mutable pointers fit both signatures (Linux takes *const termios/winsize, macOS *mut).
-    let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &mut size) };
+    let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &raw mut size) };
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }
