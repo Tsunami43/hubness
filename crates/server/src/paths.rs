@@ -35,6 +35,11 @@ pub fn to_string(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
 
+/// The user's home folder (`$HOME`; `/` when it is unset or empty).
+pub fn home() -> PathBuf {
+    std::env::var_os("HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

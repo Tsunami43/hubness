@@ -145,9 +145,7 @@ pub(super) fn resolve_bin(bin: &str) -> Option<PathBuf> {
     Some(std::fs::canonicalize(&found).unwrap_or(found))
 }
 
-pub(super) fn home() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
-}
+pub(super) use crate::paths::home;
 
 pub(super) fn env_set(k: &str) -> bool {
     std::env::var(k).is_ok_and(|v| !v.is_empty())

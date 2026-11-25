@@ -25,6 +25,7 @@ use crate::config::Config;
 use crate::db::{groups, projects};
 use crate::error::{ApiResult, HttpError};
 use crate::http::{JsonBody, blocking};
+use crate::paths::home;
 use crate::terminal::shq;
 use crate::{AppState, catalog, paths};
 
@@ -62,10 +63,6 @@ pub fn project_sandbox(db: &Connection, p: &Project) -> rusqlite::Result<bool> {
         return Ok(false); // the system project (questions about the server) runs without a sandbox
     }
     Ok(saved_runtime(db, &p.id)?.sandbox.unwrap_or_else(sandbox_available))
-}
-
-fn home() -> PathBuf {
-    std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"))
 }
 
 /// Agent state folders — writable (login, history, caches) for every registered agent.

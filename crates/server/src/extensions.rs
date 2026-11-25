@@ -20,6 +20,7 @@ use crate::db::projects;
 use crate::error::{ApiResult, HttpError};
 use crate::harness::LABELS;
 use crate::http::JsonBody;
+use crate::paths::home;
 
 const CLAUDE: &str = "claude-code";
 const CODEX: &str = "codex";
@@ -33,10 +34,6 @@ const BUILTIN_MCP: &str = "hub";
 
 fn env_dir(k: &str) -> Option<PathBuf> {
     std::env::var(k).ok().filter(|v| !v.is_empty()).map(PathBuf::from)
-}
-
-fn home() -> PathBuf {
-    env_dir("HOME").unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn claude_dir() -> PathBuf {
