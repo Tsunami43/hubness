@@ -6,6 +6,7 @@ pub mod group;
 pub mod harness;
 pub mod harness_ext;
 pub mod harness_mcp;
+pub mod harness_skills;
 pub mod home;
 pub mod kit;
 pub mod project;

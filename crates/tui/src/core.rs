@@ -140,6 +140,10 @@ pub trait Screen {
     fn tab_names(&self) -> Vec<String> {
         vec![]
     }
+    /// A short plain-words explanation of what the screen shows, added to the which-key title.
+    fn help(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Events delivered to the app loop.

@@ -45,11 +45,11 @@ impl App {
             Overlay::Leader(menu) => {
                 let title = match menu {
                     Menu::Root => format!("{}  leader", icon("\u{f030c}", "")),
-                    Menu::Actions => format!(
-                        "{}  {}",
-                        icon("\u{f02d6}", "?"),
-                        self.screens.get(&self.route).map(|s| s.screen.title()).unwrap_or_default()
-                    ),
+                    Menu::Actions => {
+                        let screen = self.screens.get(&self.route).map(|s| &s.screen);
+                        let help = screen.and_then(|s| s.help()).map(|h| format!(": {h}")).unwrap_or_default();
+                        format!("{}  {}{help}", icon("\u{f02d6}", "?"), screen.map(|s| s.title()).unwrap_or_default())
+                    }
                     Menu::Windows => format!("{}  windows", icon("\u{f05b6}", "")),
                     Menu::Tabs => format!("{}  tabs", icon("\u{f04e9}", "")),
                 };
@@ -248,7 +248,9 @@ impl App {
         let max_rows = (area.height.saturating_sub(4)).clamp(4, 14) as usize;
         let cols = entries.len().div_ceil(max_rows).max(1);
         let rows = entries.len().div_ceil(cols);
-        let w = (col_w * cols as u16 + 4).min(area.width.saturating_sub(2));
+        // wide enough for the title too (it may carry the screen's explanation)
+        let title_w = title.chars().count() as u16 + 4;
+        let w = (col_w * cols as u16 + 4).max(title_w).min(area.width.saturating_sub(2));
         let h = (rows as u16 + 2).min(area.height);
         let rect = Rect { x: area.x + area.width.saturating_sub(w + 1), y: area.y + area.height.saturating_sub(h), width: w, height: h };
         f.render_widget(Clear, rect);

@@ -851,6 +851,10 @@ impl App {
                     }
                     KeyCode::Down => selected = (selected + 1).min(visible.len().saturating_sub(1)),
                     KeyCode::Up => selected = selected.saturating_sub(1),
+                    KeyCode::Home => selected = 0,
+                    KeyCode::End => selected = visible.len().saturating_sub(1),
+                    KeyCode::PageDown => selected = (selected + 10).min(visible.len().saturating_sub(1)),
+                    KeyCode::PageUp => selected = selected.saturating_sub(10),
                     KeyCode::Char('n') if k.modifiers.contains(KeyModifiers::CONTROL) => {
                         selected = (selected + 1).min(visible.len().saturating_sub(1))
                     }

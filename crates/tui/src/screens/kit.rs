@@ -135,6 +135,62 @@ impl Nav {
     }
 }
 
+/// Choosing several items with the picker: Enter on an item ticks / unticks it and the picker
+/// opens again on the same row; the first row finishes. Items whose id starts with `!` are
+/// shown but can't be ticked (their label says why).
+#[derive(Default, Clone)]
+pub struct MultiPick {
+    pub key: String,
+    pub title: String,
+    pub items: Vec<(String, String)>,
+    pub chosen: Vec<String>,
+}
+
+const DONE: &str = "\u{1f}done";
+
+impl MultiPick {
+    pub fn new(key: &str, title: impl Into<String>, items: Vec<(String, String)>, chosen: Vec<String>) -> Self {
+        Self { key: key.into(), title: title.into(), items, chosen }
+    }
+
+    /// Show the picker with the cursor on row `selected`.
+    pub fn open(&self, ctx: &mut Ctx, selected: usize) {
+        let mut items = vec![(DONE.to_string(), format!("\u{2192} Done ({} chosen)", self.chosen.len()))];
+        for (id, label) in &self.items {
+            let mark = if id.starts_with('!') {
+                "   "
+            } else if self.chosen.contains(id) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            items.push((id.clone(), format!("{mark} {label}")));
+        }
+        let title = format!("{} · Enter ticks, Home → Done", self.title);
+        ctx.modal(crate::core::Modal::Pick { title, items, filter: String::new(), selected, key: self.key.clone() });
+    }
+
+    /// The picker's answer: `Some(true)` — finished, `Some(false)` — ticked and opened again,
+    /// `None` — cancelled.
+    pub fn answer(&mut self, result: &anyhow::Result<Value>, ctx: &mut Ctx) -> Option<bool> {
+        let Ok(Value::String(id)) = result else { return None };
+        if id == DONE {
+            return Some(true);
+        }
+        let row = self.items.iter().position(|(i, _)| i == id).map(|i| i + 1).unwrap_or(0);
+        if !id.starts_with('!') {
+            match self.chosen.iter().position(|c| c == id) {
+                Some(i) => {
+                    self.chosen.remove(i);
+                }
+                None => self.chosen.push(id.clone()),
+            }
+        }
+        self.open(ctx, row);
+        Some(false)
+    }
+}
+
 /// A clicked list row `id:<index>` of the list `list`, if it is one.
 pub fn clicked_row(id: &str, list: &str) -> Option<usize> {
     id.strip_prefix(list)?.strip_prefix(':')?.parse().ok()

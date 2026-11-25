@@ -73,8 +73,19 @@ in the status line). `i` / `a` / `o` type, `Esc` stops typing, `:w` / `Ctrl+S` s
 ## Harness
 
 - The MCP tab is the matrix of MCP servers × agents: `j` / `k` pick a server, `[` / `]` (or
-  `←` / `→`, `Tab`) pick the agent column, `Enter` connects / disconnects it, `a` adds a server,
-  `x` removes it from every agent, `P` shows a project's servers too.
+  `←` / `→`, `Tab`) pick the agent column, `Enter` connects / disconnects it. `c` opens the
+  catalog (an empty search lists popular servers, anything else searches the MCP Registry),
+  then asks for the install option, the name, placeholders, env vars / headers (secrets
+  masked) and the agents; `a` adds a server by hand, `x` removes it from every agent, `P`
+  shows a project's servers too.
+- The Skills tab is the matrix of skills × agents: the first column is the skill (`Enter` or
+  `v` shows its SKILL.md), `Enter` on an agent column copies the skill there or moves that copy
+  to the hub trash; project and plugin copies are read-only. `n` writes a new skill, `i`
+  imports skills from a git repository (`owner/repo` or an https URL; an existing different
+  skill is replaced only after a confirm), `x` removes a skill from every agent.
+- A tab that needs it explains itself in a muted line under the tab bar and in the `?` title.
+- Choosing several items (agents, skills to import) uses the picker: `Enter` ticks a row, the
+  first row (`Home`) finishes.
 - An agent tab has sections: `[` / `]` switch between the overview, skills, rules, agents,
   commands and plugins; `Enter` shows an item, `e` on a rules file opens it in the editor.
 
