@@ -14,7 +14,7 @@
 #   --no-start            only install
 #   --uninstall           remove the binary and the service (data stays)
 #
-# Re-running it upgrades in place (so does `hubness update`). Binaries of 0.1 (`hubcli`,
+# Re-running it upgrades in place (so does `hubness update`). Pre-0.2 binaries (`hubcli`,
 # `hubtui`) in the same folder are replaced, and a service running hubcli moves to hubness.
 set -eu
 
@@ -254,7 +254,7 @@ have_systemd() { have "$SYSTEMCTL" && "$SYSTEMCTL" --user show-environment >/dev
 
 service_active() { have_systemd && [ "$("$SYSTEMCTL" --user is-active hubness.service 2>/dev/null)" = active ]; }
 
-# Before installing: is there a 0.1 install (hubcli, hubtui) whose service runs hubcli?
+# Before installing: is there a pre-0.2 install (hubcli, hubtui) whose service runs hubcli?
 check_old() {
   OLD_SERVICE=0
   OLD_ACTIVE=0
@@ -336,7 +336,7 @@ setup_hub() {
 }
 
 do_uninstall() {
-  # the full build (or a 0.1 hubcli) removes the service; the client build has none
+  # the full build (or a pre-0.2 hubcli) removes the service; the client build has none
   for b in hubness hubcli; do
     if [ -x "$INSTALL_DIR/$b" ] && "$INSTALL_DIR/$b" server uninstall </dev/null 2>/dev/null; then break; fi
   done

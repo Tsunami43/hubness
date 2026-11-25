@@ -70,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh |
 
 `--dir DIR` (or `HUBNESS_INSTALL_DIR`) installs elsewhere. Upgrade with `hubness update`
 (`--check` only reports; it restarts the service on the new binary), or run the installer
-again. Coming from 0.1 (`hubness` and `hubtui`)? The installer removes the old binaries and
+again. Coming from a pre-0.2 build (`hubcli`, `hubtui`)? The installer removes them and
 moves the service over to `hubness`.
 
 ## Usage

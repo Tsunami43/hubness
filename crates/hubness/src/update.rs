@@ -205,11 +205,13 @@ fn install(exe: &Path, binary: &[u8], version: &str) -> anyhow::Result<()> {
     let reported = out.as_ref().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
     if !reported.starts_with(&format!("hubness {version}")) {
         let _ = std::fs::remove_file(&new);
-        let why = match out {
-            Err(e) => e.to_string(),
-            Ok(_) => format!("it reports {:?}", reported.lines().next().unwrap_or_default()),
-        };
-        bail!("the downloaded binary doesn't run here ({why}); nothing was changed");
+        match out {
+            Err(e) => bail!("the downloaded binary doesn't run here ({e}); nothing was changed"),
+            Ok(_) => bail!(
+                "the downloaded binary isn't hubness {version} (it reports {:?}); nothing was changed",
+                reported.lines().next().unwrap_or_default()
+            ),
+        }
     }
     std::fs::rename(&new, exe).map_err(|e| {
         let _ = std::fs::remove_file(&new);
@@ -223,7 +225,8 @@ fn replace_error(exe: &Path, e: std::io::Error) -> anyhow::Error {
         std::io::ErrorKind::CrossesDevices => "the binary is on another file system; re-install it:",
         _ => "re-install it:",
     };
-    anyhow::anyhow!("can't replace {}: {e}\n{hint}\n  {INSTALL_FULL}", exe.display())
+    let install = if FLAVOR == "client" { format!("{INSTALL_FULL} -s -- --tui-only") } else { INSTALL_FULL.to_string() };
+    anyhow::anyhow!("can't replace {}: {e}\n{hint}\n  {install}", exe.display())
 }
 
 /// `~/.cargo/bin` (or `$CARGO_HOME/bin`) when the binary lives there.

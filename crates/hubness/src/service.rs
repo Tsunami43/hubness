@@ -454,7 +454,7 @@ mod tests {
             home: dir.clone(),
         };
         let env = EnvFile::defaults(&p);
-        // what the 0.1 `hubcli server start` wrote
+        // what the pre-0.2 `hubcli server start` wrote
         let old = unit_text(&p)
             .unwrap()
             .replace(&std::env::current_exe().unwrap().canonicalize().unwrap().to_string_lossy().to_string(), "/home/u/.local/bin/hubcli");
