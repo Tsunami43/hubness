@@ -23,7 +23,7 @@ let child: ChildProcess | null = null;
 let rustBase = '';
 
 async function startRust(): Promise<string> {
-  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
+  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubcli');
   if (!existsSync(bin)) throw new Error(`Rust server binary not found: ${bin} (run cargo build)`);
   child = spawn(bin, ['serve'], {
     cwd: tmp, // no .env from the repository
@@ -749,9 +749,9 @@ test('ACP agents: codex turn (bypass and ask with approval), opencode provider e
   ]);
 });
 
-test('hub MCP server: open_pane and close_pane reach the session (rust: `hubness mcp`)', { skip: target !== 'rust' && 'the TS server runs in-process (no listener)' }, async () => {
+test('hub MCP server: open_pane and close_pane reach the session (rust: `hubcli mcp`)', { skip: target !== 'rust' && 'the TS server runs in-process (no listener)' }, async () => {
   const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
-  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
+  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubcli');
   const mcp = spawn(bin, ['mcp'], { env: { ...process.env, HUB_URL: rustBase, HUB_SESSION_ID: s.id }, stdio: ['pipe', 'pipe', 'inherit'] });
   const { createInterface } = await import('node:readline');
   const replies = createInterface({ input: mcp.stdout! })[Symbol.asyncIterator]();
@@ -1614,7 +1614,7 @@ test('clone by URL is a terminal job; harness actions only from the list', async
 });
 
 test('access token: bearer, browser session cookie, refusing a public address without one (rust)', { skip: target !== 'rust' && 'the TS server has no access token (loopback only)' }, async () => {
-  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
+  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubcli');
   const { spawnSync } = await import('node:child_process');
   const refused = spawnSync(bin, ['serve'], { cwd: tmp, env: { ...process.env, HUBNESS_HOST: '0.0.0.0', HUBNESS_PORT: '0', HUBNESS_TOKEN: '', HUBNESS_DATA_DIR: join(tmp, 'auth-data') }, encoding: 'utf8', timeout: 10_000 });
   assert.notEqual(refused.status, 0);

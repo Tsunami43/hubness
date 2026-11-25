@@ -1,5 +1,5 @@
 //! hubness MCP server — a port of `mcp/hub-mcp.ts` (stdio, line-delimited JSON-RPC 2.0),
-//! run as `hubness mcp`. The agent gets the `open_pane` tool: show a site preview, a file,
+//! run as `hubcli mcp`. The agent gets the `open_pane` tool: show a site preview, a file,
 //! or a diff next to the chat; and `close_pane`. The hub attaches it to every agent session.
 //!
 //! Env: `HUB_URL` (http://127.0.0.1:8787), `HUB_SESSION_ID`.

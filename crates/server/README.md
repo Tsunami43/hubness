@@ -5,18 +5,28 @@ Rust implementation of the hubness server, a port of `apps/server` covering its 
 servers can be switched on one data folder.
 
 ```sh
-cargo run -p hubness -- serve      # http://127.0.0.1:8787, data in ./.data
-cargo run -p hubness -- mcp        # the hub MCP server (agents get it automatically)
+cargo run -p hubcli -- serve       # http://127.0.0.1:8787, data in ./.data
+cargo run -p hubcli -- mcp         # the hub MCP server (agents get it automatically)
+cargo build --release -p hubcli --features embed-web   # with the web app inside (pnpm build first)
 pnpm test:contract:rust            # apps/server/test/contract.test.ts against this server
 ```
+
+## Web app
+
+The server serves the web app next to `/api`, with the SPA fallback to `index.html`. It
+takes the folder in `HUBNESS_WEB_DIST` when that is set; otherwise the copy compiled into
+the binary with the `embed-web` feature (`build.rs` embeds `apps/web/dist`, or
+`HUBNESS_EMBED_WEB_DIST` at build time, and fails with instructions when it is missing);
+otherwise `apps/web/dist` relative to the current folder, when it exists. The feature is off
+by default so `cargo build` and `cargo test` need no web build; `install.sh full` turns it on.
 
 ## Remote access
 
 By default the hub listens on 127.0.0.1 and asks for nothing. To reach it from another
-machine, set `HUBNESS_TOKEN` (generate one with `hubness token`) and `HUBNESS_HOST`; the
+machine, set `HUBNESS_TOKEN` (generate one with `hubcli token`) and `HUBNESS_HOST`; the
 hub refuses a non-loopback address without a token. Every `/api` request and every preview
 port then needs the token: `Authorization: Bearer <token>` for API clients
-(`hubness tui --url http://host:8787 --token …`), a one-time sign-in for the browser (an
+(`hubtui --url http://host:8787 --token …`), a one-time sign-in for the browser (an
 HttpOnly cookie with a hash of the token). The hub speaks plain HTTP — across untrusted
 networks put it behind an HTTPS reverse proxy (Caddy, nginx) or a VPN (Tailscale,
 WireGuard). The TypeScript server has no access token and stays loopback-only.
@@ -43,7 +53,7 @@ WireGuard). The TypeScript server has no access token and stays loopback-only.
 | Manifest | `GET/POST /projects/:id/manifest`, manifest section of the agent context | done |
 | Projects | `GET /projects/:id` (repo info, provider links, languages), `POST /projects/new-repo`, `GET /groups/:id/context`, background repo-meta refresh on `GET /projects` | done |
 | Projects | `POST /projects/clone` (a terminal job with the stored host login; the project appears after a successful clone) | done |
-| Git logins | `GET /git-credentials`, `PUT/DELETE /git-credentials/:host` (same encrypted rows as TS), credential helper `hubness git-credential-helper` for fetch/pull/push | done |
+| Git logins | `GET /git-credentials`, `PUT/DELETE /git-credentials/:host` (same encrypted rows as TS), credential helper `hubcli git-credential-helper` for fetch/pull/push | done |
 | Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
 | Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
 | Sandbox | bubblewrap wrap for project/group agent runs (same hidden paths as TS) | done |
@@ -51,7 +61,7 @@ WireGuard). The TypeScript server has no access token and stays loopback-only.
 | Sessions | pane file and diff (`/sessions/:id/file`, `/sessions/:id/diff`) | done |
 | Agents | Claude Code (stream-json, approvals, limits) | done |
 | Agents | Codex, OpenCode and Grok over ACP (load/resume, models, modes, client-side policy, provider retries) | done |
-| MCP | `hubness mcp`: the hub MCP server (`open_pane`, `close_pane`) attached to every agent session | done |
+| MCP | `hubcli mcp`: the hub MCP server (`open_pane`, `close_pane`) attached to every agent session | done |
 | Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |

@@ -35,7 +35,7 @@ pub fn init(token: Option<String>) -> anyhow::Result<()> {
     if let Some(t) = &token
         && t.chars().count() < MIN_LEN
     {
-        anyhow::bail!("HUBNESS_TOKEN must be at least {MIN_LEN} characters (generate one with `hubness token`)");
+        anyhow::bail!("HUBNESS_TOKEN must be at least {MIN_LEN} characters (generate one with `hubcli token`)");
     }
     let _ = TOKEN.set(token);
     Ok(())
