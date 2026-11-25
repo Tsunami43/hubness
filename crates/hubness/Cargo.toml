@@ -1,0 +1,12 @@
+[package]
+name = "hubness"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.105"
+clap = { version = "4.6.10", features = ["derive"] }
+hubness-server = { version = "0.1.0", path = "../server" }
+tokio = { version = "1.54.1", features = ["full"] }

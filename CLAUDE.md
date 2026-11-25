@@ -25,6 +25,7 @@ type stripping — there is no server build step).
 apps/server     Hono HTTP + SSE API, agent runtime, SQLite storage
 apps/web        React 19 + Vite + Tailwind 4 single-page app
 packages/shared Types shared by server and web (@hubness/shared)
+crates/         Rust port of the server (Cargo workspace, in progress)
 ```
 
 ### Server (`apps/server/src`)
@@ -64,6 +65,20 @@ packages/shared Types shared by server and web (@hubness/shared)
   added to both files.
 - Vite proxies `/api` to the server in dev; in production the server serves `apps/web/dist`.
 
+### Rust port (`crates/`)
+
+The server is being ported to Rust incrementally; the TypeScript server stays the reference
+until the port catches up. Both use the same `HUBNESS_*` settings and the same SQLite file,
+so they can be switched on one data folder (not run at the same time).
+
+- `core` — API types (`hubness-core`), JSON shape identical to `packages/shared`.
+- `server` — axum + rusqlite. `db/migrations.rs` must mirror `db/migrations.ts` exactly:
+  a new migration is added to both servers. `README.md` lists what is ported.
+- `hubness` — the binary: `hubness serve`.
+- `apps/server/test/contract.test.ts` — black-box HTTP tests every server must pass; they
+  run against TS in `pnpm test` and against Rust with `pnpm test:contract:rust`. Port a
+  route by adding its contract test first.
+
 ## Commands
 
 ```sh
@@ -73,11 +88,16 @@ pnpm check    # tsc --noEmit for every package (server checks src and test)
 pnpm test     # server tests (node:test)
 pnpm build    # typecheck and build the web app
 pnpm start    # production server, serves the built web app
+
+cargo run -p hubness -- serve   # the Rust server (same port and data folder)
+pnpm check:rust                 # cargo fmt --check, clippy -D warnings, cargo test
+pnpm test:contract:rust         # contract tests against the Rust server
 ```
 
 Run a single test file: `cd apps/server && node --test test/git.test.ts`.
 
-Always run `pnpm check` and `pnpm test` before considering a change done.
+Always run `pnpm check` and `pnpm test` before considering a change done; for changes in
+`crates/` also `pnpm check:rust` and `pnpm test:contract:rust`.
 
 ## Conventions
 
