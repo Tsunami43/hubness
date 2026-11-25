@@ -48,14 +48,15 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |
 | Harness | `/agents`, `/agents/:kind/models`, `/harness`, `/harness/agents`, `/harness/:kind` (versions, latest checks, auth, limits, models), default model, provider account ops | done |
 | Harness | `POST /harness/:kind/actions/:action` (needs terminal jobs) | todo |
-| System | containers, units, packages, overview, ask | todo |
+| System | `/system/*`: platform, overview (CPU, memory, disks, GPUs, sensors), Docker containers/networks/volumes (logs, actions, safe removal), systemd units (launchd on macOS), package managers and pacman package info; `POST /ask` | done |
 
-Known gaps in ported routes: the background refresh of repository metadata on
-`GET /projects` is not ported. Session events are passed through as JSON (`HubEvent` is
-Known gaps in ported routes: sessions of agents other than Claude Code get an error
-notice in the feed. Session events are passed through as JSON (`HubEvent` is
+Session events are passed through as JSON (`HubEvent` is
 not typed in Rust yet); `serde_json` keeps key order and exact floats so the output is
 byte-identical to the TS server.
+
+System commands run without a shell, with `childEnv()`-style environment (TS passes the
+full hub environment) and with `--` before user-supplied names where the TS server passes
+them unchecked (container actions/logs/inspect, `systemctl --user`, `pacman -Qi`).
 
 Repository languages use GitHub Linguist data generated from the `linguist-languages`
 npm package into `src/languages_data.rs`; regenerate it with

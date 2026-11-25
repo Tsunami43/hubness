@@ -35,6 +35,7 @@ pub fn api() -> Router<AppState> {
         .merge(crate::kanban::routes())
         .merge(crate::secrets::routes())
         .merge(crate::manifest::routes())
+        .merge(crate::system::routes())
         .merge(crate::files::routes())
         .merge(crate::git::routes())
         .merge(crate::harness::routes())

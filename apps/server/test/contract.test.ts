@@ -76,6 +76,9 @@ async function makeClient(): Promise<{ call: Call; raw: Fetcher }> {
   app.use('/api/*', csrfGuard);
   app.route('/api/harness', harness);
   app.route('/api/jobs', jobs);
+  const { system, handleAsk } = await import('../src/routes/system.ts');
+  app.route('/api/system', system);
+  app.post('/api/ask', handleAsk);
   app.route('/api', api);
   app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
   const raw: Fetcher = async (u, init) => app.request(u, init);
@@ -1206,4 +1209,142 @@ test('removing a project together with its folder', async () => {
   rmSync(join(repo2, '.git'), { recursive: true });
   assert.match((await call('DELETE', `/projects/${p2.id}?files=1&confirm=repo2`)).json.error, /not the root of a git repository/);
   assert.ok(existsSync(repo2));
+});
+
+test('system: platform, overview and Docker listings (shapes only — they depend on the host)', async () => {
+  const p = await call('GET', '/system/platform');
+  assert.equal(p.status, 200);
+  assert.ok(['linux', 'darwin', 'other'].includes(p.json.platform));
+  assert.ok(['systemd', 'launchd', null].includes(p.json.services));
+
+  const o = (await call('GET', '/system/overview')).json;
+  assert.deepEqual(Object.keys(o).sort(), ['cpuPercent', 'cpus', 'disks', 'gpus', 'hostname', 'info', 'load', 'memory', 'swap', 'temps', 'uptimeSec']);
+  assert.equal(o.info.platform, p.json.platform);
+  assert.equal(o.info.services, p.json.services);
+  for (const k of ['osId', 'osName', 'arch', 'kernel']) assert.equal(typeof o.info[k], 'string', k);
+  assert.ok(Array.isArray(o.info.osLike));
+  assert.ok(o.info.host === null || typeof o.info.host === 'string');
+  assert.ok(o.info.cpu === null || typeof o.info.cpu === 'string');
+  assert.equal(typeof o.hostname, 'string');
+  assert.ok(Number.isInteger(o.uptimeSec));
+  assert.equal(o.load.length, 3);
+  assert.ok(o.load.every((n: unknown) => typeof n === 'number'));
+  assert.ok(Number.isInteger(o.cpus));
+  assert.ok(o.cpuPercent === null || Number.isInteger(o.cpuPercent));
+  for (const g of o.gpus) assert.equal(typeof g.name, 'string');
+  for (const t of o.temps) assert.ok(['cpu', 'gpu', 'disk', 'other'].includes(t.kind) && typeof t.celsius === 'number');
+  assert.deepEqual(Object.keys(o.memory).sort(), ['availableMb', 'totalMb', 'usedPercent']);
+  assert.ok(Object.values(o.memory).every((n) => Number.isInteger(n)));
+  assert.deepEqual(Object.keys(o.swap).sort(), ['totalMb', 'usedMb']);
+  for (const d of o.disks) {
+    assert.equal(typeof d.mount, 'string');
+    assert.ok(d.device.startsWith('/'));
+    assert.ok(Number.isInteger(d.sizeGb) && Number.isInteger(d.usedGb));
+  }
+
+  // Docker may be missing: then `available` is false and the list is empty
+  const c = await call('GET', '/system/containers');
+  assert.equal(c.status, 200);
+  assert.equal(typeof c.json.available, 'boolean');
+  assert.ok(Array.isArray(c.json.containers));
+  if (!c.json.available) assert.equal(c.json.containers.length, 0);
+  for (const x of c.json.containers) {
+    for (const k of ['id', 'name', 'image', 'state', 'status', 'ports']) assert.equal(typeof x[k], 'string', k);
+    assert.ok(Number.isInteger(x.restartCount) && Number.isInteger(x.exitCode));
+    assert.equal(typeof x.oomKilled, 'boolean');
+    assert.ok(x.memLimitMb === null || Number.isInteger(x.memLimitMb));
+    assert.ok('health' in x && 'finishedAt' in x);
+  }
+  const n = (await call('GET', '/system/networks')).json;
+  assert.equal(typeof n.available, 'boolean');
+  for (const x of n.networks) {
+    assert.equal(typeof x.builtin, 'boolean');
+    assert.ok(Array.isArray(x.containers));
+    assert.ok('subnet' in x && 'project' in x);
+  }
+  if (n.networks.length > 1) assert.ok(n.networks[0].builtin || !n.networks.some((x: any) => x.builtin), 'built-in networks come first');
+  const v = (await call('GET', '/system/volumes')).json;
+  assert.equal(typeof v.available, 'boolean');
+  for (const x of v.volumes) assert.ok(Number.isInteger(x.links) && typeof x.anonymous === 'boolean' && 'size' in x);
+  assert.equal(typeof (await call('GET', '/system/containers/hubness-contract-missing/logs?lines=5')).json.logs, 'string');
+});
+
+test('system: input checks before anything runs on the host', async () => {
+  assert.equal((await call('POST', '/system/containers/x/explode')).status, 400);
+  assert.equal((await call('POST', '/system/containers/x/logs')).status, 400, 'logs is not an action');
+  assert.equal((await call('DELETE', '/system/containers/-rf')).status, 400);
+  assert.equal((await call('DELETE', `/system/containers/${encodeURIComponent('a b')}`)).status, 400);
+  assert.equal((await call('DELETE', '/system/volumes/-x')).status, 400);
+  assert.equal((await call('DELETE', '/system/networks/-x')).status, 400);
+  const own = await call('DELETE', '/system/networks/bridge');
+  assert.equal(own.status, 409, 'Docker’s own networks are never removed');
+  assert.equal(typeof own.json.error, 'string');
+
+  assert.equal((await call('POST', '/system/units/nope/a.service/start')).status, 400);
+  assert.equal((await call('POST', '/system/units/user/a.service/explode')).status, 400);
+  assert.equal((await call('GET', '/system/units/nope/a.service/logs')).status, 400);
+  assert.deepEqual((await call('POST', `/system/units/user/${encodeURIComponent('a;b')}/start`)).json, { ok: false, output: 'Invalid unit name' });
+  const root = (await call('POST', '/system/units/system/hubness-contract.service/restart')).json;
+  assert.equal(root.ok, false, 'system units need root');
+  assert.match(root.output, /root/);
+  assert.deepEqual((await call('GET', `/system/units/user/${encodeURIComponent('a;b')}/logs`)).json, { logs: 'Invalid unit name' });
+  assert.deepEqual((await call('GET', `/system/package-info/${encodeURIComponent('a b')}`)).json, { info: 'Invalid package name' });
+});
+
+test('system: services and package managers', async () => {
+  const { services } = (await call('GET', '/system/platform')).json;
+  const u = await call('GET', '/system/units');
+  if (services === null) assert.equal(u.status, 501, 'no service manager');
+  else {
+    assert.equal(u.status, 200);
+    for (const x of u.json) {
+      assert.ok(['system', 'user'].includes(x.scope));
+      for (const k of ['name', 'load', 'active', 'sub', 'description']) assert.equal(typeof x[k], 'string', k);
+    }
+  }
+  const { managers } = (await call('GET', '/system/packages')).json;
+  assert.ok(Array.isArray(managers));
+  for (const m of managers) assert.ok(typeof m.id === 'string' && typeof m.label === 'string' && ['system', 'language', 'tool'].includes(m.kind));
+  const missing = await call('GET', '/system/packages/hubness-no-such-manager');
+  assert.equal(missing.status, 404);
+  assert.match(missing.json.error, /not found/);
+  // pacman reads only local data (no network): check the response shape where it exists
+  if (managers.some((m: any) => m.id === 'pacman')) {
+    const r = (await call('GET', '/system/packages/pacman')).json;
+    assert.equal(r.manager, 'pacman');
+    assert.equal(r.listTitle, 'explicit');
+    assert.ok(Number.isInteger(r.installed) && Array.isArray(r.packages) && Array.isArray(r.updates));
+    assert.match(r.checkedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    for (const p of r.packages.slice(0, 20)) assert.ok(typeof p.name === 'string' && typeof p.version === 'string' && !('newVersion' in p));
+    assert.deepEqual((await call('GET', '/system/packages/pacman')).json.checkedAt, r.checkedAt, 'cached');
+  }
+});
+
+test('ask about this: a regular chat with the context in the first message', async () => {
+  assert.equal((await call('POST', '/ask', {})).status, 400);
+  assert.equal((await call('POST', '/ask', { target: { kind: 'disk', id: 'x' } })).status, 400);
+  assert.equal((await call('POST', '/ask', { target: { kind: 'unit', id: 'a.service' } })).status, 400, 'a unit needs a scope');
+  assert.equal((await call('POST', '/ask', { target: { kind: 'package', id: '' } })).status, 400);
+  assert.equal((await call('POST', '/ask', { target: { kind: 'package', id: 'x' }, question: 5 })).status, 400);
+
+  useFixture('claude-tool-turn.jsonl');
+  // an unknown agent falls back to the default one; the mode defaults to ask
+  const r = await call('POST', '/ask', { target: { kind: 'package', id: 'hubness-contract-pkg' }, agent: { kind: 'nope' }, question: '  why is it here?  ' });
+  assert.equal(r.status, 201);
+  const s = r.json;
+  assert.equal(s.title, 'Package hubness-contract-pkg');
+  assert.equal(s.projectId, null);
+  assert.equal(s.groupId, null);
+  assert.deepEqual(s.agent, { kind: 'claude-code', permissionMode: 'ask' });
+  const done = await waitFor(s.id, (x) => x.status === 'idle' && x.agentSessionId, 'the ask turn to finish');
+  assert.equal(done.title, 'Package hubness-contract-pkg', 'the first message does not rename it');
+  assert.ok((await call('GET', '/sessions')).json.some((x: any) => x.id === s.id), 'listed with the regular chats');
+  const [first] = (await call('GET', `/sessions/${s.id}/events`)).json;
+  assert.equal(first.kind, 'user');
+  const parts = first.text.split('\n\n');
+  assert.equal(parts[0], 'Look at the package `hubness-contract-pkg` on this server (pacman).');
+  assert.equal(parts[1], 'User question: why is it here?');
+  assert.match(parts[2], /^You are helping with the server this hub runs on\./);
+  assert.match(first.text, /### pacman -Qi \+ pacman\.log\n```\n/);
+  assert.match(first.text, /Recent pacman\.log entries:/);
 });

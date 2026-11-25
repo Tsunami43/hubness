@@ -31,6 +31,7 @@ pub mod runtime;
 pub mod search;
 pub mod secrets;
 pub mod sessions;
+pub mod system;
 pub mod watch;
 pub mod workspaces;
 
