@@ -21,7 +21,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: v
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -37,15 +37,15 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @hubness/web run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: web-dist
           path: apps/web/dist
@@ -63,10 +63,13 @@ jobs:
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04-arm
+          # Apple silicon runners build both macOS targets (Intel ones are being retired):
+          # x86_64 is cross-compiled and can't be run there to check its --version
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
+            cross: true
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -74,8 +77,8 @@ jobs:
       # no AppleDouble ._ files in the macOS archives
       COPYFILE_DISABLE: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with:
           name: web-dist
           path: apps/web/dist
@@ -102,12 +105,14 @@ jobs:
             name="hubness-$VERSION-$TARGET-$flavor"
             mkdir "$name"
             cp "out/$flavor/hubness" README.md LICENSE "$name/"
-            "$name/hubness" --version | grep -F "hubness $VERSION ($flavor) $TARGET"
+            if [ "${{ matrix.cross }}" != "true" ]; then
+              "$name/hubness" --version | grep -F "hubness $VERSION ($flavor) $TARGET"
+            fi
             tar -czf "$name.tar.gz" "$name"
             shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
             cat "$name.tar.gz.sha256"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: dist-${{ matrix.target }}
           path: hubness-*.tar.gz*
@@ -120,7 +125,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           pattern: dist-*
           path: dist
