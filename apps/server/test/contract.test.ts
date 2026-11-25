@@ -1348,3 +1348,251 @@ test('ask about this: a regular chat with the context in the first message', asy
   assert.match(first.text, /### pacman -Qi \+ pacman\.log\n```\n/);
   assert.match(first.text, /Recent pacman\.log entries:/);
 });
+
+// ---------- environment: terminal jobs, run commands, shells, preview, settings ----------
+
+/** Read a job's stream until `until` matches the output or the job exits. */
+async function readJob(jobId: string, until?: RegExp, timeoutMs = 15_000) {
+  const s = await openStream(`/jobs/${jobId}/stream`);
+  const first = await s.next();
+  assert.equal(first.type, 'snapshot');
+  assert.equal(first.job.id, jobId);
+  let output: string = first.output;
+  let exit: { code: number | null } | null = first.job.status === 'exited' ? { code: first.job.exitCode } : null;
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (!exit && !(until && until.test(output))) {
+      const timeout = new Promise((_, fail) => setTimeout(() => fail(new Error(`job output timed out: ${JSON.stringify(output)}`)), deadline - Date.now()));
+      const m: any = await Promise.race([s.next(), timeout]);
+      if (m.type === 'output') output += m.data;
+      else if (m.type === 'exit') exit = { code: m.code };
+    }
+  } finally {
+    s.close();
+  }
+  return { output, exit };
+}
+
+async function waitUntil<T>(get: () => Promise<T>, pred: (v: T) => boolean, what: string): Promise<T> {
+  for (let i = 0; i < 300; i++) {
+    const v = await get();
+    if (pred(v)) return v;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+const envRepo = makeRepo(join(tmp, 'envproj'));
+writeFileSync(join(envRepo, 'package.json'), JSON.stringify({ scripts: { build: 'x', lint: 'x', dev: 'x', test: 'x' } }));
+writeFileSync(join(envRepo, 'pnpm-lock.yaml'), '');
+let envProject: any;
+
+test('run commands: CRUD, suggestions, output over the job stream, port detection', async () => {
+  envProject = (await call('POST', '/projects/import', { paths: [envRepo] })).json[0];
+  const base = `/projects/${envProject.id}/runs`;
+  assert.deepEqual((await call('GET', base)).json, []);
+  const suggested = (await call('GET', `${base}/suggest`)).json;
+  assert.deepEqual(
+    suggested.map((s: any) => s.command),
+    ['pnpm dev', 'pnpm test', 'pnpm build', 'pnpm lint'],
+    'package.json scripts in the usual order, with the lockfile’s package manager',
+  );
+  assert.deepEqual(suggested[0], { name: 'dev', command: 'pnpm dev', source: 'package.json' });
+
+  assert.equal((await call('POST', base, {})).status, 400);
+  assert.equal((await call('POST', base, { name: 'x' })).status, 400, 'command is required');
+  assert.equal((await call('POST', base, { name: 'x'.repeat(61), command: 'x' })).status, 400);
+  assert.equal((await call('POST', base, { name: 'a', command: 'x', port: 70000 })).status, 400);
+  assert.equal((await call('POST', base, { name: 'a', command: 'x', docker: 'yes' })).status, 400);
+
+  const cmd = `printf 'srv at http://localhost:%s/\\n' 45678; sleep 30`;
+  const created = await call('POST', base, { name: ' serve ', command: cmd });
+  assert.equal(created.status, 201);
+  const serve = created.json;
+  assert.deepEqual(
+    { ...serve, id: undefined },
+    { id: undefined, projectId: envProject.id, name: 'serve', command: cmd, port: null, primary: true, docker: false, position: 0, job: null, activePort: null, previewPort: null },
+  );
+  const dev = (await call('POST', base, { name: 'dev', command: 'pnpm dev', port: '5173', primary: true })).json;
+  assert.equal(dev.port, 5173);
+  assert.equal(dev.position, 1);
+  assert.deepEqual((await call('GET', base)).json.map((r: any) => r.primary), [false, true], 'one primary command');
+  assert.ok(!(await call('GET', `${base}/suggest`)).json.some((s: any) => s.command === 'pnpm dev'), 'known commands are not suggested');
+  const patched = await call('PATCH', `${base}/${dev.id}`, { port: '', name: 'Dev' });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.json.port, null);
+  assert.equal(patched.json.name, 'Dev');
+  assert.equal(patched.json.command, 'pnpm dev', 'fields not sent are kept');
+  assert.equal((await call('PATCH', `${base}/missing`, { name: 'x' })).status, 404);
+  assert.deepEqual((await call('DELETE', `${base}/${dev.id}`)).json, { ok: true });
+  assert.equal((await call('GET', base)).json[0].primary, true, 'the remaining command becomes primary');
+
+  const started = await call('POST', `${base}/${serve.id}/start`, undefined);
+  assert.equal(started.status, 200);
+  assert.equal(started.json.job.status, 'running');
+  assert.equal(started.json.job.command, cmd, 'the command is shown without the sandbox wrapper');
+  assert.equal(started.json.job.exitCode, null);
+  const again = (await call('POST', `${base}/${serve.id}/start`, { cols: 120, rows: 40 })).json;
+  assert.equal(again.job.id, started.json.job.id, 'one run at a time');
+  assert.equal((await call('POST', `${base}/${serve.id}/start`, { cols: 0 })).status, 400);
+  const { output } = await readJob(started.json.job.id, /srv at/);
+  assert.match(output, /srv at http:\/\/localhost:45678/);
+  const detected = await waitUntil(
+    async () => (await call('GET', base)).json[0],
+    (r: any) => r.activePort === 45678 && typeof r.previewPort === 'number',
+    'the detected port and its preview',
+  );
+  assert.ok(detected.previewPort >= 18790 && detected.previewPort <= 18799, 'preview ports come from HUBNESS_PREVIEW_PORTS');
+
+  const stopping = readJob(started.json.job.id);
+  const stopped = await call('POST', `${base}/${serve.id}/stop`, undefined);
+  assert.equal(stopped.status, 200);
+  assert.deepEqual((await stopping).exit, { code: null }, 'a stopped run has no exit code');
+  const after = (await call('GET', base)).json[0];
+  assert.equal(after.job.status, 'exited');
+  assert.equal(after.previewPort, null);
+  assert.equal(after.activePort, 45678);
+});
+
+test('terminal jobs: input, exit code, kill and errors', async () => {
+  const base = `/projects/${envProject.id}/runs`;
+  const reader = (await call('POST', base, { name: 'reader', command: 'read -r line; echo "got:$line"; exit 3' })).json;
+  const job = (await call('POST', `${base}/${reader.id}/start`, undefined)).json.job;
+  assert.deepEqual((await call('POST', `/jobs/${job.id}/input`, { data: 'hello\n' })).json, { ok: true });
+  const done = await readJob(job.id);
+  assert.match(done.output, /got:hello/);
+  assert.deepEqual(done.exit, { code: 3 });
+  assert.equal((await call('POST', `/jobs/${job.id}/input`, { data: 'x' })).status, 409, 'the command is not running');
+  assert.deepEqual((await call('POST', `/jobs/${job.id}/kill`, undefined)).json, { ok: false });
+  const snapshot = await openStream(`/jobs/${job.id}/stream`);
+  const first = await snapshot.next();
+  snapshot.close();
+  assert.equal(first.job.status, 'exited');
+  assert.equal(first.job.exitCode, 3);
+
+  const sleeper = (await call('POST', base, { name: 'sleeper', command: 'sleep 30' })).json;
+  const sj = (await call('POST', `${base}/${sleeper.id}/start`, undefined)).json.job;
+  const ending = readJob(sj.id);
+  assert.deepEqual((await call('POST', `/jobs/${sj.id}/kill`, undefined)).json, { ok: true });
+  assert.deepEqual((await ending).exit, { code: null });
+
+  assert.equal((await call('GET', '/jobs/missing/stream')).status, 404);
+  assert.equal((await call('POST', '/jobs/missing/input', { data: 'x' })).status, 409);
+  assert.equal((await call('POST', `/jobs/${sj.id}/input`, { data: 'x'.repeat(4097) })).status, 400);
+  assert.equal((await call('POST', `/jobs/${sj.id}/input`, {})).status, 400);
+  assert.deepEqual((await call('POST', '/jobs/missing/kill', undefined)).json, { ok: false });
+});
+
+test('project and group shells', async () => {
+  const sh = await call('POST', `/projects/${envProject.id}/shell`, { cols: 100, rows: 30 });
+  assert.equal(sh.status, 200);
+  assert.equal(sh.json.status, 'running');
+  assert.equal(sh.json.title, 'Shell 1');
+  assert.equal((await call('POST', `/projects/${envProject.id}/shell`, undefined)).json.id, sh.json.id, 'an open shell is reused');
+  const second = (await call('POST', `/projects/${envProject.id}/shell`, { fresh: true })).json;
+  assert.equal(second.title, 'Shell 2');
+  assert.deepEqual((await call('GET', `/projects/${envProject.id}/shells`)).json.map((j: any) => j.id), [sh.json.id, second.id]);
+  assert.equal((await call('POST', `/projects/${envProject.id}/shell`, { cols: 0 })).status, 400);
+  // the shell really started (in the sandbox when bubblewrap is available) and runs commands
+  await call('POST', `/jobs/${sh.json.id}/input`, { data: 'echo hub""ok-$PWD\n' });
+  const { output } = await readJob(sh.json.id, /hubok-\//);
+  assert.ok(output.includes(`hubok-${envRepo}`), output);
+  for (const j of [sh.json, second]) {
+    const ending = readJob(j.id);
+    assert.deepEqual((await call('POST', `/jobs/${j.id}/kill`, undefined)).json, { ok: true });
+    assert.equal((await ending).exit?.code, null);
+  }
+  assert.deepEqual((await call('GET', `/projects/${envProject.id}/shells`)).json, []);
+  assert.equal((await call('POST', '/projects/missing/shell', undefined)).status, 404);
+
+  const group = (await call('POST', '/groups', { name: 'Env group', projectIds: [envProject.id] })).json;
+  const gs = (await call('POST', `/groups/${group.id}/shell`, undefined)).json;
+  assert.equal(gs.status, 'running');
+  assert.deepEqual((await call('GET', `/groups/${group.id}/shells`)).json.map((j: any) => j.id), [gs.id]);
+  const ending = readJob(gs.id);
+  await call('POST', `/jobs/${gs.id}/kill`, undefined);
+  await ending;
+  assert.equal((await call('GET', '/groups/missing/shells')).status, 404);
+  await call('DELETE', `/groups/${group.id}`);
+});
+
+test('preview of a port: the app from the root with Host rewritten', async () => {
+  const { createServer } = await import('node:http');
+  const app = createServer((req, res) => res.end(`${req.url} ${req.headers.host}`));
+  // an upgrade (WebSocket, HMR): the handshake reaches the app, then bytes pass both ways
+  app.on('upgrade', (req, socket) => {
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: echo\r\nConnection: Upgrade\r\nX-Seen-Host: ${req.headers.host}\r\n\r\n`);
+    socket.pipe(socket);
+  });
+  await new Promise<void>((r) => app.listen(0, '127.0.0.1', r));
+  const appPort = (app.address() as { port: number }).port;
+  try {
+    assert.equal((await call('POST', `/projects/${envProject.id}/preview`, { port: 0 })).status, 400);
+    assert.equal((await call('POST', `/projects/${envProject.id}/preview`, {})).status, 400);
+    const res = await call('POST', `/projects/${envProject.id}/preview`, { port: String(appPort) });
+    assert.equal(res.status, 200);
+    const pp = res.json.previewPort;
+    assert.ok(pp >= 18790 && pp <= 18799);
+    assert.equal((await call('POST', `/projects/${envProject.id}/preview`, { port: appPort })).json.previewPort, pp, 'same port — same preview');
+    const body = await fetch(`http://127.0.0.1:${pp}/assets/app.js?x=1`).then((r) => r.text());
+    assert.equal(body, `/assets/app.js?x=1 localhost:${appPort}`);
+
+    const { connect } = await import('node:net');
+    const ws = connect(pp, '127.0.0.1');
+    let got = '';
+    ws.on('data', (d) => {
+      got += d.toString();
+      if (got.includes('\r\n\r\n') && !got.includes('ping')) ws.write('ping');
+    });
+    ws.write('GET /hmr HTTP/1.1\r\nHost: example\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n');
+    await waitUntil(async () => got, (g) => g.includes('ping'), 'the upgraded connection to echo');
+    ws.destroy();
+    assert.match(got, /^HTTP\/1\.1 101/);
+    assert.match(got, new RegExp(`x-seen-host: localhost:${appPort}`, 'i'));
+  } finally {
+    app.closeAllConnections();
+    app.close();
+  }
+});
+
+test('environment settings: validation, devcontainer image, docker when available', async () => {
+  const url = `/projects/${envProject.id}/environment`;
+  const st = (await call('GET', url)).json;
+  assert.deepEqual(st.runtime, { environment: 'local', image: 'node:24-bookworm', sandbox: st.sandboxAvailable, shareSecretsWithAgents: false });
+  assert.equal(st.container, null);
+  assert.equal(st.devcontainerImage, null);
+  assert.equal(typeof st.dockerAvailable, 'boolean');
+
+  assert.equal((await call('PUT', url, { environment: 'vm' })).status, 400);
+  assert.equal((await call('PUT', url, { image: 'bad image!' })).status, 400);
+  assert.equal((await call('PUT', url, { sandbox: 'yes' })).status, 400);
+  assert.equal((await call('PUT', url, { shareSecretsWithAgents: true })).json.runtime.shareSecretsWithAgents, true);
+  assert.equal((await call('PUT', url, { image: ' alpine:3.20 ' })).json.runtime.image, 'alpine:3.20');
+  assert.equal((await call('PUT', url, { image: '' })).json.runtime.image, 'node:24-bookworm', 'an empty image means the default');
+  writeFileSync(join(envRepo, '.devcontainer.json'), '{ // comment\n "image": "mcr.microsoft.com/devcontainers/base:1", /* x */ "x": "https://a", }');
+  const dc = (await call('GET', url)).json;
+  assert.equal(dc.devcontainerImage, 'mcr.microsoft.com/devcontainers/base:1');
+  assert.equal(dc.runtime.image, 'mcr.microsoft.com/devcontainers/base:1', 'the image comes from devcontainer.json');
+
+  const docker = await call('PUT', url, { environment: 'docker' });
+  assert.equal(docker.status, st.dockerAvailable ? 200 : 400, 'docker only when it is available');
+  if (st.dockerAvailable) {
+    assert.equal(docker.json.runtime.environment, 'docker');
+    assert.match(docker.json.container.name, /^hubness-p-/);
+    assert.equal(docker.json.container.state, 'absent', 'the container starts with the first Run/Shell');
+    const removed = await call('POST', `${url}/container/remove`, undefined);
+    assert.equal(removed.status, 200);
+    assert.equal((await call('PUT', url, { environment: 'local' })).json.container, null);
+  }
+  assert.equal((await call('POST', `${url}/container/remove`, undefined)).status, 200);
+  assert.equal((await call('GET', '/projects/missing/environment')).status, 404);
+});
+
+test('removing a project stops its processes', async () => {
+  const base = `/projects/${envProject.id}/runs`;
+  const r = (await call('POST', base, { name: 'long', command: 'sleep 60' })).json;
+  const job = (await call('POST', `${base}/${r.id}/start`, undefined)).json.job;
+  const ending = readJob(job.id);
+  assert.equal((await call('DELETE', `/projects/${envProject.id}`)).status, 200);
+  assert.deepEqual((await ending).exit, { code: null });
+});

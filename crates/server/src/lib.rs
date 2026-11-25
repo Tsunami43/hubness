@@ -26,12 +26,15 @@ mod languages_data;
 pub mod manifest;
 pub mod mcp;
 pub mod paths;
+pub mod preview;
 pub mod routes;
+pub mod runs;
 pub mod runtime;
 pub mod search;
 pub mod secrets;
 pub mod sessions;
 pub mod system;
+pub mod terminal;
 pub mod watch;
 pub mod workspaces;
 
@@ -120,6 +123,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             rt.stop_all();
+            // dev servers and shells must not outlive the hub
+            terminal::kill_all_jobs();
         })
         .await?;
     Ok(())

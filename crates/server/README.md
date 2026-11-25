@@ -44,7 +44,9 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |
 | Git | `/projects/:id/git/*`: status, diff, branches, log, show, stashes, every `POST /git/:op` operation | done |
-| Environment | runs, shells, jobs, preview proxy, secrets, sandbox | todo |
+| Environment | run commands (`/projects/:id/runs…`: CRUD, suggestions, start/stop, port detection), project and group shells, `GET/PUT /projects/:id/environment`, `…/environment/container/remove` (local, sandbox, docker) | done |
+| Jobs | terminal jobs on a pty (`openpty`), `GET /jobs/:id/stream`, `POST /jobs/:id/input`, `POST /jobs/:id/kill` | done |
+| Preview | `POST /projects/:id/preview`, per-port proxy (`HUBNESS_PREVIEW_PORTS`, HTTP + upgrades) | done |
 | Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |
 | Harness | `/agents`, `/agents/:kind/models`, `/harness`, `/harness/agents`, `/harness/:kind` (versions, latest checks, auth, limits, models), default model, provider account ops | done |
 | Harness | `POST /harness/:kind/actions/:action` (needs terminal jobs) | todo |

@@ -548,6 +548,130 @@ pub struct GitCredentialInfo {
     pub updated_at: String,
 }
 
+// ---------- run commands, shells, environment ----------
+
+/// Status of a terminal job.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum JobStatus {
+    Running,
+    Exited,
+}
+
+/// Terminal task (install, login, update, Run, Shell).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct JobInfo {
+    pub id: String,
+    pub title: String,
+    pub command: String,
+    pub status: JobStatus,
+    pub exit_code: Option<i32>,
+    pub started_at: String,
+}
+
+/// Messages of `GET /api/jobs/:id/stream`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JobStreamMsg {
+    Snapshot { job: JobInfo, output: String },
+    Output { data: String },
+    Exit { code: Option<i32> },
+}
+
+/// A named project command (Run).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunConfig {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub command: String,
+    /// App port for preview; null — detect from the output (http://localhost:5173).
+    pub port: Option<u16>,
+    /// The primary command — the Run button starts it.
+    pub primary: bool,
+    /// Needs Docker (docker compose…): the command runs without the sandbox — the
+    /// Docker socket is hidden inside it. Docker access ≈ root on the server.
+    pub docker: bool,
+    pub position: i64,
+}
+
+/// A run command with its current run.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunState {
+    #[serde(flatten)]
+    pub config: RunConfig,
+    /// Current or last run (terminal task).
+    pub job: Option<JobInfo>,
+    /// Port: from the setting or detected in the output.
+    pub active_port: Option<u16>,
+    /// Preview proxy port on the hub (same host as the hub).
+    pub preview_port: Option<u16>,
+}
+
+/// Run command suggestion (package.json, Makefile, …).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSuggestion {
+    pub name: String,
+    pub command: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker: Option<bool>,
+}
+
+/// Where Run and Shell execute: on the server or in the project container.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeEnvironment {
+    Local,
+    Docker,
+}
+
+/// Where Run and Shell execute and how the agent is isolated.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRuntime {
+    pub environment: RuntimeEnvironment,
+    /// Container image (environment = docker).
+    pub image: String,
+    pub sandbox: bool,
+    pub share_secrets_with_agents: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerState {
+    Running,
+    Stopped,
+    Absent,
+}
+
+/// The project container (environment = docker).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectContainer {
+    pub name: String,
+    pub state: ContainerState,
+    pub image: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentStatus {
+    pub runtime: ProjectRuntime,
+    /// Availability of the mechanisms on the server.
+    pub docker_available: bool,
+    pub sandbox_available: bool,
+    /// Container state (environment = docker).
+    pub container: Option<ProjectContainer>,
+    /// Image from .devcontainer/devcontainer.json, if present.
+    pub devcontainer_image: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CardColumn {

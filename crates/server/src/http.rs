@@ -32,6 +32,25 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for JsonBody<T> {
     }
 }
 
+/// An optional JSON body (actions that take optional parameters): no body, a body that is
+/// not JSON or broken JSON counts as `{}`; a JSON body that doesn't match `T` is still a 400.
+pub struct LenientBody<T>(pub T);
+
+impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for LenientBody<T> {
+    type Rejection = HttpError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let is_json = req.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.contains("json"));
+        let bytes = Bytes::from_request(req, state).await.unwrap_or_default();
+        let value = if is_json { serde_json::from_slice(&bytes).unwrap_or_else(|_| serde_json::json!({})) } else { serde_json::json!({}) };
+        serde_path_to_error::deserialize(value).map(LenientBody).map_err(|e| {
+            let path = e.path().to_string();
+            let inner = e.into_inner().to_string();
+            HttpError::bad_request(if path == "." { inner } else { format!("{path}: {inner}") })
+        })
+    }
+}
+
 /// For `Option<Option<T>>` fields: absent → `None`, `null` → `Some(None)`, value → `Some(Some(v))`.
 /// Use with `#[serde(default, deserialize_with = "double_option")]`.
 pub fn double_option<'de, T: Deserialize<'de>, D: Deserializer<'de>>(d: D) -> Result<Option<Option<T>>, D::Error> {

@@ -40,6 +40,9 @@ pub fn api() -> Router<AppState> {
         .merge(crate::git::routes())
         .merge(crate::harness::routes())
         .merge(crate::git_auth::routes())
+        .merge(crate::terminal::routes())
+        .merge(crate::runs::routes())
+        .merge(crate::environments::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 
@@ -105,24 +108,35 @@ async fn update_project(
     s.with(|db, _| Ok(json!(catalog::update_project(db, &id, patch)?)))
 }
 
-/// Remove a project from the hub. Files stay on disk.
+/// Remove a project from the hub; its processes and container are stopped. Files stay on
+/// disk unless `?files=1&confirm=<folder name>`: then the repository folder is deleted too
+/// (irreversible; the folder name guards against an accidental call).
 async fn delete_project(State(s): State<AppState>, Path(id): Path<String>, Query(q): Q) -> ApiResult<Json<Value>> {
     let with_files = q.get("files").map(String::as_str) == Some("1");
+    let is_active = |sid: &str| s.runtime.is_active(sid);
+    let dir = s
+        .with(|db, cfg| {
+            let p = catalog::assert_removable(db, &id, &is_active)?;
+            let dir = if with_files { catalog::deletable_folder(db, cfg, &p)? } else { None };
+            if let Some(d) = &dir
+                && q.get("confirm").map(String::as_str) != Some(crate::paths::basename(d).as_str())
+            {
+                return Err(HttpError::bad_request("confirm must be the name of the project folder"));
+            }
+            // stop its Run commands, shells and previews
+            crate::runs::stop_project_processes(db, &id)?;
+            Ok(dir)
+        })?
+        .0;
+    // the container is removed off the async threads
+    let pid = id.clone();
+    let _ = tokio::task::spawn_blocking(move || crate::environments::stop_container(&pid)).await;
     s.with(|db, cfg| {
-        let is_active = |sid: &str| s.runtime.is_active(sid);
-        let p = catalog::assert_removable(db, &id, &is_active)?;
-        // irreversible: the folder name in ?confirm guards against an accidental call
-        let dir = if with_files { catalog::deletable_folder(db, cfg, &p)? } else { None };
-        if let Some(d) = &dir
-            && q.get("confirm").map(String::as_str) != Some(crate::paths::basename(d).as_str())
-        {
-            return Err(HttpError::bad_request("confirm must be the name of the project folder"));
-        }
         if let Some(d) = &dir {
             std::fs::remove_dir_all(d).map_err(|e| HttpError::new(500, format!("Could not delete {}: {e}", d.display())))?;
         }
         catalog::remove_project(db, cfg, &id, &is_active)?;
-        Ok(json!({ "ok": true, "deleted": dir.map(|d| crate::paths::to_string(&d)) }))
+        Ok(json!({ "ok": true, "deleted": dir.as_ref().map(|d| crate::paths::to_string(d)) }))
     })
 }
 
