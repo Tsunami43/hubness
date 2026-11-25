@@ -1613,46 +1613,173 @@ test('clone by URL is a terminal job; harness actions only from the list', async
   assert.equal((await call('POST', '/harness/nope/actions/install')).status, 404);
 });
 
-test('access token: bearer, browser session cookie, refusing a public address without one (rust)', { skip: target !== 'rust' && 'the TS server has no access token (loopback only)' }, async () => {
-  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
-  const { spawnSync } = await import('node:child_process');
-  const refused = spawnSync(bin, ['serve'], { cwd: tmp, env: { ...process.env, HUBNESS_HOST: '0.0.0.0', HUBNESS_PORT: '0', HUBNESS_TOKEN: '', HUBNESS_DATA_DIR: join(tmp, 'auth-data') }, encoding: 'utf8', timeout: 10_000 });
-  assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /set HUBNESS_TOKEN first/);
-  const short = spawnSync(bin, ['serve'], { cwd: tmp, env: { ...process.env, HUBNESS_PORT: '0', HUBNESS_TOKEN: 'short', HUBNESS_DATA_DIR: join(tmp, 'auth-data') }, encoding: 'utf8', timeout: 10_000 });
-  assert.notEqual(short.status, 0, 'a short token is refused');
 
-  const token = 'contract-test-token-0123456789';
-  const srv = spawn(bin, ['serve'], { cwd: tmp, env: { ...process.env, HUBNESS_PORT: '0', HUBNESS_TOKEN: token, HUBNESS_DATA_DIR: join(tmp, 'auth-data'), HUBNESS_WEB_DIST: join(tmp, 'no-web') }, stdio: ['ignore', 'pipe', 'inherit'] });
-  try {
-    const base = await new Promise<string>((ok) => {
-      let out = '';
-      srv.stdout!.on('data', (d: Buffer) => {
-        out += d.toString();
-        const m = out.match(/hubness: (http:\/\/\S+)/);
-        if (m) ok(m[1]!);
-      });
+// ---------- accounts (rust only: the TS server has no sign-in and listens on loopback only) ----------
+
+const rustOnly = { skip: target !== 'rust' && 'the TS server has no accounts (loopback only)' };
+const rustBin = () => process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
+
+/** A separate Rust server on its own data folder (accounts change who may call it). */
+async function startAuthServer(dataDir: string) {
+  const srv = spawn(rustBin(), ['serve'], {
+    cwd: tmp,
+    env: { ...process.env, HUBNESS_PORT: '0', HUBNESS_DATA_DIR: dataDir, HUBNESS_WEB_DIST: join(tmp, 'no-web') },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const base = await new Promise<string>((ok, fail) => {
+    let out = '';
+    srv.stdout!.on('data', (d: Buffer) => {
+      out += d.toString();
+      const m = out.match(/hubness: (http:\/\/\S+)/);
+      if (m) ok(m[1]!);
     });
-    const get = (path: string, headers: Record<string, string> = {}) => fetch(base + path, { headers });
-    assert.equal((await get('/api/health')).status, 200, 'health stays open');
-    assert.equal((await get('/api/projects')).status, 401);
-    assert.equal((await get('/api/projects', { Authorization: 'Bearer wrong-token-0123456789' })).status, 401);
-    assert.equal((await get('/api/projects', { Authorization: `Bearer ${token}` })).status, 200);
-    assert.deepEqual(await (await get('/api/auth/status')).json(), { required: true, authenticated: false });
-    const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
-      fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
-    assert.equal((await post('/api/auth/login', { token: 'nope' })).status, 401);
-    const ok = await post('/api/auth/login', { token });
-    assert.equal(ok.status, 200);
-    const setCookie = ok.headers.get('set-cookie') ?? '';
-    assert.match(setCookie, /^hubness_session=[0-9a-f]{64}; Path=\/; HttpOnly; SameSite=Strict/);
-    assert.ok(!setCookie.includes(token), 'the cookie holds a hash, not the token');
-    const cookie = setCookie.split(';')[0]!;
-    assert.equal((await get('/api/projects', { Cookie: cookie })).status, 200);
-    assert.deepEqual(await (await get('/api/auth/status', { Cookie: cookie })).json(), { required: true, authenticated: true });
-    assert.equal((await get('/api/stream', { Cookie: 'hubness_session=deadbeef' })).status, 401, 'streams too');
-    const out = await post('/api/auth/logout', {}, { Cookie: cookie });
+    srv.on('exit', (code) => fail(new Error(`server exited with ${code}: ${out}`)));
+  });
+  const req = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
+    const res = await fetch(base + path, {
+      method,
+      headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : { 'X-Hubness-Request': '1' }), ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = text;
+    }
+    return { status: res.status, json, headers: res.headers };
+  };
+  return { srv, req };
+}
+
+function userCli(dataDir: string, args: string[], input = '') {
+  return execFileSync(rustBin(), ['user', ...args], {
+    cwd: tmp,
+    env: { ...process.env, HUBNESS_DATA_DIR: dataDir },
+    input,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+}
+
+test('accounts: a public address is refused while the hub has no accounts', rustOnly, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const refused = spawnSync(rustBin(), ['serve'], {
+    cwd: tmp,
+    env: { ...process.env, HUBNESS_HOST: '0.0.0.0', HUBNESS_PORT: '0', HUBNESS_DATA_DIR: join(tmp, 'auth-refused') },
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /create an account first with `hubcli user add <name>`/);
+});
+
+test('accounts: first-run setup from this machine, then sign-in with bearer and cookie', rustOnly, async () => {
+  const { srv, req } = await startAuthServer(join(tmp, 'auth-setup'));
+  try {
+    assert.deepEqual((await req('GET', '/api/auth/status')).json, { required: false, setup: true, user: null });
+    assert.equal((await req('GET', '/api/projects')).status, 200, 'no accounts: open to this machine');
+    const forwarded = await req('POST', '/api/auth/setup', { username: 'alice', password: 'correct horse' }, { 'X-Forwarded-For': '203.0.113.9' });
+    assert.equal(forwarded.status, 403, 'setup through a proxy is someone else');
+    assert.equal((await req('POST', '/api/auth/setup', { username: 'alice', password: 'short' })).status, 400);
+    assert.equal((await req('POST', '/api/auth/setup', { username: 'bad name', password: 'correct horse' })).status, 400);
+
+    const setup = await req('POST', '/api/auth/setup', { username: 'alice', password: 'correct horse' });
+    assert.equal(setup.status, 200);
+    assert.equal(setup.json.user.username, 'alice');
+    assert.match(setup.json.token, /^[A-Za-z0-9_-]{43}$/);
+    assert.match(setup.headers.get('set-cookie') ?? '', /^hubness_session=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=\d+/);
+    assert.equal((await req('POST', '/api/auth/setup', { username: 'mallory', password: 'correct horse' })).status, 409, 'only the first account');
+
+    assert.equal((await req('GET', '/api/health')).status, 200, 'health stays open');
+    assert.equal((await req('GET', '/api/projects')).status, 401);
+    assert.deepEqual((await req('GET', '/api/auth/status')).json, { required: true, setup: false, user: null });
+    assert.equal((await req('GET', '/api/projects', undefined, { Authorization: 'Bearer nope' })).status, 401);
+    assert.equal((await req('GET', '/api/stream', undefined, { Cookie: 'hubness_session=deadbeef' })).status, 401, 'streams too');
+
+    assert.equal((await req('POST', '/api/auth/login', { username: 'alice', password: 'wrong horse' })).status, 401);
+    assert.equal((await req('POST', '/api/auth/login', { username: 'nobody', password: 'correct horse' })).status, 401);
+    const login = await req('POST', '/api/auth/login', { username: 'ALICE', password: 'correct horse' });
+    assert.equal(login.status, 200, 'usernames ignore case');
+    const bearer = { Authorization: `Bearer ${login.json.token}` };
+    assert.equal((await req('GET', '/api/projects', undefined, bearer)).status, 200);
+    const cookie = { Cookie: (login.headers.get('set-cookie') ?? '').split(';')[0]! };
+    assert.equal((await req('GET', '/api/projects', undefined, cookie)).status, 200);
+    const status = (await req('GET', '/api/auth/status', undefined, cookie)).json;
+    assert.equal(status.required, true);
+    assert.equal(status.user.username, 'alice');
+    assert.deepEqual(Object.keys(status.user).sort(), ['createdAt', 'id', 'username']);
+
+    const out = await req('POST', '/api/auth/logout', {}, cookie);
     assert.match(out.headers.get('set-cookie') ?? '', /hubness_session=; .*Max-Age=0/);
+    assert.equal((await req('GET', '/api/projects', undefined, cookie)).status, 401, 'the session is gone after logout');
+    assert.equal((await req('GET', '/api/projects', undefined, bearer)).status, 401, 'the token and the cookie are one session');
+    assert.equal((await req('GET', '/api/projects', undefined, { Authorization: `Bearer ${setup.json.token}` })).status, 200, 'other sessions stay');
+  } finally {
+    srv.kill('SIGTERM');
+  }
+});
+
+test('accounts: users CRUD, password changes, the last account stays, failed sign-ins back off', rustOnly, async () => {
+  const dataDir = join(tmp, 'auth-users');
+  userCli(dataDir, ['add', 'alice'], 'correct horse\n');
+  const { srv, req } = await startAuthServer(dataDir);
+  try {
+    const login = async (username: string, password: string) => req('POST', '/api/auth/login', { username, password });
+    const alice = await login('alice', 'correct horse');
+    assert.equal(alice.status, 200, 'an account added with hubcli signs in');
+    const a = { Authorization: `Bearer ${alice.json.token}` };
+
+    const list = await req('GET', '/api/users', undefined, a);
+    assert.deepEqual(list.json.map((u: any) => u.username), ['alice']);
+    const bob = await req('POST', '/api/users', { username: 'bob', password: 'battery staple' }, a);
+    assert.equal(bob.status, 200);
+    assert.deepEqual(Object.keys(bob.json).sort(), ['createdAt', 'id', 'username']);
+    assert.equal((await req('POST', '/api/users', { username: 'BOB', password: 'battery staple' }, a)).status, 409);
+    assert.equal((await req('POST', '/api/users', { username: 'carol', password: '1234567' }, a)).status, 400, 'at least 8 characters');
+    assert.equal((await req('POST', '/api/users', { username: 'carol', password: 'battery staple' })).status, 401, 'needs a session');
+
+    const bobLogin = await login('bob', 'battery staple');
+    const b = { Authorization: `Bearer ${bobLogin.json.token}` };
+    // anyone may set another account's password; it ends that account's sessions
+    assert.equal((await req('PUT', `/api/users/${bob.json.id}/password`, { password: 'new staple!' }, a)).status, 200);
+    assert.equal((await req('GET', '/api/projects', undefined, b)).status, 401);
+    assert.equal((await login('bob', 'battery staple')).status, 401);
+    assert.equal((await login('bob', 'new staple!')).status, 200);
+
+    // your own password needs the current one (403, not 401: the session is fine)
+    const me = alice.json.user.id;
+    assert.equal((await req('PUT', `/api/users/${me}/password`, { password: 'horse correct' }, a)).status, 403);
+    assert.equal((await req('PUT', `/api/users/${me}/password`, { password: 'horse correct', currentPassword: 'nope nope' }, a)).status, 403);
+    const other = await login('alice', 'correct horse');
+    assert.equal((await req('PUT', `/api/users/${me}/password`, { password: 'horse correct', currentPassword: 'correct horse' }, a)).status, 200);
+    assert.equal((await req('GET', '/api/projects', undefined, a)).status, 200, 'the session that changed it stays');
+    assert.equal((await req('GET', '/api/projects', undefined, { Authorization: `Bearer ${other.json.token}` })).status, 401, 'other sessions end');
+    assert.equal((await req('PUT', '/api/users/nope/password', { password: 'whatever!' }, a)).status, 404);
+
+    const bobAgain = await login('bob', 'new staple!');
+    assert.equal((await req('DELETE', `/api/users/${bob.json.id}`, undefined, a)).status, 200);
+    assert.equal((await req('GET', '/api/projects', undefined, { Authorization: `Bearer ${bobAgain.json.token}` })).status, 401, 'a deleted account is signed out');
+    assert.equal((await req('DELETE', `/api/users/${me}`, undefined, a)).status, 409, 'the last account stays');
+    assert.equal((await req('DELETE', '/api/users/nope', undefined, a)).status, 404);
+
+    // the CLI works on the same database while the hub runs
+    userCli(dataDir, ['add', 'carol'], 'carol password\n');
+    assert.match(userCli(dataDir, ['list']), /alice\t.*\ncarol\t/);
+    assert.equal((await login('carol', 'carol password')).status, 200);
+    userCli(dataDir, ['passwd', 'carol'], 'carol changed\n');
+    assert.equal((await login('carol', 'carol password')).status, 401);
+    userCli(dataDir, ['rm', 'carol']);
+    assert.equal((await login('carol', 'carol changed')).status, 401);
+    assert.throws(() => userCli(dataDir, ['rm', 'alice']), /last account/);
+    assert.throws(() => userCli(dataDir, ['add', 'dave'], 'short\n'), /at least 8/);
+
+    // a growing pause after repeated failures for one username
+    for (let i = 0; i < 5; i++) assert.equal((await login('ghost', 'wrong password')).status, 401);
+    const limited = await login('ghost', 'wrong password');
+    assert.equal(limited.status, 429);
+    assert.match(limited.json.error, /try again in \d+ s/);
   } finally {
     srv.kill('SIGTERM');
   }

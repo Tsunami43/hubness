@@ -17,6 +17,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 1, name: "baseline schema", up: baseline },
     Migration { version: 2, name: "legacy groups (projects.kind = group) → project_groups", up: migrate_legacy_groups },
     Migration { version: 3, name: "drop auto-imported projects", up: prune_auto_imported },
+    Migration { version: 4, name: "user accounts and their sign-in sessions", up: user_accounts },
 ];
 
 const BASELINE_SQL: &str = r#"
@@ -210,6 +211,29 @@ fn prune_auto_imported(db: &Connection) -> rusqlite::Result<()> {
     )
 }
 
+/// v4 — user accounts (username + argon2id password hash) and their sign-in sessions
+/// (only a SHA-256 of the session token is stored).
+fn user_accounts(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(USERS_SQL)
+}
+
+const USERS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  expires TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions(user_id);
+"#;
+
 pub fn schema_version(db: &Connection) -> rusqlite::Result<i64> {
     db.query_row("PRAGMA user_version", [], |r| r.get(0))
 }
@@ -244,8 +268,8 @@ mod tests {
     #[test]
     fn fresh_database_reaches_the_latest_version_once() {
         let db = Connection::open_in_memory().unwrap();
-        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3]);
-        assert_eq!(schema_version(&db).unwrap(), 3);
+        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4]);
+        assert_eq!(schema_version(&db).unwrap(), 4);
         assert!(migrate(&db, MIGRATIONS).unwrap().is_empty());
         assert!(has_column(&db, "sessions", "archived_at").unwrap());
     }

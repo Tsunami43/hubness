@@ -548,6 +548,37 @@ pub struct GitCredentialInfo {
     pub updated_at: String,
 }
 
+// ---------- user accounts ----------
+
+/// A hub account (all accounts have the same rights; the password hash never leaves the server).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct User {
+    pub id: String,
+    pub username: String,
+    pub created_at: String,
+}
+
+/// `GET /api/auth/status`: `required` — the hub has accounts and asks for a sign-in;
+/// `setup` — no accounts yet (the first one can be created from this machine);
+/// `user` — who is signed in with this request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthStatus {
+    pub required: bool,
+    pub setup: bool,
+    pub user: Option<User>,
+}
+
+/// `POST /api/auth/login` (and `/api/auth/setup`): the session token for API clients
+/// (`Authorization: Bearer`); browsers get the same session as an HttpOnly cookie.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginResponse {
+    pub token: String,
+    pub user: User,
+}
+
 // ---------- run commands, shells, environment ----------
 
 /// Status of a terminal job.

@@ -36,6 +36,7 @@ pub mod secrets;
 pub mod sessions;
 pub mod system;
 pub mod terminal;
+pub mod users;
 pub mod watch;
 pub mod workspaces;
 
@@ -116,28 +117,28 @@ pub fn app(state: AppState) -> Router {
 
 /// Bind and serve until SIGINT/SIGTERM.
 pub async fn serve(config: Config) -> anyhow::Result<()> {
-    // never open the hub to other machines without a token
-    if !auth::is_loopback(&config.host) && config.token.is_none() {
-        anyhow::bail!(
-            "HUBNESS_HOST={} is reachable from other machines: set HUBNESS_TOKEN first (generate one with `hubness token`)",
-            config.host
-        );
-    }
-    auth::init(config.token.clone())?;
     let state = AppState::open(config)?;
     let cfg = state.config.clone();
+    let accounts = users::count(&*state.db.lock().map_err(|_| anyhow::anyhow!("database lock poisoned"))?)?;
+    // never open the hub to other machines without accounts
+    if !auth::is_loopback(&cfg.host) && accounts == 0 {
+        anyhow::bail!("HUBNESS_HOST={} is reachable from other machines: create an account first with `hubcli user add <name>`", cfg.host);
+    }
+    auth::init(state.db.clone())?;
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await?;
     let addr = listener.local_addr()?;
     let _ = state.self_url.set(format!("http://127.0.0.1:{}", addr.port()));
     println!("hubness: http://{}:{}  (data: {})", addr.ip(), addr.port(), cfg.data_dir.display());
-    if auth::required() {
-        println!("hubness: access token required (HUBNESS_TOKEN)");
+    if accounts > 0 {
+        println!("hubness: sign-in required ({accounts} account{})", if accounts == 1 { "" } else { "s" });
         if !auth::is_loopback(&cfg.host) {
             println!("hubness: plain HTTP — use an HTTPS reverse proxy or a VPN across untrusted networks");
         }
+    } else {
+        println!("hubness: no accounts yet — open to this machine only; create one in the web app or with `hubcli user add <name>`");
     }
     let rt = state.runtime.clone();
-    axum::serve(listener, app(state))
+    axum::serve(listener, app(state).into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             rt.stop_all();

@@ -19,12 +19,15 @@ enum Command {
         /// Hub URL.
         #[arg(long, env = "HUBNESS_URL", default_value = "http://127.0.0.1:8787")]
         url: String,
-        /// Access token of a hub that requires one.
-        #[arg(long, env = "HUBNESS_TOKEN", hide_env_values = true)]
-        token: Option<String>,
+        /// Username to prefill on the sign-in screen of a hub with accounts.
+        #[arg(long)]
+        user: Option<String>,
     },
-    /// Print a new random access token for HUBNESS_TOKEN.
-    Token,
+    /// Hub accounts: add <name> | passwd <name> | rm <name> | list (on HUBNESS_DATA_DIR).
+    User {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// git credential helper for the hub's own git runs (started by git, not by hand).
     #[command(name = "git-credential-helper", hide = true)]
     GitCredentialHelper {
@@ -43,13 +46,10 @@ fn main() -> anyhow::Result<()> {
             .enable_all()
             .build()?
             .block_on(hubness_server::serve(hubness_server::Config::from_env()?)),
-        Command::Tui { url, token } => {
-            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(hubness_tui::run(&url, token.as_deref()))
+        Command::Tui { url, user } => {
+            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(hubness_tui::run(&url, user.as_deref()))
         }
-        Command::Token => {
-            println!("{}", hubness_server::auth::generate()?);
-            Ok(())
-        }
+        Command::User { args } => hubness_server::users::cli(&args),
         Command::Mcp => tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(hubness_server::mcp::run_stdio()),
     }
 }

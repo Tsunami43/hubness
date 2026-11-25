@@ -20,8 +20,6 @@ pub struct Config {
     pub home_project_dir: PathBuf,
     /// The built web app (`pnpm build`), served from the same origin.
     pub web_dist: PathBuf,
-    /// Access token (`HUBNESS_TOKEN`); `None` — no authentication (loopback only).
-    pub token: Option<String>,
 }
 
 impl Config {
@@ -36,14 +34,13 @@ impl Config {
             None => 8787,
         };
         let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"));
-        let mut config = Self::new(
+        let config = Self::new(
             port,
             var("HUBNESS_HOST").unwrap_or_else(|| "127.0.0.1".into()),
             &resolve(&var("HUBNESS_DATA_DIR").unwrap_or_else(|| ".data".into())),
             &var("HUBNESS_HOME").map(|h| resolve(&h)).unwrap_or_else(|| home.join("hub")),
             &resolve(&var("HUBNESS_WEB_DIST").unwrap_or_else(|| "apps/web/dist".into())),
         );
-        config.token = var("HUBNESS_TOKEN").map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
         Ok(config)
     }
 
@@ -60,7 +57,6 @@ impl Config {
             projects_dir: hub_home.join("projects"),
             home_project_dir: hub_home.join("home"),
             web_dist: web_dist.to_path_buf(),
-            token: None,
         }
     }
 
