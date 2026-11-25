@@ -544,20 +544,6 @@ pub async fn create_repo(s: &AppState, name: Option<&str>, group_id: Option<&str
     projects::get(&db, &p.id)?.ok_or_else(|| HttpError::not_found("Project not found"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::slug;
-
-    #[test]
-    fn slugs_like_the_ts_server() {
-        assert_eq!(slug("  My new repo!  "), "My-new-repo");
-        assert_eq!(slug("..hidden"), "hidden");
-        assert_eq!(slug("-a--b-"), "a--b");
-        assert_eq!(slug("проект x"), "x");
-        assert_eq!(slug("!!!"), "");
-    }
-}
-
 // ---------- deleting a project's folder ----------
 
 fn real_or_resolved(p: &Path) -> PathBuf {
@@ -608,4 +594,18 @@ pub fn deletable_folder(db: &Connection, config: &Config, p: &Project) -> ApiRes
         return Err(HttpError::new(409, format!("Refusing to delete {shown}: project \"{}\" lives inside", nested.name)));
     }
     Ok(Some(dir))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slug;
+
+    #[test]
+    fn slugs_like_the_ts_server() {
+        assert_eq!(slug("  My new repo!  "), "My-new-repo");
+        assert_eq!(slug("..hidden"), "hidden");
+        assert_eq!(slug("-a--b-"), "a--b");
+        assert_eq!(slug("проект x"), "x");
+        assert_eq!(slug("!!!"), "");
+    }
 }
