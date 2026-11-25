@@ -34,6 +34,7 @@ pub fn settings(db: &Connection, config: &Config) -> ApiResult<HubSettings> {
     let perm = kv::get::<String>(db, db::PERMISSION_KEY)?.and_then(|s| PermissionMode::parse(&s));
     Ok(HubSettings {
         projects_root: paths::to_string(&config.projects_dir),
+        data_dir: paths::to_string(&config.data_dir),
         default_permission: perm.unwrap_or(PermissionMode::Ask),
         default_instructions: kv::get::<String>(db, db::DEFAULT_INSTRUCTIONS_KEY)?.unwrap_or_default(),
         session_instructions: kv::get::<String>(db, db::SESSION_INSTRUCTIONS_KEY)?.unwrap_or_default(),

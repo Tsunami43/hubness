@@ -203,6 +203,8 @@ pub struct Workspace {
 #[serde(rename_all = "camelCase")]
 pub struct HubSettings {
     pub projects_root: String,
+    /// The hub's data folder (database, logs, keys); set by HUBNESS_DATA_DIR.
+    pub data_dir: String,
     pub default_permission: PermissionMode,
     pub default_instructions: String,
     pub session_instructions: String,

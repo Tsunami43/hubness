@@ -729,6 +729,8 @@ pub struct Connection {
     nav: Nav,
     /// The URL of the hub this TUI is on.
     current: String,
+    /// `/settings` of the hub: its data and projects folders.
+    settings: Value,
 }
 
 impl Connection {
@@ -740,6 +742,7 @@ impl Connection {
         self.hubs = crate::hubs::Store::load().hubs;
         self.current = ctx.client.base().to_string();
         ctx.get("auth", "/auth/status");
+        ctx.get("settings", "/settings");
         let c = ctx.client.clone();
         ctx.task("health", async move {
             let start = std::time::Instant::now();
@@ -834,6 +837,7 @@ impl Screen for Connection {
                 }
             }
             "auth" => self.auth = result.unwrap_or_else(|e| json!({ "error": e.to_string() })),
+            "settings" => self.settings = result.unwrap_or(Value::Null),
             "health" => self.health = Some(result.map(|v| v.as_u64().unwrap_or(0) as u128).map_err(|e| e.to_string())),
             _ => {}
         }
@@ -868,6 +872,9 @@ impl Screen for Connection {
             row("Live sessions", ctx.shared.sessions.len().to_string(), W),
             row("Projects / groups", format!("{} / {}", ctx.shared.projects.len(), ctx.shared.groups.len()), W),
             row("Agents", agents.to_string(), W),
+            row("Data folder", self.settings["dataDir"].as_str().unwrap_or("…").to_string(), W),
+            row("Projects folder", self.settings["projectsRoot"].as_str().unwrap_or("…").to_string(), W),
+            row("Change on the hub", "hubcli server config data-dir <path> · then hubcli server restart", W),
             Line::raw(""),
             Line::styled("This app", t.accent_style()),
             row("hubness TUI", format!("v{}", env!("CARGO_PKG_VERSION")), W),

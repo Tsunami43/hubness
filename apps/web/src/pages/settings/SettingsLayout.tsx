@@ -1,4 +1,4 @@
-import { Bot, GitBranch, Keyboard, Languages, Palette, Users } from 'lucide-react';
+import { Bot, GitBranch, HardDrive, Keyboard, Languages, Palette, Users } from 'lucide-react';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../../components/SubmenuLayout';
 import { t } from '../../i18n';
 
@@ -30,6 +30,13 @@ const items = (): SubmenuItem[] => [
     hint: t('users.itemHint'),
     icon: <Users className="size-4 text-accent" />,
     keywords: ['users', 'accounts', 'password', 'login', 'logout', 'sign in', 'пользователи', 'учётные записи', 'пароль', 'вход', 'выход'],
+  },
+  {
+    to: 'storage',
+    label: t('storage.title'),
+    hint: t('storage.itemHint'),
+    icon: <HardDrive className="size-4 text-accent" />,
+    keywords: ['storage', 'data', 'folder', 'directory', 'database', 'disk', 'хранилище', 'данные', 'папка', 'база', 'диск'],
   },
   {
     to: 'keyboard',

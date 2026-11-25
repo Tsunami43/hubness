@@ -395,7 +395,9 @@ fn start(paths: &Paths, data_dir: Option<&str>) -> anyhow::Result<()> {
     let sys = Systemd::detect()?;
     let existed = paths.env.exists();
     let mut env = EnvFile::load_or_default(paths)?;
-    if let Some(d) = data_dir {
+    // the first start asks where the data goes (in a terminal; scripts pass --data-dir)
+    let asked = if data_dir.is_none() && !existed { ask_data_dir(paths)? } else { None };
+    if let Some(d) = data_dir.or(asked.as_deref()) {
         env.set("HUBNESS_DATA_DIR", &paths.absolute(d).to_string_lossy());
     }
     env.merge_path();
@@ -412,6 +414,27 @@ fn start(paths: &Paths, data_dir: Option<&str>) -> anyhow::Result<()> {
     // restart, not start: picks up a new binary or new settings when it already runs
     sys.run(&["restart", UNIT])?;
     report_started(paths, &env, &sys)
+}
+
+/// Ask for the data folder on the first start; `None` without a terminal (the default stays).
+/// An existing hub's `./.data` (a dev checkout) is offered as the default.
+fn ask_data_dir(paths: &Paths) -> anyhow::Result<Option<String>> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return Ok(None);
+    }
+    let local = std::env::current_dir().ok().map(|d| d.join(".data")).filter(|d| d.join("hubness.sqlite").exists());
+    let default = local.unwrap_or_else(|| paths.default_data.clone());
+    let shown = match default.strip_prefix(&paths.home) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => default.display().to_string(),
+    };
+    print!("Where should the hub keep its data (database, logs, keys)? [{shown}] ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    let answer = line.trim();
+    Ok(Some(if answer.is_empty() { default.to_string_lossy().into_owned() } else { answer.to_string() }))
 }
 
 fn report_started(paths: &Paths, env: &EnvFile, sys: &Systemd) -> anyhow::Result<()> {

@@ -36,6 +36,7 @@ const AgentPage = page(() => import('./pages/settings/AgentPage'), 'AgentPage');
 const KeyboardPage = page(() => import('./pages/settings/KeyboardPage'), 'KeyboardPage');
 const GitAccessPage = page(() => import('./pages/settings/GitAccessPage'), 'GitAccessPage');
 const UsersPage = page(() => import('./pages/settings/UsersPage'), 'UsersPage');
+const StoragePage = page(() => import('./pages/settings/StoragePage'), 'StoragePage');
 const HarnessLayout = page(() => import('./pages/HarnessPage'), 'HarnessLayout');
 const HarnessIndex = page(() => import('./pages/HarnessPage'), 'HarnessIndex');
 const HarnessDetail = page(() => import('./pages/HarnessPage'), 'HarnessDetail');
@@ -73,6 +74,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="agent" element={<AgentPage />} />
               <Route path="git" element={<GitAccessPage />} />
               <Route path="users" element={<UsersPage />} />
+              <Route path="storage" element={<StoragePage />} />
               <Route path="keyboard" element={<KeyboardPage />} />
               <Route path="language" element={<LanguagePage />} />
               <Route path="harness" element={<Navigate to="/harness" replace />} />

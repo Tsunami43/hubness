@@ -38,6 +38,7 @@ export function settings(): HubSettings {
   const perm = kv.get<PermissionMode>(PERMISSION_KEY)?.value;
   return {
     projectsRoot: config.projectsDir,
+    dataDir: config.dataDir,
     defaultPermission: perm && PERMISSION_MODES.includes(perm) ? perm : 'ask',
     defaultInstructions: kv.get<string>(DEFAULT_INSTRUCTIONS_KEY)?.value ?? '',
     sessionInstructions: sessionInstructions(),

@@ -183,6 +183,7 @@ test('the home system project exists', async () => {
 test('settings', async () => {
   const s = (await call('GET', '/settings')).json;
   assert.equal(s.projectsRoot, projectsRoot);
+  assert.ok(typeof s.dataDir === 'string' && s.dataDir.startsWith('/'), 'the data folder, absolute');
   assert.equal(s.defaultPermission, 'ask');
   assert.equal((await call('PUT', '/settings', {})).status, 400, 'nothing to save');
   assert.equal((await call('PUT', '/settings', { defaultPermission: 'yolo' })).status, 400);

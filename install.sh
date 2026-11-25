@@ -24,6 +24,8 @@ INSTALL_DIR="${HUBNESS_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${HUBNESS_VERSION:-}"
 TUI_ONLY="${HUBNESS_TUI_ONLY:-0}"
 FROM_SOURCE="${HUBNESS_FROM_SOURCE:-0}"
+DATA_DIR=""
+START=auto
 ACTION=install
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -52,6 +54,8 @@ Install hubness: hubcli (the hub, web app inside) and hubtui (terminal UI).
   --version X     a release instead of the latest one
   --dir DIR       where the binaries go (default ~/.local/bin)
   --from-source   build with cargo (hubcli also needs Node.js 24+)
+  --data-dir DIR  where the hub keeps its data; starts the service without asking
+  --no-start      only install; don't offer to start the hub
   --uninstall     remove the binaries and the service (data stays)
 
 Environment: HUBNESS_VERSION, HUBNESS_INSTALL_DIR, HUBNESS_TUI_ONLY=1, HUBNESS_FROM_SOURCE=1
@@ -77,6 +81,17 @@ parse_args() {
         shift
         ;;
       --dir=*) INSTALL_DIR="${1#*=}" ;;
+      --data-dir)
+        [ $# -ge 2 ] || die "--data-dir needs a folder"
+        DATA_DIR="$2"
+        START=yes
+        shift
+        ;;
+      --data-dir=*)
+        DATA_DIR="${1#*=}"
+        START=yes
+        ;;
+      --no-start) START=no ;;
       -h | --help)
         usage
         exit 0
@@ -204,12 +219,54 @@ do_install() {
   elif [ "$upgraded" = 1 ]; then
     say "${B}Upgraded.${N} If the hub runs as a service, restart it:"
     say "  hubcli server restart"
-  else
+  elif ! setup_hub; then
     say "${B}Next:${N}"
     say "  hubcli server start         ${D}run the hub in the background (http://127.0.0.1:8787)${N}"
     say "  hubcli user add <name>      ${D}an account: needed to reach the hub from elsewhere${N}"
     say "  hubtui                      ${D}terminal UI (or open the URL in a browser)${N}"
   fi
+}
+
+# A terminal to ask on: under `curl | sh` stdin is the script itself.
+has_tty() { [ -r /dev/tty ] && (: </dev/tty) 2>/dev/null; }
+
+# ask QUESTION DEFAULT: read an answer from the terminal into $answer.
+ask() {
+  printf '%s %s[%s]%s ' "$1" "$D" "$2" "$N" >/dev/tty
+  read -r answer </dev/tty || answer=""
+  [ -n "$answer" ] || answer="$2"
+}
+
+# First install: start the hub as a service (asking where its data goes) and offer an
+# account. Returns 1 when it didn't start the hub (the caller prints the next steps).
+setup_hub() {
+  [ "$START" != no ] || return 1
+  { have systemctl && systemctl --user show-environment >/dev/null 2>&1; } || return 1
+  hubcli="$INSTALL_DIR/hubcli"
+  if [ -z "$DATA_DIR" ]; then
+    has_tty || return 1 # no terminal (CI, provisioning): pass --data-dir to start
+    say ""
+    ask "Start the hub now as a background service?" "Y/n"
+    case "$answer" in [nN]*) return 1 ;; esac
+    ask "Where should the hub keep its data (database, logs, keys)?" "~/.local/share/hubness"
+    DATA_DIR="$answer"
+  fi
+  case "$DATA_DIR" in
+    "~") DATA_DIR="$HOME" ;;
+    "~/"*) DATA_DIR="$HOME/${DATA_DIR#"~/"}" ;;
+  esac
+  step "Starting the hub (data: $DATA_DIR)"
+  "$hubcli" server start --data-dir "$DATA_DIR" </dev/null || return 1
+  if has_tty && [ -z "$("$hubcli" user list 2>/dev/null)" ]; then
+    ask "Create an account now? Username, empty to skip" ""
+    if [ -n "$answer" ]; then
+      "$hubcli" user add "$answer" </dev/tty || warn "no account created: run hubcli user add $answer"
+    fi
+  fi
+  say ""
+  say "${B}Ready.${N} Open http://127.0.0.1:8787 or run ${B}hubtui${N}."
+  say "  hubcli server status | logs -f | config    ${D}manage it later${N}"
+  return 0
 }
 
 do_uninstall() {

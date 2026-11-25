@@ -51,12 +51,19 @@ binaries into `~/.local/bin`:
 - `hubcli` — the hub (server with the web app inside) and its management commands;
 - `hubtui` — the terminal UI, a client for a hub here or on another machine.
 
+On a first install in a terminal it asks where the hub keeps its data (default
+`~/.local/share/hubness`), starts it as a service and offers to create an account. Later the
+folder is shown in Settings → Storage (web) and Settings → Connection (TUI) and changed with
+`hubcli server config data-dir <path>` + `hubcli server restart`.
+
 Options go after `sh -s --`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --tui-only     # just hubtui
 curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --version 0.2.0
 curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --from-source  # cargo (+ Node.js for the web app)
+curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --data-dir /srv/hubness  # no questions
+curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --no-start     # binaries only
 curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --uninstall    # data stays
 ```
 
@@ -68,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh |
 **Run the hub** as a systemd user service:
 
 ```sh
-hubcli server start          # http://127.0.0.1:8787, starts again at login
+hubcli server start          # http://127.0.0.1:8787, starts again at login (asks for the data folder the first time)
 hubcli user add alice        # an account: sign-in for the web app, the TUI and the API
 hubcli server status         # running? health, URL, data folder, accounts
 hubcli server logs -f        # its log
