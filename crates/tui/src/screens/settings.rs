@@ -874,11 +874,11 @@ impl Screen for Connection {
             row("Agents", agents.to_string(), W),
             row("Data folder", self.settings["dataDir"].as_str().unwrap_or("…").to_string(), W),
             row("Projects folder", self.settings["projectsRoot"].as_str().unwrap_or("…").to_string(), W),
-            row("Change on the hub", "hubcli server config data-dir <path> · then hubcli server restart", W),
+            row("Change on the hub", "hubness server config data-dir <path> · then hubness server restart", W),
             Line::raw(""),
             Line::styled("This app", t.accent_style()),
             row("hubness TUI", format!("v{}", env!("CARGO_PKG_VERSION")), W),
-            row("Other hubs", "Space H switches; a adds one (hubtui --url <address> too)", W),
+            row("Other hubs", "Space H switches; a adds one (hubness tui --url <address> too)", W),
             Line::raw(""),
             Line::styled(
                 "  The TUI is a client of the hub's API: every session, project and setting is shared with the web app.",

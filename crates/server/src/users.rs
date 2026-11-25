@@ -1,4 +1,4 @@
-//! User accounts: storage, passwords (argon2id), sign-in sessions and the `hubcli user …`
+//! User accounts: storage, passwords (argon2id), sign-in sessions and the `hubness user …`
 //! commands that manage accounts directly in the database of `HUBNESS_DATA_DIR`.
 //!
 //! All accounts have the same rights. A session token is random (256 bits) and handed to the
@@ -207,13 +207,13 @@ pub fn delete_session(db: &Connection, token: &str) -> rusqlite::Result<()> {
     db.execute("DELETE FROM auth_sessions WHERE token_hash = ?", [token_hash(token)]).map(|_| ())
 }
 
-// ---------- hubcli user … ----------
+// ---------- hubness user … ----------
 
-const USAGE: &str = "usage: hubcli user add <name> | passwd <name> | rm <name> | list
+const USAGE: &str = "usage: hubness user add <name> | passwd <name> | rm <name> | list
   The password is asked for (hidden) or read from stdin when it is not a terminal.
   Works on the database in HUBNESS_DATA_DIR (default .data), also while the hub runs.";
 
-/// `hubcli user <args…>`: manage accounts directly in the hub database.
+/// `hubness user <args…>`: manage accounts directly in the hub database.
 pub fn cli(args: &[String]) -> anyhow::Result<()> {
     let config = crate::Config::from_env()?;
     config.ensure_dirs()?;
@@ -222,7 +222,7 @@ pub fn cli(args: &[String]) -> anyhow::Result<()> {
     let one = |what: &str| -> anyhow::Result<String> {
         match args.get(1) {
             Some(n) if args.len() == 2 => Ok(n.clone()),
-            _ => anyhow::bail!("usage: hubcli user {what} <name>"),
+            _ => anyhow::bail!("usage: hubness user {what} <name>"),
         }
     };
     match args.first().map(String::as_str) {
@@ -245,13 +245,13 @@ pub fn cli(args: &[String]) -> anyhow::Result<()> {
         Some("rm") => {
             let name = one("rm")?;
             let Some((user, _)) = find(&db, &name)? else { anyhow::bail!("no user {name}") };
-            delete(&db, &user.id).map_err(|e| anyhow::anyhow!("{} (reset its password with `hubcli user passwd {name}`)", e.message))?;
+            delete(&db, &user.id).map_err(|e| anyhow::anyhow!("{} (reset its password with `hubness user passwd {name}`)", e.message))?;
             println!("removed {}", user.username);
         }
         Some("list") if args.len() == 1 => {
             let users = list(&db)?;
             if users.is_empty() {
-                println!("no accounts: the hub is open to this machine only (add one with `hubcli user add <name>`)");
+                println!("no accounts: the hub is open to this machine only (add one with `hubness user add <name>`)");
             }
             for u in users {
                 println!("{}\t{}", u.username, u.created_at);

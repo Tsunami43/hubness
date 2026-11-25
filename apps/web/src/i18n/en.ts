@@ -603,7 +603,7 @@ export const en = {
   'storage.dataHint': 'Database, logs and keys. Change it on the hub machine:',
   'storage.projects': 'Projects folder',
   'storage.projectsHint': 'Where new projects are created; set in the hub environment:',
-  'storage.restartHint': 'Changes apply after `hubcli server restart`. Moving the data folder does not copy the old data: move it yourself first.',
+  'storage.restartHint': 'Changes apply after `hubness server restart`. Moving the data folder does not copy the old data: move it yourself first.',
   'users.title': 'Users',
   'users.itemHint': 'Accounts that can sign in to the hub',
   'users.intro': 'Everyone with an account has the same rights. A password change or a deleted account ends its sessions.',

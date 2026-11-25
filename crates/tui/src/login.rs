@@ -139,7 +139,7 @@ impl LoginForm {
         } else if let Some(e) = &self.error {
             Line::styled(e.clone(), Style::default().fg(t.danger).add_modifier(Modifier::BOLD))
         } else {
-            Line::styled("No account? Ask someone on this hub, or run `hubcli user add <name>` on its machine.", t.muted_style())
+            Line::styled("No account? Ask someone on this hub, or run `hubness user add <name>` on its machine.", t.muted_style())
         };
         f.render_widget(Paragraph::new(line).wrap(Wrap { trim: true }), msg);
         f.render_widget(
