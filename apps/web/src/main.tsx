@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { lazy, StrictMode, type ComponentType } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/query';
 import { createRoot } from 'react-dom/client';
@@ -11,21 +11,38 @@ import './theme';
 import './lib/editorPrefs';
 import { Layout } from './components/Layout';
 import { ChatPage } from './pages/ChatsPage';
-import { ProjectsPage } from './pages/ProjectsPage';
-import { ProjectPage, ProjectSessionPage } from './pages/ProjectPage';
-import { GroupPage, GroupSessionPage } from './pages/GroupPage';
-import { SettingsIndex, SettingsLayout } from './pages/settings/SettingsLayout';
-import { AppearancePage } from './pages/settings/AppearancePage';
-import { LanguagePage } from './pages/settings/LanguagePage';
-import { AgentPage } from './pages/settings/AgentPage';
-import { KeyboardPage } from './pages/settings/KeyboardPage';
-import { GitAccessPage } from './pages/settings/GitAccessPage';
-import { UsersPage } from './pages/settings/UsersPage';
-import { HarnessDetail, HarnessIndex, HarnessLayout } from './pages/HarnessPage';
-import { HarnessMcp } from './pages/HarnessMcp';
 import { HomePage } from './pages/HomePage';
-import { SystemIndex, SystemLayout, SystemSection } from './pages/SystemPage';
 import { SessionRedirect } from './pages/SessionRedirect';
+
+/**
+ * A route screen loaded on first visit (its own chunk): the home screen and chats load with
+ * the app, projects, settings, harness and system pages only when opened. Layout and
+ * SubmenuLayout wrap their outlets in Suspense.
+ */
+function page<M extends Record<string, unknown>, K extends keyof M>(load: () => Promise<M>, name: K) {
+  return lazy(() => load().then((m) => ({ default: m[name] as ComponentType })));
+}
+
+const ProjectsPage = page(() => import('./pages/ProjectsPage'), 'ProjectsPage');
+const ProjectPage = page(() => import('./pages/ProjectPage'), 'ProjectPage');
+const ProjectSessionPage = page(() => import('./pages/ProjectPage'), 'ProjectSessionPage');
+const GroupPage = page(() => import('./pages/GroupPage'), 'GroupPage');
+const GroupSessionPage = page(() => import('./pages/GroupPage'), 'GroupSessionPage');
+const SettingsLayout = page(() => import('./pages/settings/SettingsLayout'), 'SettingsLayout');
+const SettingsIndex = page(() => import('./pages/settings/SettingsLayout'), 'SettingsIndex');
+const AppearancePage = page(() => import('./pages/settings/AppearancePage'), 'AppearancePage');
+const LanguagePage = page(() => import('./pages/settings/LanguagePage'), 'LanguagePage');
+const AgentPage = page(() => import('./pages/settings/AgentPage'), 'AgentPage');
+const KeyboardPage = page(() => import('./pages/settings/KeyboardPage'), 'KeyboardPage');
+const GitAccessPage = page(() => import('./pages/settings/GitAccessPage'), 'GitAccessPage');
+const UsersPage = page(() => import('./pages/settings/UsersPage'), 'UsersPage');
+const HarnessLayout = page(() => import('./pages/HarnessPage'), 'HarnessLayout');
+const HarnessIndex = page(() => import('./pages/HarnessPage'), 'HarnessIndex');
+const HarnessDetail = page(() => import('./pages/HarnessPage'), 'HarnessDetail');
+const HarnessMcp = page(() => import('./pages/HarnessMcp'), 'HarnessMcp');
+const SystemLayout = page(() => import('./pages/SystemPage'), 'SystemLayout');
+const SystemIndex = page(() => import('./pages/SystemPage'), 'SystemIndex');
+const SystemSection = page(() => import('./pages/SystemPage'), 'SystemSection');
 
 /** Old project tab URLs (sessions, files, git…) lead to the project itself. */
 function ProjectRedirect() {
