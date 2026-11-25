@@ -31,6 +31,7 @@ pub fn api() -> Router<AppState> {
         .merge(crate::kanban::routes())
         .merge(crate::secrets::routes())
         .merge(crate::manifest::routes())
+        .merge(crate::files::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 

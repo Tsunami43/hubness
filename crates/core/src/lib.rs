@@ -254,6 +254,78 @@ pub struct ManifestResponse {
     pub services: Vec<ServiceState>,
 }
 
+// ---------- files ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FsEntry {
+    pub name: String,
+    pub path: String,
+    pub dir: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Ignored by git (.gitignore) or an internal folder (node_modules…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignored: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileContent {
+    pub path: String,
+    pub size: u64,
+    pub binary: bool,
+    pub truncated: bool,
+    pub content: String,
+    /// sha256 of the file bytes (text files that fit entirely) — base for a conflict-safe save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseResponse {
+    pub path: String,
+    pub parent: Option<String>,
+    pub entries: Vec<FsEntry>,
+    pub is_git_repo: bool,
+}
+
+/// Files changed on disk in a project folder (`GET /api/watch`, batched).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChangeMsg {
+    pub project_id: String,
+    /// Changed paths relative to the project root ('/'-separated): files or folders.
+    pub paths: Vec<String>,
+    /// HEAD, index or refs changed (commit, checkout, staging).
+    pub git: bool,
+    /// Too many changes at once: reload everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overflow: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchMatch {
+    /// 1-based line number.
+    pub line: u64,
+    /// The line (cut to a preview length).
+    pub text: String,
+    /// Match ranges inside `text` (UTF-16 indices, end exclusive).
+    pub ranges: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchFile {
+    pub path: String,
+    pub matches: Vec<SearchMatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SearchResult {
+    pub files: Vec<SearchFile>,
+    pub total: usize,
+    pub truncated: bool,
+}
+
 /// A project secret: the value never leaves the server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

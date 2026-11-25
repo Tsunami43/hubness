@@ -38,7 +38,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Agents | Codex and OpenCode (ACP), Grok; the hub MCP server (`open_pane`); image attachments | todo |
 | Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
-| Files | tree, read/write, search, watch | todo |
+| Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |
 | Git | status, diff, log, branches, operations | todo |
 | Environment | runs, shells, jobs, preview proxy, secrets, sandbox | todo |
 | Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |

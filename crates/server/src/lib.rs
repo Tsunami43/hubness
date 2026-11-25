@@ -11,6 +11,7 @@ pub mod context;
 pub mod db;
 pub mod environments;
 pub mod error;
+pub mod files;
 pub mod home;
 pub mod http;
 pub mod inbox;
@@ -19,8 +20,10 @@ pub mod manifest;
 pub mod paths;
 pub mod routes;
 pub mod runtime;
+pub mod search;
 pub mod secrets;
 pub mod sessions;
+pub mod watch;
 pub mod workspaces;
 
 use std::sync::{Arc, Mutex};
@@ -39,6 +42,7 @@ pub struct AppState {
     config: Arc<Config>,
     bus: bus::Bus,
     runtime: runtime::Runtime,
+    watches: watch::Watches,
 }
 
 impl AppState {
@@ -49,7 +53,13 @@ impl AppState {
         home::ensure_home_project(&db, &config)?;
         // no agent survives a restart
         db::sessions::recover_interrupted(&db)?;
-        Ok(Self { db: Arc::new(Mutex::new(db)), config: Arc::new(config), bus: bus::Bus::default(), runtime: runtime::Runtime::default() })
+        Ok(Self {
+            db: Arc::new(Mutex::new(db)),
+            config: Arc::new(config),
+            bus: bus::Bus::default(),
+            runtime: runtime::Runtime::default(),
+            watches: watch::Watches::default(),
+        })
     }
 
     pub fn config(&self) -> &Config {

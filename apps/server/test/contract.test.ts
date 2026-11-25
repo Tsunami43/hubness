@@ -560,3 +560,135 @@ test('project manifest .hub/hub.yaml', async () => {
   assert.equal(typeof broken.error, 'string');
   assert.equal((await call('GET', '/projects/missing/manifest')).status, 404);
 });
+
+test('files: tree, read, write with conflict check, create/rename/delete, list, browse', async () => {
+  const { mkdirSync, symlinkSync } = await import('node:fs');
+  const repo = makeRepo(join(tmp, 'elsewhere', 'files'));
+  mkdirSync(join(repo, 'src'));
+  mkdirSync(join(repo, 'dist'));
+  writeFileSync(join(repo, '.gitignore'), 'dist/\n');
+  writeFileSync(join(repo, 'b.txt'), 'hello\n');
+  writeFileSync(join(repo, 'A.md'), '# Title\n');
+  writeFileSync(join(repo, 'src', 'main.ts'), 'export {};\n');
+  writeFileSync(join(repo, 'blob.bin'), Buffer.from([1, 0, 2]));
+  writeFileSync(join(repo, 'dist', 'out.js'), '');
+  symlinkSync(tmp, join(repo, 'escape'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const base = `/projects/${p.id}`;
+
+  const tree = (await call('GET', `${base}/tree`)).json;
+  assert.deepEqual(
+    tree.map((e: any) => [e.name, e.dir, e.ignored]),
+    [
+      ['dist', true, true],
+      ['escape', true, false],
+      ['src', true, false],
+      ['.gitignore', false, false],
+      ['A.md', false, false],
+      ['b.txt', false, false],
+      ['blob.bin', false, false],
+    ],
+  );
+  assert.equal(tree.find((e: any) => e.name === 'b.txt').size, 6);
+  assert.equal('size' in tree.find((e: any) => e.name === 'src'), false, 'folders have no size');
+  assert.deepEqual((await call('GET', `${base}/tree?path=src`)).json, [{ name: 'main.ts', path: 'src/main.ts', dir: false, size: 11, ignored: false }]);
+  assert.equal((await call('GET', `${base}/tree?path=..`)).status, 400);
+  assert.equal((await call('GET', `${base}/tree?path=escape`)).status, 400, 'a symlink out of the project');
+
+  const file = (await call('GET', `${base}/file?path=b.txt`)).json;
+  assert.deepEqual(file, { path: 'b.txt', size: 6, binary: false, truncated: false, content: 'hello\n', hash: '5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03' });
+  const bin = (await call('GET', `${base}/file?path=blob.bin`)).json;
+  assert.deepEqual(bin, { path: 'blob.bin', size: 3, binary: true, truncated: false, content: '' });
+  assert.equal((await call('GET', `${base}/file`)).status, 400);
+  assert.equal((await call('GET', `${base}/file?path=src`)).status, 400, 'a folder');
+  assert.equal((await call('GET', `${base}/file?path=nope.txt`)).status, 404);
+  assert.equal((await call('GET', `${base}/file?path=escape/claude-fixture`)).status, 400);
+
+  assert.equal((await call('PUT', `${base}/file`, { path: 'b.txt', content: 'x', baseHash: 'stale' })).status, 409);
+  const saved = await call('PUT', `${base}/file`, { path: 'b.txt', content: 'bye\n', baseHash: file.hash });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.json.content, 'bye\n');
+  assert.notEqual(saved.json.hash, file.hash);
+  assert.equal((await call('PUT', `${base}/file`, { path: '.git/config', content: 'x' })).status, 400);
+  assert.equal((await call('PUT', `${base}/file`, { path: 'nope.txt', content: 'x' })).status, 404);
+  assert.equal((await call('PUT', `${base}/file`, { path: 'b.txt', content: 'a\u0000b' })).status, 400);
+  assert.equal((await call('PUT', `${base}/file`, { path: 'blob.bin', content: 'text' })).status, 400, 'binary files stay binary');
+  assert.equal((await call('PUT', `${base}/file`, { path: '', content: 'x' })).status, 400);
+
+  assert.deepEqual((await call('POST', `${base}/fs/create`, { path: 'docs/notes.md' })).json, { path: 'docs/notes.md' });
+  assert.equal((await call('POST', `${base}/fs/create`, { path: 'docs/notes.md' })).status, 409);
+  assert.equal((await call('POST', `${base}/fs/create`, { path: 'lib', dir: true })).status, 201);
+  assert.equal((await call('POST', `${base}/fs/create`, { path: '../out' })).status, 400);
+  assert.equal((await call('POST', `${base}/fs/create`, { path: '.git/hooks/x' })).status, 400);
+  assert.equal((await call('POST', `${base}/fs/create`, { path: 'escape/x' })).status, 400, 'not through a symlink');
+  assert.deepEqual((await call('POST', `${base}/fs/rename`, { from: 'docs', to: 'lib/docs' })).json, { path: 'lib/docs' });
+  assert.equal((await call('POST', `${base}/fs/rename`, { from: 'lib', to: 'lib/inner' })).status, 400, 'into itself');
+  assert.equal((await call('POST', `${base}/fs/rename`, { from: 'A.md', to: 'b.txt' })).status, 409, 'never overwrites');
+  assert.equal((await call('POST', `${base}/fs/rename`, { from: 'missing', to: 'x' })).status, 404);
+  assert.deepEqual((await call('POST', `${base}/fs/delete`, { path: 'lib' })).json, { ok: true });
+  assert.deepEqual((await call('POST', `${base}/fs/delete`, { path: 'escape' })).json, { ok: true }, 'the link itself is removed');
+  assert.ok(existsSync(tmp), 'not its target');
+  assert.equal((await call('POST', `${base}/fs/delete`, { path: 'lib' })).status, 404);
+
+  const files = (await call('GET', `${base}/files`)).json.files.sort();
+  assert.deepEqual(files, ['.gitignore', 'A.md', 'b.txt', 'blob.bin', 'src/main.ts'], 'ignored files are left out');
+
+  const br = (await call('GET', `/fs/browse?path=${encodeURIComponent(repo)}`)).json;
+  assert.equal(br.path, repo);
+  assert.equal(br.parent, join(tmp, 'elsewhere'));
+  assert.equal(br.isGitRepo, true);
+  assert.deepEqual(br.entries.map((e: any) => e.name), ['dist', 'src']);
+  assert.equal((await call('GET', `/fs/browse?path=${encodeURIComponent(join(repo, 'b.txt'))}`)).status, 400);
+});
+
+test('search across project files', async () => {
+  const { mkdirSync } = await import('node:fs');
+  const repo = makeRepo(join(tmp, 'elsewhere', 'search'));
+  mkdirSync(join(repo, 'src'));
+  writeFileSync(join(repo, 'src', 'a.ts'), 'const Needle = 1;\nneedle();\n// needles\n');
+  writeFileSync(join(repo, 'notes.md'), 'привет needle\n');
+  writeFileSync(join(repo, '.gitignore'), 'ignored.txt\n');
+  writeFileSync(join(repo, 'ignored.txt'), 'needle\n');
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const search = async (qs: string) => {
+    const r = (await call('GET', `/projects/${p.id}/search?${qs}`)).json;
+    r.files.sort((a: any, b: any) => a.path.localeCompare(b.path));
+    return r;
+  };
+  assert.deepEqual(await search('q=%20'), { files: [], total: 0, truncated: false });
+  const all = await search('q=needle');
+  assert.equal(all.total, 4);
+  assert.deepEqual(all.files.map((f: any) => f.path), ['notes.md', 'src/a.ts'], '.gitignore is respected');
+  assert.deepEqual(all.files[0].matches, [{ line: 1, text: 'привет needle', ranges: [[7, 13]] }], 'UTF-16 ranges');
+  assert.equal((await search('q=Needle&case=1')).total, 1);
+  assert.equal((await search('q=needle&word=1')).total, 3);
+  assert.equal((await search('q=need(le)%3F%5Cb&regex=1')).total, 3);
+  assert.deepEqual((await search('q=needle&include=*.md')).files.map((f: any) => f.path), ['notes.md']);
+  assert.deepEqual((await search('q=needle&exclude=*.md')).files.map((f: any) => f.path), ['src/a.ts']);
+  assert.equal((await call('GET', `/projects/${p.id}/search?q=(&regex=1`)).status, 400);
+  assert.equal((await call('GET', `/projects/${p.id}/search?q=${'x'.repeat(501)}`)).status, 400);
+});
+
+test('live file changes over /watch', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const repo = makeRepo(join(tmp, 'elsewhere', 'watched'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  assert.equal((await raw('/api/watch?projects=missing')).status, 404);
+  const stream = await openStream(`/watch?projects=${p.id},${p.id}`);
+  await new Promise((r) => setTimeout(r, 100));
+  writeFileSync(join(repo, 'new.txt'), 'x');
+  const first = await stream.next();
+  assert.equal(first.projectId, p.id);
+  assert.ok(first.paths.includes('new.txt'), JSON.stringify(first));
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(join(repo, 'pkg'));
+  await new Promise((r) => setTimeout(r, 300));
+  writeFileSync(join(repo, 'pkg', 'deep.txt'), 'x');
+  let m = await stream.next();
+  while (!m.paths.includes('pkg/deep.txt')) m = await stream.next();
+  execFileSync('git', ['-C', repo, 'add', 'new.txt']);
+  m = await stream.next();
+  while (!m.git) m = await stream.next();
+  assert.equal(m.git, true, 'staging changes the index');
+  stream.close();
+});
