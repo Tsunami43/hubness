@@ -48,6 +48,7 @@ Every other letter is a screen action, listed by `?` and in the palette. Screens
 | `Space t` | +tabs: `n` / `p` next / previous, `1…9` a tab by its name |
 | `Space e` | toggle the sidebar |
 | `Space r` | reload |
+| `Space H` | switch hub: the saved hubs, or add one (also `:` → Switch hub) |
 | `Space L` | log out (a hub with accounts; also `:` → Log out) |
 | `Space q` | quit |
 
@@ -95,9 +96,16 @@ in the status line). `i` / `a` / `o` type, `Esc` stops typing, `:w` / `Ctrl+S` s
 - A status line at the bottom: the mode, where you are, messages, running agents, the hub.
 - Nerd Font icons (Omarchy ships Nerd Fonts); `HUBNESS_TUI_ICONS=0` turns them off.
 
-## Signing in
+## Hubs and signing in
 
-A hub with accounts shows a sign-in screen (username, masked password) before anything
-else. The session token is kept per hub URL in `~/.config/hubness/tui.json` (mode 0600);
-when the hub answers 401 the token is dropped and the screen comes back. `--user <name>`
-prefills the username. Settings → Users adds and deletes accounts and changes passwords.
+The first run (no `--url`, no saved hub) shows the connect screen: a domain or an IP, with
+`:port` when it isn't 8787. A bare host tries `https://host` first, then `http://host:8787`;
+`host:port` tries https, then http; Enter alone is this machine. Hubs are saved in
+`~/.config/hubness/tui.json` (mode 0600) with their username and session token, and the
+next start opens the last one. `Space H` (or Settings → Connection) switches hubs, adds one
+or forgets one; `--url` overrides the last hub and is saved too.
+
+A hub with accounts shows a sign-in screen (username, masked password; `Ctrl+O` goes to
+another hub). When the hub answers 401 the token is dropped and the screen comes back.
+`--user <name>` prefills the username. Settings → Users adds and deletes accounts and
+changes passwords.

@@ -80,6 +80,16 @@ pub struct App {
     /// Who is signed in (`None` on a hub without accounts).
     user: Option<String>,
     pub quit: bool,
+    /// Set with `quit` to open another hub instead of exiting.
+    pub next: Option<Next>,
+}
+
+/// Where to go after this hub (`Space H`, Settings → Connection).
+pub enum Next {
+    /// A saved hub by its URL.
+    Hub(String),
+    /// The connect screen, to add a hub.
+    Add,
 }
 
 const CACHE: usize = 12;
@@ -119,6 +129,7 @@ impl App {
             login,
             user,
             quit: false,
+            next: None,
         };
         if app.login.is_none() {
             app.start();
@@ -138,16 +149,63 @@ impl App {
         }
     }
 
+    /// Leave this hub: stop its live streams (the next hub gets a new app).
+    pub fn shutdown(&mut self) {
+        for (_, h) in self.ctx.streams.drain() {
+            h.abort();
+        }
+    }
+
+    /// Quit this hub and open another one (`None` — the connect screen).
+    fn switch_hub(&mut self, url: Option<String>) {
+        match url {
+            Some(u) if crate::hubs::key(&u) == self.ctx.client.base() => self.ctx.info("Already on this hub"),
+            Some(u) => {
+                self.next = Some(Next::Hub(u));
+                self.quit = true;
+            }
+            None => {
+                self.next = Some(Next::Add);
+                self.quit = true;
+            }
+        }
+    }
+
+    /// `Space H`: the saved hubs and "Add a hub…".
+    fn open_hubs(&mut self) {
+        let current = self.ctx.client.base().to_string();
+        let mut items: Vec<(String, String)> = crate::hubs::Store::load()
+            .hubs
+            .into_iter()
+            .map(|h| {
+                let mut label = h.url.clone();
+                if let Some(u) = &h.username {
+                    label.push_str(&format!("  ({u})"));
+                }
+                if h.url == current {
+                    label.push_str("  · current");
+                }
+                (format!("hub:{}", h.url), label)
+            })
+            .collect();
+        items.push(("add".into(), "Add a hub…".into()));
+        self.modal = Some((
+            APP,
+            Modal::Pick { title: "Switch hub".into(), items, filter: String::new(), selected: 0, key: "hubs".into() },
+            TextInput::default(),
+        ));
+    }
+
     /// The session is gone (401) or the user signed out: back to the sign-in screen.
     fn sign_out(&mut self, message: Option<String>) {
         let url = self.ctx.client.base().to_string();
-        crate::login::remember(&url, None, None);
+        crate::hubs::remember(&url, None, None);
         self.ctx.client.set_token(None);
         self.ctx.screen = APP;
         self.ctx.close_stream("global");
         self.modal = None;
         self.overlay = Overlay::None;
-        let user = self.user.take().or_else(|| crate::login::stored(&url).1);
+        let user = self.user.take().or_else(|| crate::hubs::stored(&url).1);
         self.login = Some(LoginForm::new(user.as_deref(), message));
     }
 
@@ -155,6 +213,7 @@ impl App {
         let Some(form) = &mut self.login else { return };
         match form.on_key(k) {
             LoginEvent::Quit => self.quit = true,
+            LoginEvent::OtherHub => self.switch_hub(None),
             LoginEvent::Submit { username, password } => {
                 let c = self.ctx.client.clone();
                 self.ctx.screen = APP;
@@ -169,7 +228,7 @@ impl App {
         match result {
             Ok(v) => {
                 let user = v["user"]["username"].as_str().map(String::from).unwrap_or_else(|| form.username());
-                crate::login::remember(self.ctx.client.base(), v["token"].as_str(), Some(&user));
+                crate::hubs::remember(self.ctx.client.base(), v["token"].as_str(), Some(&user));
                 self.user = Some(user);
                 self.login = None;
                 self.ctx.status = None;
@@ -305,6 +364,7 @@ impl App {
                     self.modal = Some((from, m, input));
                 }
                 Request::OpenUrl(url) => open_url(&url, &mut self.ctx),
+                Request::SwitchHub(url) => self.switch_hub(url),
             }
         }
     }
@@ -614,6 +674,7 @@ impl App {
                 Entry::group("t", "tabs"),
                 Entry::cmd("e", "Sidebar"),
                 Entry::cmd("r", "Reload"),
+                Entry::cmd("H", "Switch hub"),
                 Entry::cmd("L", "Log out"),
                 Entry::cmd("q", "Quit"),
             ],
@@ -657,6 +718,7 @@ impl App {
                     self.refresh_shared();
                     self.with_screen(|s, ctx| s.on_show(ctx));
                 }
+                "H" => self.open_hubs(),
                 "L" => self.log_out(),
                 "q" => self.quit = true,
                 _ => {}
@@ -724,6 +786,7 @@ impl App {
             ("cmd:sidebar", "Toggle sidebar"),
             ("cmd:reload", "Reload"),
             ("cmd:back", "Back"),
+            ("cmd:hub", "Switch hub"),
             ("cmd:logout", "Log out"),
             ("cmd:quit", "Quit  (:q)"),
         ] {
@@ -750,6 +813,7 @@ impl App {
                 self.with_screen(|s, ctx| s.on_show(ctx));
             }
             "cmd:back" => self.ctx.back(),
+            "cmd:hub" => self.open_hubs(),
             "cmd:logout" => self.log_out(),
             "cmd:quit" => self.quit = true,
             other => {
@@ -825,6 +889,11 @@ impl App {
                 {
                     let route = self.session_route(id);
                     self.go(route);
+                } else if key == "hubs"
+                    && let Some(id) = value.as_str()
+                {
+                    let url = id.strip_prefix("hub:").map(String::from);
+                    self.switch_hub(url);
                 }
             } else {
                 self.with_screen_id(owner, |s, ctx| s.on_task(&key, Ok(value), ctx));

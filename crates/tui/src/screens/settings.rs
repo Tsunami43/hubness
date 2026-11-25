@@ -724,10 +724,21 @@ impl Screen for Users {
 pub struct Connection {
     auth: Value,
     health: Option<Result<u128, String>>,
+    /// Saved hubs (`~/.config/hubness/tui.json`).
+    hubs: Vec<crate::hubs::Hub>,
+    nav: Nav,
+    /// The URL of the hub this TUI is on.
+    current: String,
 }
 
 impl Connection {
-    fn check(&self, ctx: &Ctx) {
+    fn selected_hub(&self) -> Option<String> {
+        self.nav.selected().and_then(|i| self.hubs.get(i)).map(|h| h.url.clone())
+    }
+
+    fn check(&mut self, ctx: &Ctx) {
+        self.hubs = crate::hubs::Store::load().hubs;
+        self.current = ctx.client.base().to_string();
         ctx.get("auth", "/auth/status");
         let c = ctx.client.clone();
         ctx.task("health", async move {
@@ -748,12 +759,36 @@ impl Screen for Connection {
     }
 
     fn actions(&self) -> Vec<Action> {
-        vec![Action::new("r", "Check again"), Action::new("o", "Open the hub in the browser")]
+        let mut a = vec![Action::new("r", "Check again"), Action::new("o", "Open the hub in the browser"), Action::new("a", "Add a hub")];
+        if let Some(url) = self.selected_hub()
+            && url != self.current
+        {
+            a.push(Action::new("s", "Switch to the selected hub"));
+        }
+        if self.selected_hub().is_some() {
+            a.push(Action::new("x", "Forget the selected hub"));
+        }
+        a
     }
 
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         match key {
             "r" => self.check(ctx),
+            "a" => ctx.switch_hub(None),
+            "s" => {
+                if let Some(url) = self.selected_hub() {
+                    ctx.switch_hub(Some(url));
+                }
+            }
+            "x" => {
+                if let Some(url) = self.selected_hub() {
+                    if url == ctx.client.base() {
+                        ctx.error("This is the hub you are on: switch to another one first");
+                    } else {
+                        ctx.confirm(&format!("forget:{url}"), "Forget the hub", format!("Forget {url} and its saved sign-in?"), true);
+                    }
+                }
+            }
             "o" => {
                 let url = ctx.shared.base_url.clone();
                 ctx.open_url(url);
@@ -762,12 +797,42 @@ impl Screen for Connection {
         }
     }
 
-    fn on_key(&mut self, _k: KeyEvent, _ctx: &mut Ctx) -> Handled {
+    fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
+        if self.nav.key(&k, self.hubs.len()) {
+            return Handled::Yes;
+        }
+        if k.code == KeyCode::Enter
+            && let Some(url) = self.selected_hub()
+        {
+            ctx.switch_hub(Some(url));
+            return Handled::Yes;
+        }
         Handled::No
     }
 
-    fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, _ctx: &mut Ctx) {
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        if let Some(i) = id.strip_prefix("hubs:").and_then(|i| i.parse::<usize>().ok()) {
+            if self.nav.selected() == Some(i) {
+                if let Some(url) = self.selected_hub() {
+                    ctx.switch_hub(Some(url));
+                }
+            } else {
+                self.nav.state.select(Some(i));
+            }
+        }
+    }
+
+    fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
         match key {
+            k if k.starts_with("forget:") => {
+                if matches!(result, Ok(Value::Bool(true))) {
+                    let mut store = crate::hubs::Store::load();
+                    store.forget(&k[7..]);
+                    store.save();
+                    self.hubs = store.hubs;
+                    ctx.info(format!("forgot {}", &k[7..]));
+                }
+            }
             "auth" => self.auth = result.unwrap_or_else(|e| json!({ "error": e.to_string() })),
             "health" => self.health = Some(result.map(|v| v.as_u64().unwrap_or(0) as u128).map_err(|e| e.to_string())),
             _ => {}
@@ -806,7 +871,7 @@ impl Screen for Connection {
             Line::raw(""),
             Line::styled("This app", t.accent_style()),
             row("hubness TUI", format!("v{}", env!("CARGO_PKG_VERSION")), W),
-            row("Connect elsewhere", "hubtui --url http://host:8787 --user <name>", W),
+            row("Other hubs", "Space H switches; a adds one (hubtui --url <address> too)", W),
             Line::raw(""),
             Line::styled(
                 "  The TUI is a client of the hub's API: every session, project and setting is shared with the web app.",
@@ -817,10 +882,34 @@ impl Screen for Connection {
                 t.muted_style(),
             ),
         ];
+        let list_h = (self.hubs.len() as u16 + 2).clamp(3, 10);
+        let [info, list] = Layout::vertical([Constraint::Min(5), Constraint::Length(list_h)]).areas(area);
         f.render_widget(
             Paragraph::new(lines).wrap(Wrap { trim: false }).block(block("Connection — r check again · o open in the browser", false)),
-            area,
+            info,
         );
+        let current = ctx.shared.base_url.trim_end_matches('/');
+        let items: Vec<ListItem> = self
+            .hubs
+            .iter()
+            .map(|h| {
+                let mut spans = vec![
+                    Span::styled(format!(" {} ", crate::ui::theme::icon("\u{f048b}", "-")), t.accent_style()),
+                    Span::styled(h.url.clone(), t.bold()),
+                ];
+                if let Some(u) = &h.username {
+                    spans.push(Span::styled(format!("  {u}"), t.muted_style()));
+                }
+                if h.url == current {
+                    spans.push(Span::styled("  current", Style::default().fg(t.ok)));
+                }
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+        let b = block("saved hubs — Enter/s switch · a add · x forget", true);
+        ctx.click_rows("hubs", b.inner(list), self.nav.state.offset(), items.len());
+        self.nav.clamp(items.len());
+        f.render_stateful_widget(List::new(items).block(b).highlight_style(t.selected()), list, &mut self.nav.state);
     }
 }
 
@@ -863,6 +952,7 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("t n/p/1…9", "+tabs: next / previous / a tab by name"),
             ("e", "toggle the sidebar"),
             ("r", "reload"),
+            ("H", "switch hub: the saved hubs, or add one"),
             ("L", "log out (a hub with accounts)"),
             ("q", "quit (also Ctrl+Q)"),
             ("Backspace", "up a menu (Esc closes)"),
