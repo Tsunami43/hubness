@@ -39,10 +39,12 @@ impl ShellTab {
         Self { base, jobs: vec![], active: 0, term: TermPane::new("sh"), typing: false, loaded: false }
     }
 
+    /// Open a shell; `fresh` — a new one (asked for: typing goes to it), otherwise reconnect to
+    /// the existing one when the tab is shown (stays in NORMAL so tab motions keep working).
     fn open(&self, fresh: bool, ctx: &mut Ctx) {
         let mut body = self.term.size_body();
         body["fresh"] = json!(fresh);
-        ctx.send("opened", Method::POST, format!("{}/shell", self.base), body);
+        ctx.send(if fresh { "opened" } else { "opened-auto" }, Method::POST, format!("{}/shell", self.base), body);
     }
 
     fn show_active(&mut self, ctx: &mut Ctx) {
@@ -179,7 +181,7 @@ impl Screen for ShellTab {
                 self.active = current.and_then(|id| self.jobs.iter().position(|j| j["id"] == id)).unwrap_or(0);
                 self.show_active(ctx);
             }
-            "opened" => {
+            "opened" | "opened-auto" => {
                 match self.jobs.iter().position(|j| j["id"] == v["id"]) {
                     Some(i) => self.active = i,
                     None => {
@@ -188,7 +190,7 @@ impl Screen for ShellTab {
                     }
                 }
                 self.show_active(ctx);
-                self.typing = true;
+                self.typing = key == "opened";
             }
             _ => {}
         }

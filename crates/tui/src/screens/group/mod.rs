@@ -90,6 +90,10 @@ impl Screen for GroupScreen {
         self.tabs.actions()
     }
 
+    fn tab_names(&self) -> Vec<String> {
+        self.tabs.names()
+    }
+
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         self.tabs.on_action(key, ctx);
     }

@@ -22,12 +22,37 @@ use crate::ui::{Theme, block, centered};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Overlay {
     None,
-    /// `Space` / Ctrl+g: the global leader keys.
-    Leader,
-    /// `?`: the keys of the current screen.
-    Help,
-    /// `Space w`: moving between panes (windows).
-    Window,
+    /// `Space` / Ctrl+g and its groups.
+    Leader(Menu),
+}
+
+/// Menus of the leader (which-key groups).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Menu {
+    Root,
+    /// `Space a` (or `?`): the actions of the current screen.
+    Actions,
+    /// `Space w`: moving between panes.
+    Windows,
+    /// `Space t`: tabs.
+    Tabs,
+}
+
+/// A which-key entry.
+struct Entry {
+    key: String,
+    label: String,
+    /// Opens another menu (shown with `+`).
+    group: bool,
+}
+
+impl Entry {
+    fn cmd(key: &str, label: &str) -> Self {
+        Self { key: key.into(), label: label.into(), group: false }
+    }
+    fn group(key: &str, label: &str) -> Self {
+        Self { key: key.into(), label: label.into(), group: true }
+    }
 }
 
 struct Slot {
@@ -251,26 +276,14 @@ impl App {
         if self.modal.is_some() {
             return self.on_modal_key(k);
         }
-        match self.overlay {
-            Overlay::Leader => {
-                self.overlay = Overlay::None;
-                return self.on_leader_key(k);
-            }
-            Overlay::Help => {
-                self.overlay = Overlay::None;
-                // a key from the which-key list runs its action
-                if let KeyCode::Char(c) = k.code
-                    && let Some(a) = self.screen_actions().into_iter().find(|a| a.key == c.to_string())
-                {
-                    self.with_screen(|s, ctx| s.on_action(a.key, ctx));
-                }
+        if let Overlay::Leader(menu) = self.overlay {
+            self.overlay = Overlay::None;
+            // Backspace goes up a level, Esc closes
+            if k.code == KeyCode::Backspace && menu != Menu::Root {
+                self.overlay = Overlay::Leader(Menu::Root);
                 return;
             }
-            Overlay::Window => {
-                self.overlay = Overlay::None;
-                return self.on_window_key(k);
-            }
-            Overlay::None => {}
+            return self.on_leader_key(menu, k);
         }
         if ctrl && k.code == KeyCode::Char('q') {
             self.quit = true;
@@ -279,7 +292,7 @@ impl App {
         // Ctrl+g opens the leader everywhere (also while typing)
         if ctrl && matches!(k.code, KeyCode::Char('g') | KeyCode::Char(' ')) {
             self.reset_pending();
-            self.overlay = Overlay::Leader;
+            self.overlay = Overlay::Leader(Menu::Root);
             return;
         }
         let typing = self.typing();
@@ -346,8 +359,8 @@ impl App {
             (KeyCode::Char('b'), true) => self.send_key(KeyCode::PageUp, none, 2 * n),
             (KeyCode::Char('h'), true) => self.focus_prev(),
             (KeyCode::Char('l'), true) => self.send_key(KeyCode::Tab, none, 1),
-            (KeyCode::Char(' '), false) => self.overlay = Overlay::Leader,
-            (KeyCode::Char('?'), false) => self.overlay = Overlay::Help,
+            (KeyCode::Char(' '), false) => self.overlay = Overlay::Leader(Menu::Root),
+            (KeyCode::Char('?'), false) => self.overlay = Overlay::Leader(Menu::Actions),
             (KeyCode::Char(':'), false) => self.open_palette(),
             (KeyCode::Char('q'), false) => {
                 // a screen closes its own popup first
@@ -412,61 +425,87 @@ impl App {
         self.screens.get(&self.route).map(|s| s.screen.actions()).unwrap_or_default()
     }
 
-    /// Global leader keys (Space …), as LazyVim's which-key.
-    fn leader_actions(&self) -> Vec<(&'static str, &'static str, Option<Route>)> {
-        vec![
-            (" ", "Jump to a session", None),
-            ("c", "Chats", Some(Route::Home)),
-            ("p", "Projects", Some(Route::Projects)),
-            ("s", "System", Some(Route::System(None))),
-            ("h", "Harness (agents)", Some(Route::Harness(None))),
-            (",", "Settings", Some(Route::Settings(None))),
-            ("w", "Windows (panes) +h j k l", None),
-            ("e", "Toggle sidebar", None),
-            ("1-9", "Tab 1…9", None),
-            ("r", "Reload", None),
-            ("q", "Quit", None),
-        ]
-    }
-
-    fn on_leader_key(&mut self, k: KeyEvent) {
-        let KeyCode::Char(c) = k.code else { return };
-        if let Some(d) = c.to_digit(10).filter(|d| *d > 0) {
-            self.send_key(KeyCode::Char(char::from_digit(d, 10).unwrap_or('1')), KeyModifiers::ALT, 1);
-            return;
-        }
-        let key = c.to_string();
-        let route = self.leader_actions().into_iter().find(|(kk, _, _)| *kk == key).and_then(|(_, _, r)| r);
-        match (key.as_str(), route) {
-            (_, Some(r)) => self.go(r),
-            (" ", _) => self.open_jump(),
-            ("w", _) => self.overlay = Overlay::Window,
-            ("e", _) => self.sidebar = !self.sidebar,
-            ("r", _) => {
-                self.refresh_shared();
-                self.with_screen(|s, ctx| s.on_show(ctx));
-            }
-            ("q", _) => self.quit = true,
-            // a screen action reached through the leader
-            _ => {
-                if let Some(a) = self.screen_actions().into_iter().find(|a| a.key == key) {
-                    self.with_screen(|s, ctx| s.on_action(a.key, ctx));
+    /// Entries of a leader menu (LazyVim-style which-key; groups are marked `+`).
+    fn leader_entries(&self, menu: Menu) -> Vec<Entry> {
+        match menu {
+            Menu::Root => vec![
+                Entry::cmd("␣", "Find a session"),
+                Entry::cmd("c", "Chats"),
+                Entry::cmd("p", "Projects"),
+                Entry::cmd("s", "System"),
+                Entry::cmd("h", "Harness (agents)"),
+                Entry::cmd(",", "Settings"),
+                Entry::group("a", "actions"),
+                Entry::group("w", "windows"),
+                Entry::group("t", "tabs"),
+                Entry::cmd("e", "Sidebar"),
+                Entry::cmd("r", "Reload"),
+                Entry::cmd("q", "Quit"),
+            ],
+            Menu::Windows => vec![
+                Entry::cmd("h", "Pane left"),
+                Entry::cmd("j", "Pane below"),
+                Entry::cmd("k", "Pane above"),
+                Entry::cmd("l", "Pane right"),
+                Entry::cmd("w", "Next pane"),
+            ],
+            Menu::Tabs => {
+                let mut e = vec![Entry::cmd("n", "Next tab"), Entry::cmd("p", "Previous tab")];
+                let names = self.screens.get(&self.route).map(|s| s.screen.tab_names()).unwrap_or_default();
+                for (i, name) in names.into_iter().enumerate().take(9) {
+                    e.push(Entry { key: (i + 1).to_string(), label: name, group: false });
                 }
+                e
+            }
+            Menu::Actions => {
+                self.screen_actions().into_iter().map(|a| Entry { key: a.key.to_string(), label: a.label, group: false }).collect()
             }
         }
     }
 
-    /// `Space w` then h / k (previous pane), l / j (next pane), w (cycle).
-    fn on_window_key(&mut self, k: KeyEvent) {
-        match k.code {
-            KeyCode::Char('h') | KeyCode::Char('k') | KeyCode::Left | KeyCode::Up => self.focus_prev(),
-            KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('w') | KeyCode::Right | KeyCode::Down => {
-                self.send_key(KeyCode::Tab, KeyModifiers::NONE, 1)
-            }
-            KeyCode::Char('e') => self.sidebar = !self.sidebar,
-            _ => {}
+    fn on_leader_key(&mut self, menu: Menu, k: KeyEvent) {
+        let KeyCode::Char(c) = k.code else { return };
+        let key = c.to_string();
+        match menu {
+            Menu::Root => match key.as_str() {
+                " " => self.open_jump(),
+                "c" => self.go(Route::Home),
+                "p" => self.go(Route::Projects),
+                "s" => self.go(Route::System(None)),
+                "h" => self.go(Route::Harness(None)),
+                "," => self.go(Route::Settings(None)),
+                "a" => self.overlay = Overlay::Leader(Menu::Actions),
+                "w" => self.overlay = Overlay::Leader(Menu::Windows),
+                "t" => self.overlay = Overlay::Leader(Menu::Tabs),
+                "e" => self.sidebar = !self.sidebar,
+                "r" => {
+                    self.refresh_shared();
+                    self.with_screen(|s, ctx| s.on_show(ctx));
+                }
+                "q" => self.quit = true,
+                _ => {}
+            },
+            Menu::Windows => match key.as_str() {
+                "h" | "k" => self.focus_prev(),
+                "l" | "j" | "w" => self.send_key(KeyCode::Tab, KeyModifiers::NONE, 1),
+                _ => {}
+            },
+            Menu::Tabs => match key.as_str() {
+                "n" => self.next_tab(true, 1),
+                "p" => self.next_tab(false, 1),
+                d if c.is_ascii_digit() && d != "0" => self.send_key(KeyCode::Char(c), KeyModifiers::ALT, 1),
+                _ => {}
+            },
+            Menu::Actions => self.run_action(&key),
         }
         self.apply_requests();
+    }
+
+    /// Run a screen action by its key.
+    fn run_action(&mut self, key: &str) {
+        if let Some(a) = self.screen_actions().into_iter().find(|a| a.key == key) {
+            self.with_screen(|s, ctx| s.on_action(a.key, ctx));
+        }
     }
 
     fn open_jump(&mut self) {
@@ -637,9 +676,20 @@ impl App {
         }
         self.draw_status(f, status);
         match self.overlay {
-            Overlay::Leader => self.draw_which_key(f, main, true),
-            Overlay::Help => self.draw_which_key(f, main, false),
-            Overlay::Window => self.draw_window_keys(f, main),
+            Overlay::Leader(menu) => {
+                let title = match menu {
+                    Menu::Root => format!("{}  leader", icon("\u{f030c}", "")),
+                    Menu::Actions => format!(
+                        "{}  {}",
+                        icon("\u{f02d6}", "?"),
+                        self.screens.get(&self.route).map(|s| s.screen.title()).unwrap_or_default()
+                    ),
+                    Menu::Windows => format!("{}  windows", icon("\u{f05b6}", "")),
+                    Menu::Tabs => format!("{}  tabs", icon("\u{f04e9}", "")),
+                };
+                let entries = self.leader_entries(menu);
+                self.draw_which_key(f, main, title, entries);
+            }
             Overlay::None => {}
         }
         if let Some((_, modal, input)) = &self.modal {
@@ -656,7 +706,7 @@ impl App {
             } else {
                 ("PROMPT", t.magenta)
             }
-        } else if matches!(self.overlay, Overlay::Leader | Overlay::Window) {
+        } else if matches!(self.overlay, Overlay::Leader(_)) {
             ("LEADER", t.magenta)
         } else if self.typing() {
             ("INSERT", t.ok)
@@ -678,9 +728,28 @@ impl App {
         let msg = match &self.ctx.status {
             Some((m, true)) => Span::styled(format!("  {m}"), Style::default().fg(t.danger)),
             Some((m, false)) => Span::styled(format!("  {m}"), t.dim_style()),
-            None => Span::styled("  ? keys · : commands · Space leader", t.muted_style()),
+            None => Span::raw(""),
         };
+        let has_msg = self.ctx.status.is_some();
         left.push(msg);
+        if !has_msg {
+            // the screen's main keys, as many as fit next to the right part (about 34 columns)
+            let used: usize = left.iter().map(|s| s.content.chars().count()).sum();
+            let mut room = (area.width as usize).saturating_sub(used + 34 + 16);
+            for a in self.screen_actions() {
+                let label = a.label.split(" (").next().unwrap_or(&a.label);
+                let label: String =
+                    if label.chars().count() > 18 { label.chars().take(17).collect::<String>() + "…" } else { label.to_string() };
+                let w = a.key.chars().count() + label.chars().count() + 3;
+                if w > room {
+                    break;
+                }
+                room -= w;
+                left.push(Span::styled(format!("  {}", a.key), Style::default().fg(t.accent)));
+                left.push(Span::styled(format!(" {label}"), t.dim_style()));
+            }
+            left.push(Span::styled("   ? more · ␣ leader", t.muted_style()));
+        }
         let sessions = &self.ctx.shared.sessions;
         let running = sessions.iter().filter(|s| s["status"] == "running").count();
         let waiting = sessions.iter().filter(|s| s["status"] == "waiting").count();
@@ -725,127 +794,93 @@ impl App {
 
     fn draw_sidebar(&self, f: &mut Frame, area: Rect) {
         let t = Theme::get();
-        f.render_widget(Block::default().style(Style::default().bg(t.bg_dark)), area);
         let section = self.route.section();
         let mut lines: Vec<Line> = vec![
+            Line::raw(""),
             Line::from(vec![
-                Span::styled(format!(" {} ", icon("󰣇", "")), Style::default().fg(t.accent)),
+                Span::styled(format!("  {} ", icon("\u{f056e}", "◆")), Style::default().fg(t.accent)),
                 Span::styled("hubness", Style::default().fg(t.fg).add_modifier(Modifier::BOLD)),
             ]),
             Line::raw(""),
         ];
-        for (s, label, key, ic) in [
-            (Section::Chats, "Chats", "c", icon("󰭹", "·")),
-            (Section::Projects, "Projects", "p", icon("\u{f401}", "·")),
-            (Section::System, "System", "s", icon("󰍹", "·")),
-            (Section::Harness, "Harness", "h", icon("󰚩", "·")),
-            (Section::Settings, "Settings", ",", icon("\u{f013}", "·")),
+        for (s, label, ic) in [
+            (Section::Chats, "Chats", icon("\u{f0b79}", "›")),
+            (Section::Projects, "Projects", icon("\u{f024b}", "›")),
+            (Section::System, "System", icon("\u{f0379}", "›")),
+            (Section::Harness, "Agents", icon("\u{f06a9}", "›")),
+            (Section::Settings, "Settings", icon("\u{f0493}", "›")),
         ] {
             let on = s == section;
-            let bar = if on { Span::styled("▎", Style::default().fg(t.accent)) } else { Span::raw(" ") };
-            let style = if on { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.dim) };
-            lines.push(Line::from(vec![
-                bar,
-                Span::styled(format!("{ic}  {label}"), style),
-                Span::styled(format!("  ␣{key}"), t.muted_style()),
-            ]));
+            let line = if on {
+                Line::from(vec![
+                    Span::styled("▌", Style::default().fg(t.accent)),
+                    Span::styled(format!(" {ic}  {label}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                ])
+            } else {
+                Line::from(vec![Span::raw(" "), Span::styled(format!(" {ic}  {label}"), Style::default().fg(t.dim))])
+            };
+            lines.push(line);
         }
+        let sessions = &self.ctx.shared.sessions;
+        let running = sessions.iter().filter(|s| s["status"] == "running" || s["status"] == "waiting").count();
         lines.push(Line::raw(""));
-        lines.push(Line::styled(" SESSIONS", t.muted_style().add_modifier(Modifier::BOLD)));
+        lines.push(Line::from(vec![
+            Span::styled("  SESSIONS", t.muted_style().add_modifier(Modifier::BOLD)),
+            Span::styled(if running > 0 { format!("  {running} active") } else { String::new() }, Style::default().fg(t.ok)),
+        ]));
         let current = match &self.route {
             Route::Chat(id) | Route::ProjectSession { session: id, .. } | Route::GroupSession { session: id, .. } => Some(id.as_str()),
             _ => None,
         };
         let room = area.height.saturating_sub(lines.len() as u16 + 1) as usize;
-        let width = area.width.saturating_sub(4) as usize;
-        for s in self.ctx.shared.sessions.iter().take(room) {
+        let width = area.width.saturating_sub(6) as usize;
+        for s in sessions.iter().take(room) {
             let (mark, color) = t.status(s["status"].as_str().unwrap_or("idle"));
             let on = current == s["id"].as_str();
-            let title: String = s["title"].as_str().unwrap_or_default().chars().take(width).collect();
-            let style = if on { t.selected() } else { Style::default().fg(t.fg) };
-            lines.push(Line::from(vec![Span::styled(format!(" {mark} "), Style::default().fg(color)), Span::styled(title, style)]));
-        }
-        f.render_widget(
-            Paragraph::new(lines)
-                .block(Block::default().borders(Borders::RIGHT).border_style(t.line_style()).style(Style::default().bg(t.bg_dark))),
-            area,
-        );
-    }
-
-    fn draw_window_keys(&self, f: &mut Frame, area: Rect) {
-        let t = Theme::get();
-        let entries = [
-            ("h", "pane to the left"),
-            ("j", "pane below"),
-            ("k", "pane above"),
-            ("l", "pane to the right"),
-            ("w", "next pane"),
-            ("e", "toggle sidebar"),
-        ];
-        let h = entries.len() as u16 + 2;
-        let rect =
-            Rect { x: area.x + 1, y: area.y + area.height.saturating_sub(h), width: 40.min(area.width.saturating_sub(2)), height: h };
-        f.render_widget(Clear, rect);
-        let b = block(format!("{}  leader › windows", icon("\u{f2d2}", "")), true).style(Style::default().bg(t.bg_dark));
-        let lines: Vec<Line> = entries
-            .iter()
-            .map(|(k, l)| {
-                Line::from(vec![
-                    Span::styled(format!("{k:>3}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
-                    Span::styled(" → ", t.muted_style()),
-                    Span::styled(*l, Style::default().fg(t.fg)),
-                ])
-            })
-            .collect();
-        f.render_widget(Paragraph::new(lines).block(b), rect);
-    }
-
-    /// which-key: the leader's global keys (`Space`) or the screen's keys (`?`).
-    fn draw_which_key(&self, f: &mut Frame, area: Rect, leader: bool) {
-        let t = Theme::get();
-        let entries: Vec<(String, String)> = if leader {
-            self.leader_actions()
-                .into_iter()
-                .map(|(k, l, _)| (if k == " " { "␣".to_string() } else { k.to_string() }, l.to_string()))
-                .collect()
-        } else {
-            let mut e: Vec<(String, String)> = self.screen_actions().into_iter().map(|a| (a.key.to_string(), a.label)).collect();
-            for (k, l) in [
-                ("j k", "down / up"),
-                ("h l", "left / right"),
-                ("gg G", "top / bottom"),
-                ("^d ^u", "half page"),
-                ("^h ^l", "focus pane"),
-                ("gt gT", "next / prev tab"),
-                ("/", "filter"),
-                (":", "commands"),
-                ("q", "back"),
-            ] {
-                e.push((k.into(), l.into()));
+            let mut title: String = s["title"].as_str().unwrap_or_default().chars().take(width).collect();
+            if s["title"].as_str().unwrap_or_default().chars().count() > width {
+                title.pop();
+                title.push('…');
             }
-            e
-        };
-        let cols = ((area.width.saturating_sub(4)) / 32).max(1) as usize;
+            let style = if on { t.selected() } else { Style::default().fg(t.fg) };
+            lines.push(Line::from(vec![Span::styled(format!("  {mark} "), Style::default().fg(color)), Span::styled(title, style)]));
+        }
+        let b = Block::default().borders(Borders::RIGHT).border_style(t.line_style()).style(Style::default().bg(t.bg_dark));
+        f.render_widget(Paragraph::new(lines).block(b), area);
+    }
+
+    /// which-key, LazyVim style: a compact box at the bottom right, groups marked `+`.
+    fn draw_which_key(&self, f: &mut Frame, area: Rect, title: String, entries: Vec<Entry>) {
+        let t = Theme::get();
+        if entries.is_empty() {
+            return;
+        }
+        let key_w = entries.iter().map(|e| e.key.chars().count()).max().unwrap_or(1).max(1);
+        let label_w = entries.iter().map(|e| e.label.chars().count() + usize::from(e.group)).max().unwrap_or(10).min(34);
+        let col_w = (key_w + 3 + label_w + 2) as u16;
+        let max_rows = (area.height.saturating_sub(4)).clamp(4, 14) as usize;
+        let cols = entries.len().div_ceil(max_rows).max(1);
         let rows = entries.len().div_ceil(cols);
+        let w = (col_w * cols as u16 + 4).min(area.width.saturating_sub(2));
         let h = (rows as u16 + 2).min(area.height);
-        let rect = Rect { x: area.x + 1, y: area.y + area.height.saturating_sub(h), width: area.width.saturating_sub(2), height: h };
+        let rect = Rect { x: area.x + area.width.saturating_sub(w + 1), y: area.y + area.height.saturating_sub(h), width: w, height: h };
         f.render_widget(Clear, rect);
-        let title = if leader {
-            format!("{}  leader", icon("󰌌", ""))
-        } else {
-            format!("{}  {}", icon("󰋖", "?"), self.screens.get(&self.route).map(|s| s.screen.title()).unwrap_or_default())
-        };
         let b = block(title, true).style(Style::default().bg(t.bg_dark));
         let inner = b.inner(rect);
         f.render_widget(b, rect);
-        let col_w = inner.width / cols as u16;
-        for (i, (k, l)) in entries.iter().enumerate() {
+        for (i, e) in entries.iter().enumerate() {
             let (c, r) = (i / rows, i % rows);
-            let cell = Rect { x: inner.x + c as u16 * col_w, y: inner.y + r as u16, width: col_w, height: 1 };
+            let cell = Rect { x: inner.x + c as u16 * col_w, y: inner.y + r as u16, width: col_w.min(inner.width), height: 1 };
+            let label: String = if e.group { format!("+{}", e.label) } else { e.label.clone() };
+            let label: String =
+                if label.chars().count() > label_w { label.chars().take(label_w - 1).collect::<String>() + "…" } else { label };
             let line = Line::from(vec![
-                Span::styled(format!("{k:>5}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
-                Span::styled(" → ", t.muted_style()),
-                Span::styled(l.clone(), Style::default().fg(t.fg)),
+                Span::styled(format!("{:>key_w$}", e.key), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                Span::styled(" ➜ ", t.muted_style()),
+                Span::styled(
+                    label,
+                    if e.group { Style::default().fg(t.magenta).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.fg) },
+                ),
             ]);
             f.render_widget(Paragraph::new(line), cell);
         }

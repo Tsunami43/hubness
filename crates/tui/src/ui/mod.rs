@@ -31,7 +31,7 @@ pub fn logo() -> ratatui::widgets::Paragraph<'static> {
 /// A bordered block with a title; highlighted when focused.
 pub fn block(title: impl Into<String>, focused: bool) -> Block<'static> {
     let t = Theme::get();
-    let title = title.into();
+    let title = title_only(&title.into());
     let b = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(if focused {
         Style::default().fg(t.border)
     } else {
@@ -42,6 +42,22 @@ pub fn block(title: impl Into<String>, focused: bool) -> Block<'static> {
     }
     let style = if focused { Style::default().fg(t.accent).add_modifier(ratatui::style::Modifier::BOLD) } else { t.dim_style() };
     b.title(Span::styled(format!(" {title} "), style))
+}
+
+/// A pane title without the key hints screens append after " — " (hints are shown in the
+/// status line and by `?`), with the first letter capitalized.
+pub fn title_only(raw: &str) -> String {
+    let name = raw.split(" — ").next().unwrap_or(raw).trim();
+    // paths and file names keep their case
+    let first = name.split_whitespace().next().unwrap_or("");
+    if first.contains('/') || first.contains('.') {
+        return name.to_string();
+    }
+    let mut c = name.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
 }
 
 /// A rectangle of `w` × `h` centered in `area` (clamped to it).
@@ -151,6 +167,13 @@ mod tests {
     fn iso_times() {
         assert_eq!(chrono_lite("1970-01-01T00:00:01.500Z"), Ok(1500));
         assert_eq!(chrono_lite("2026-11-25T00:00:00.000Z").map(|ms| ms / 86_400_000), Ok(20_782));
+    }
+
+    #[test]
+    fn titles_lose_hints_but_keep_paths() {
+        assert_eq!(title_only("feed — j/k scroll"), "Feed");
+        assert_eq!(title_only("src/main.rs (changes)"), "src/main.rs (changes)");
+        assert_eq!(title_only("README.md · e edit"), "README.md · e edit");
     }
 
     #[test]

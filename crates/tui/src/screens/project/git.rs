@@ -319,7 +319,7 @@ impl GitTab {
                     let cur = self.status["branch"].as_str().unwrap_or("HEAD");
                     out.push(Line::styled(
                         format!(
-                            "␣ switch · M merge into {cur} · r rebase {cur} onto it{}",
+                            "Enter switch · M merge into {cur} · r rebase {cur} onto it{}",
                             if b["remote"] == true { "" } else { " · d delete" }
                         ),
                         t.muted_style(),
@@ -359,13 +359,13 @@ impl GitTab {
                         format!("{} · {}", s["message"].as_str().unwrap_or_default(), s["date"].as_str().unwrap_or_default()),
                         t.muted_style(),
                     ),
-                    Line::styled("␣ apply · g pop · d drop", t.muted_style()),
+                    Line::styled("Enter apply · A pop · d drop", t.muted_style()),
                     Line::raw(""),
                 ]
             }
             Panel::Files => match self.sel_file() {
                 Some((f, staged)) => {
-                    let mut hint = format!("␣ {} · o open in Files", if staged { "unstage" } else { "stage" });
+                    let mut hint = format!("Enter {} · o open in Files", if staged { "unstage" } else { "stage" });
                     if f["conflicted"] != true {
                         hint.push_str(" · d discard");
                     }

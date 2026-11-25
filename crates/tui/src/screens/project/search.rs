@@ -114,7 +114,8 @@ impl SearchTab {
             collapsed: HashSet::new(),
             rows: vec![],
             list: ListState::default(),
-            focus: Focus::Query,
+            // NORMAL first: / (or i) types the query
+            focus: Focus::Results,
         }
     }
 

@@ -54,6 +54,10 @@ impl Screen for Sections {
     fn actions(&self) -> Vec<Action> {
         self.tabs.actions()
     }
+
+    fn tab_names(&self) -> Vec<String> {
+        self.tabs.names()
+    }
     fn captures_text(&self) -> bool {
         self.tabs.captures_text()
     }

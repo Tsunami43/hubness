@@ -559,7 +559,7 @@ impl Screen for SessionView {
         } else if self.session["status"] == "running" {
             "agent is working — Ctrl+S stop · Enter queue a message"
         } else {
-            "message — Enter send · Alt+Enter newline · Esc feed · Ctrl+Space leader"
+            "Message"
         };
         let cb = block(hint, self.focus == Focus::Composer);
         self.composer.draw(f, composer, cb, self.focus == Focus::Composer, "Ask the agent…");

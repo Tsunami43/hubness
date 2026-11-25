@@ -37,23 +37,28 @@ Motions work in every list, feed, tree and viewer:
 Every other letter is a screen action, listed by `?` and in the palette. Screens never bind
 `h j k l g G q : ? /` or `Space` to anything else.
 
-## Leader (`Space`)
+## Leader (`Space`) — which-key menus
 
 | Keys | Action |
 | --- | --- |
-| `Space Space` | jump to a session (fuzzy) |
-| `Space c` | chats |
-| `Space p` | projects |
-| `Space s` | system |
-| `Space h` | harness (agents) |
-| `Space ,` | settings |
-| `Space w h/j/k/l` | focus the pane left / below / above / right (`w` cycles) |
+| `Space Space` | find a session |
+| `Space c` / `p` / `s` / `h` / `,` | chats / projects / system / agents / settings |
+| `Space a` | +actions: the keys of this screen (same as `?`) |
+| `Space w` | +windows: `h j k l` focus the pane left / below / above / right, `w` next |
+| `Space t` | +tabs: `n` / `p` next / previous, `1…9` a tab by its name |
 | `Space e` | toggle the sidebar |
-| `Space 1…9` | tab 1…9 |
 | `Space r` | reload |
 | `Space q` | quit |
 
-`Ctrl+g` opens the leader too (inside an INSERT input, where `Space` types a space).
+`Backspace` goes up a menu, `Esc` closes it. `Ctrl+g` opens the leader everywhere (also in
+INSERT, where `Space` types a space).
+
+## Rules for screens
+
+- Open in NORMAL: no input or terminal takes the keys until `i` / `/` / `Enter`.
+- Pane titles are short names; key hints come from `actions()` (status line, `?`, palette).
+- Never bind `h j k l g G q : ?` or `Space` as actions; `/` is for filtering.
+- Terminals: typing goes to the job while focused, `Ctrl+]` leaves for NORMAL.
 
 ## Look
 

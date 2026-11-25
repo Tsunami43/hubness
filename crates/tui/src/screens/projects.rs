@@ -753,7 +753,7 @@ impl Screen for Projects {
             f.render_widget(
                 Paragraph::new(vec![
                     Line::styled("Groups bring several repositories together for one agent session.", t.muted_style()),
-                    Line::styled("G creates one.", t.muted_style()),
+                    Line::styled("N creates one.", t.muted_style()),
                 ])
                 .wrap(Wrap { trim: true })
                 .block(block("groups — G new", gfocus)),

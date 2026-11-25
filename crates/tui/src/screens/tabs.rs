@@ -4,6 +4,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use serde_json::Value;
@@ -127,17 +128,18 @@ impl Tabs {
         self.call(i, ctx, |s, c| s.on_paste(text, c));
     }
 
+    pub fn names(&self) -> Vec<String> {
+        self.tabs.iter().map(|t| t.label.clone()).collect()
+    }
+
     pub fn captures_text(&self) -> bool {
         self.tabs[self.active].screen.captures_text()
     }
 
     /// The active tab's actions plus 1…9 to switch tabs.
     pub fn actions(&self) -> Vec<Action> {
-        let mut a = self.tabs[self.active].screen.actions();
-        for (i, t) in self.tabs.iter().enumerate().take(9) {
-            a.push(Action::new(DIGITS[i], format!("Tab: {}", t.label)));
-        }
-        a
+        // tabs are switched with gt / gT, Alt+1…9 and Space t — not listed as screen actions
+        self.tabs[self.active].screen.actions()
     }
 
     pub fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
@@ -152,13 +154,22 @@ impl Tabs {
     pub fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx) {
         let t = Theme::get();
         let [bar, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
-        let mut spans = vec![];
+        // pills like Omarchy's waybar workspaces: the active one filled with the accent
+        let mut spans = vec![Span::raw(" ")];
         for (i, tab) in self.tabs.iter().enumerate() {
-            let style = if i == self.active { t.key_style() } else { t.muted_style() };
-            spans.push(Span::styled(format!(" {} {} ", i + 1, tab.label), style));
+            if i == self.active {
+                spans.push(Span::styled("\u{e0b6}", Style::default().fg(t.accent)));
+                spans.push(Span::styled(
+                    format!("{} {}", i + 1, tab.label),
+                    Style::default().fg(t.bg).bg(t.accent).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled("\u{e0b4}", Style::default().fg(t.accent)));
+            } else {
+                spans.push(Span::styled(format!(" {} ", i + 1), t.muted_style()));
+                spans.push(Span::styled(format!("{} ", tab.label), t.dim_style()));
+            }
             spans.push(Span::raw(" "));
         }
-        spans.push(Span::styled("  Alt+1…9 / Alt+←→", t.muted_style()));
         f.render_widget(Paragraph::new(Line::from(spans)), bar);
         let i = self.active;
         self.tabs[i].screen.draw(f, body, ctx);

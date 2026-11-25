@@ -115,6 +115,10 @@ impl Screen for HarnessScreen {
         self.tabs.as_ref().map(|t| t.actions()).unwrap_or_default()
     }
 
+    fn tab_names(&self) -> Vec<String> {
+        self.tabs.as_ref().map(|t| t.names()).unwrap_or_default()
+    }
+
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         if let Some(t) = &mut self.tabs {
             t.on_action(key, ctx);
@@ -199,7 +203,7 @@ fn action_key(id: &str) -> Option<&'static str> {
     match id {
         "install" => Some("i"),
         "update" => Some("U"),
-        "login" => Some("l"),
+        "login" => Some("L"),
         "login-console" => Some("K"),
         "logout" => Some("o"),
         _ => None,
@@ -224,6 +228,8 @@ struct Job {
     /// Typed input not sent yet: one request at a time keeps keystrokes in order.
     pending: String,
     sending: bool,
+    /// Keys go to the terminal (INSERT); Ctrl+] leaves it for NORMAL and the screen's keys.
+    focused: bool,
 }
 
 impl Job {
@@ -485,7 +491,7 @@ impl AgentTab {
             l.push(Line::raw(""));
             l.push(Line::from(vec![
                 Span::styled("Providers", t.accent_style()),
-                Span::styled("  model provider accounts the agent can use — p switch / sign out · l connect", t.muted_style()),
+                Span::styled("  model provider accounts the agent can use — p switch / sign out · L connect", t.muted_style()),
             ]));
             if accounts.is_empty() {
                 l.push(Line::styled("  No providers connected yet", t.muted_style()));
@@ -630,13 +636,16 @@ impl Screen for AgentTab {
     }
 
     fn captures_text(&self) -> bool {
-        self.job.as_ref().is_some_and(|j| j.term.running)
+        self.job.as_ref().is_some_and(|j| j.term.running && j.focused)
     }
 
     fn actions(&self) -> Vec<Action> {
         if let Some(job) = &self.job {
             let mut a = vec![Action::new("w", "Close the terminal")];
             if job.term.running {
+                if !job.focused {
+                    a.push(Action::new("i", "Type into the terminal"));
+                }
                 a.push(Action::new("x", "Stop the job"));
             }
             a.push(Action::new("O", "Open the link shown in the terminal"));
@@ -722,11 +731,26 @@ impl Screen for AgentTab {
 
     fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
         if let Some(job) = &mut self.job {
-            if job.term.running {
-                if let Some(data) = JobTerm::key_bytes(k) {
+            if job.term.running && job.focused {
+                // Ctrl+] (some terminals report it as Ctrl+5) leaves the terminal
+                let leave = k.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+                    && matches!(k.code, KeyCode::Char(']') | KeyCode::Char('5'));
+                if leave {
+                    job.focused = false;
+                    ctx.info("left the terminal — i / Enter goes back in, w closes, x stops");
+                } else if let Some(data) = JobTerm::key_bytes(k) {
                     job.input(&data, ctx);
                 }
                 return Handled::Yes;
+            }
+            if job.term.running {
+                return match k.code {
+                    KeyCode::Enter | KeyCode::Char('i') => {
+                        job.focused = true;
+                        Handled::Yes
+                    }
+                    _ => Handled::No,
+                };
             }
             return match k.code {
                 KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
@@ -820,8 +844,8 @@ impl Screen for AgentTab {
                 if v["id"].is_string() {
                     let term = JobTerm::new(&v);
                     ctx.stream("job", term.stream_path());
-                    self.job = Some(Job { term, action: k[4..].to_string(), pending: String::new(), sending: false });
-                    ctx.info("keys go to the terminal · Ctrl+G w closes it");
+                    self.job = Some(Job { term, action: k[4..].to_string(), pending: String::new(), sending: false, focused: true });
+                    ctx.info("typing goes to the terminal · Ctrl+] leaves it (then w closes, x stops)");
                 } else {
                     // an action that finished at once: `{ok, output}`
                     report(ctx, action_label(&k[4..]), &v);
@@ -917,7 +941,7 @@ impl Screen for AgentTab {
             };
             f.render_widget(
                 Paragraph::new(Line::styled(
-                    " Open the sign-in link (Ctrl+G O), finish there, then paste the code here if asked.   Ctrl+G w close · Ctrl+G x stop",
+                    " Open the sign-in link (Ctrl+] then O), finish there, then paste the code here if asked.   Ctrl+] then w close · x stop",
                     t.muted_style(),
                 )),
                 hint,
@@ -936,7 +960,7 @@ impl Screen for AgentTab {
         if let Some(e) = &self.error {
             lines.insert(0, Line::styled(e.clone(), Style::default().fg(t.danger)));
         }
-        let b = block(format!("{} — r refresh · Ctrl+G for actions", s(&self.info()["label"], &self.kind)), true);
+        let b = block(s(&self.info()["label"], &self.kind).to_string(), true);
         let inner = b.inner(area);
         // wrap ourselves, so scrolling knows the real height
         let wrapped: Vec<Line> = lines.into_iter().flat_map(|l| crate::ui::wrap(l, inner.width as usize)).collect();

@@ -110,6 +110,10 @@ pub trait Screen {
     fn on_action(&mut self, _key: &str, _ctx: &mut Ctx) {}
     /// Pasted text (bracketed paste).
     fn on_paste(&mut self, _text: &str, _ctx: &mut Ctx) {}
+    /// Names of the screen's tabs (for the `Space t` menu); empty when it has none.
+    fn tab_names(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Events delivered to the app loop.
