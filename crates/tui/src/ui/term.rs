@@ -64,6 +64,11 @@ impl JobTerm {
         f.render_widget(PseudoTerminal::new(self.parser.screen()).block(block), area);
     }
 
+    /// The visible text of the terminal (to find a sign-in link in it).
+    pub fn contents(&self) -> String {
+        self.parser.screen().contents()
+    }
+
     /// The pty size to request when starting a job in this area.
     pub fn size_for(area: Rect) -> (u16, u16) {
         (area.width.saturating_sub(2).max(20), area.height.saturating_sub(2).max(5))

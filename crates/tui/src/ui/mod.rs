@@ -79,6 +79,11 @@ pub fn ago(iso: &str) -> String {
     }
 }
 
+/// Milliseconds since the epoch of an ISO timestamp the hub wrote.
+pub fn iso_ms(iso: &str) -> Option<i64> {
+    chrono_lite(iso).ok()
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }

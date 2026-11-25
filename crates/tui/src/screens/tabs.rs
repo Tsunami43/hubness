@@ -13,15 +13,15 @@ use crate::ui::Theme;
 
 #[allow(dead_code)] // `id` is for tabs that open other tabs (select_id)
 pub struct Tab {
-    pub id: &'static str,
-    pub label: &'static str,
+    pub id: String,
+    pub label: String,
     pub screen: Box<dyn Screen>,
     shown: bool,
 }
 
 impl Tab {
-    pub fn new(id: &'static str, label: &'static str, screen: Box<dyn Screen>) -> Self {
-        Self { id, label, screen, shown: false }
+    pub fn new(id: impl Into<String>, label: impl Into<String>, screen: Box<dyn Screen>) -> Self {
+        Self { id: id.into(), label: label.into(), screen, shown: false }
     }
 }
 
