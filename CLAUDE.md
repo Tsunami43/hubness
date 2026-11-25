@@ -75,10 +75,17 @@ both servers, backed by a contract test.
 - `core` — API types (`hubness-core`), JSON shape identical to `packages/shared`.
 - `server` — axum + rusqlite. `db/migrations.rs` must mirror `db/migrations.ts` exactly:
   a new migration is added to both servers. `README.md` lists the domains and deviations.
+  `web.rs` serves the web app: `HUBNESS_WEB_DIST` when set, else the copy compiled in with
+  the `embed-web` feature (`build.rs`, off by default, needs `pnpm build`), else `apps/web/dist`.
 - `client` — HTTP + SSE client of the API (`hubness-client`).
 - `tui` — ratatui terminal UI on top of the client (`hubness-tui`).
-- `hubness` — the binary: `hubness serve`, `hubness tui`, plus `mcp` and
-  `git-credential-helper` that the server itself starts for agents and git.
+- `hubcli` — the hub binary: `hubcli serve`, `hubcli tui`, plus `mcp` and
+  `git-credential-helper` that the server starts from its own executable (`current_exe`)
+  for agents and git. Feature `embed-web` compiles the web app in.
+- `hubtui` — the client-only binary (just the TUI, no server code): `hubtui --url …`.
+  TUI flags live in `hubness_tui::cli::Args`, shared by both binaries.
+- `install.sh` (repo root) — `./install.sh tui | full | uninstall`; `full` builds the web
+  app, installs both binaries and a systemd user service `hubness`.
 - `apps/server/test/contract.test.ts` — black-box HTTP tests every server must pass; they
   run against TS in `pnpm test` and against Rust with `pnpm test:contract:rust`.
 
@@ -92,8 +99,8 @@ pnpm test     # server tests (node:test)
 pnpm build    # typecheck and build the web app
 pnpm start    # production server, serves the built web app
 
-cargo run -p hubness -- serve   # the Rust server (same port and data folder)
-cargo run -p hubness -- tui     # terminal UI for a running hub (--url, HUBNESS_URL)
+cargo run -p hubcli -- serve    # the Rust server (same port and data folder)
+cargo run -p hubtui             # terminal UI for a running hub (--url, HUBNESS_URL)
 pnpm check:rust                 # cargo fmt --check, clippy -D warnings, cargo test
 pnpm test:contract:rust         # contract tests against the Rust server
 ```
