@@ -4,7 +4,6 @@
 //! `control_request`/`can_use_tool` on stdout and `control_response` on stdin
 //! (`--permission-prompt-tool stdio`). Resume — `--resume <session_id>`.
 //!
-//! TODO(rust-port): image attachments.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::Stdio;
@@ -125,6 +124,11 @@ fn stringify_tool_output(content: Option<&Value>) -> String {
         Some(other) => other.to_string(),
     };
     limit_output(s)
+}
+
+pub(crate) fn base64_encode(b: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(b)
 }
 
 fn now_ms() -> i64 {
@@ -345,8 +349,22 @@ pub fn start(turn: Arc<Turn>) -> Result<Started, String> {
         })
     };
 
-    // first user message
-    send(&tx, json!({ "type": "user", "message": { "role": "user", "content": turn.prompt } }));
+    // first user message; images go to the model as content blocks (paths are in the text)
+    let images: Vec<Value> = turn
+        .attachments
+        .iter()
+        .filter(|a| crate::attachments::is_model_image(a))
+        .filter_map(|a| std::fs::read(&a.path).ok().map(|b| (a, b)))
+        .map(|(a, b)| json!({ "type": "image", "source": { "type": "base64", "media_type": a.mime, "data": base64_encode(&b) } }))
+        .collect();
+    let content = if images.is_empty() {
+        json!(turn.prompt)
+    } else {
+        let mut blocks = vec![json!({ "type": "text", "text": turn.prompt })];
+        blocks.extend(images);
+        Value::Array(blocks)
+    };
+    send(&tx, json!({ "type": "user", "message": { "role": "user", "content": content } }));
     let handle = Handle { turn, state, stdin: tx, pid, exited };
     Ok((Arc::new(handle), done))
 }

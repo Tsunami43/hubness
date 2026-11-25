@@ -218,5 +218,5 @@ async fn start(
         })?
         .0;
     s.bus.emit_global(GlobalStreamMsg::Session { session: session.clone() });
-    Ok((StatusCode::CREATED, axum::Json(runtime::send_message(&s, &session.id, &prompt)?)))
+    Ok((StatusCode::CREATED, axum::Json(runtime::send_message(&s, &session.id, &prompt, vec![])?)))
 }

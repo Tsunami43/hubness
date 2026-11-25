@@ -34,11 +34,11 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
 | Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
 | Sandbox | bubblewrap wrap for project/group agent runs (same hidden paths as TS) | done |
-| Sessions | attachments, convert to project, pane file/diff | todo |
+| Sessions | attachments (upload, serve, images to the model), project suggestion, Inbox → project conversion | done |
+| Sessions | pane file/diff (needs git) | todo |
 | Agents | Claude Code (stream-json, approvals, limits) | done |
 | Agents | Codex, OpenCode and Grok over ACP (load/resume, models, modes, client-side policy, provider retries) | done |
 | MCP | `hubness mcp`: the hub MCP server (`open_pane`, `close_pane`) attached to every agent session | done |
-| Agents | image attachments | todo |
 | Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |

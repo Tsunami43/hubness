@@ -772,3 +772,73 @@ test('hub MCP server: open_pane and close_pane reach the session (rust: `hubness
   live.close();
   mcp.stdin!.end();
 });
+
+test('attachments: upload, serve, attach to a message', async () => {
+  const repo = makeRepo(join(tmp, 'elsewhere', 'attach'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const inProject = (await call('POST', '/sessions', { projectId: p.id, agent: { kind: 'claude-code' } })).json;
+  const png = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
+  const upload = (id: string, name: string, type: string, body: Uint8Array) =>
+    raw(`/api/sessions/${id}/attachments`, { method: 'POST', headers: { 'X-Hubness-Request': '1', 'Content-Type': type, 'X-Filename': encodeURIComponent(name) }, body });
+  const up = await upload(inProject.id, 'скрин (1).png', 'image/png', png);
+  assert.equal(up.status, 201);
+  const a = (await up.json()) as any;
+  assert.match(a.id, /^[0-9a-f]{8}-скрин _1_\.png$/);
+  assert.equal(a.name, 'скрин _1_.png');
+  assert.equal(a.mime, 'image/png');
+  assert.equal(a.size, png.length);
+  assert.equal(a.path, join(repo, '.hub', 'attachments', a.id));
+  const { readFileSync } = await import('node:fs');
+  assert.match(readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8'), /^\/\.hub\/attachments\/$/m, 'kept out of git locally');
+  assert.equal((await upload(inProject.id, 'empty.txt', 'text/plain', new Uint8Array())).status, 400);
+  const txt = (await (await upload(inProject.id, 'notes.md', 'bogus', Buffer.from('# hi'))).json()) as any;
+  assert.equal(txt.mime, 'text/markdown', 'a bad type falls back to the extension');
+
+  const served = await raw(`/api/sessions/${inProject.id}/attachments/${encodeURIComponent(a.id)}`);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/png');
+  assert.equal(served.headers.get('content-disposition'), 'inline');
+  assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), png);
+  const md = await raw(`/api/sessions/${inProject.id}/attachments/${encodeURIComponent(txt.id)}`);
+  assert.equal(md.headers.get('content-disposition'), 'attachment', 'non-media is a download');
+  assert.equal((await raw(`/api/sessions/${inProject.id}/attachments/..%2Fsecret`)).status, 404);
+  assert.equal((await raw(`/api/sessions/${inProject.id}/attachments/missing`)).status, 404);
+
+  useFixture('claude-tool-turn.jsonl');
+  const chat = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
+  const shot = (await (await upload(chat.id, 'shot.png', 'image/png', png)).json()) as any;
+  assert.equal((await call('POST', `/sessions/${chat.id}/messages`, { text: '', attachments: [{ id: 'nope' }] })).status, 404);
+  assert.equal((await call('POST', `/sessions/${chat.id}/messages`, { text: '', attachments: 'x' })).status, 400);
+  const sent = await call('POST', `/sessions/${chat.id}/messages`, { text: '', attachments: [{ id: shot.id, name: shot.name, mime: shot.mime }] });
+  assert.equal(sent.status, 200);
+  assert.equal(sent.json.title, 'shot.png', 'an attachment names a chat without text');
+  await waitFor(chat.id, (x) => x.status === 'idle' && x.agentSessionId, 'the turn with an attachment');
+  const user = (await feed(chat.id))[0];
+  assert.deepEqual(user.attachments, [{ id: shot.id, name: 'shot.png', mime: 'image/png', size: png.length, path: shot.path }]);
+});
+
+test('inbox chat → project: suggestion and conversion', async () => {
+  useFixture('claude-tool-turn.jsonl');
+  const chat = (await call('POST', '/sessions', { agent: { kind: 'claude-code' }, prompt: 'Build my app' })).json;
+  await waitFor(chat.id, (x) => x.status === 'idle' && x.agentSessionId, 'the first turn');
+  assert.deepEqual((await call('GET', `/sessions/${chat.id}/project-suggestion`)).json, { suggest: false, reason: null, name: 'build-my-app' });
+  writeFileSync(join(chat.cwd, 'package.json'), '{}');
+  assert.deepEqual((await call('GET', `/sessions/${chat.id}/project-suggestion`)).json, { suggest: true, reason: 'found package.json', name: 'build-my-app' });
+
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(join(tmp, 'hub', 'projects', 'taken'), { recursive: true });
+  assert.equal((await call('POST', `/sessions/${chat.id}/convert`, { name: 'Taken' })).status, 409);
+  const res = await call('POST', `/sessions/${chat.id}/convert`, { name: 'Мой App' });
+  assert.equal(res.status, 200);
+  const dest = join(tmp, 'hub', 'projects', 'moy-app');
+  assert.equal(res.json.project.path, dest);
+  assert.equal(res.json.project.name, 'Мой App');
+  assert.equal(res.json.session.projectId, res.json.project.id);
+  assert.equal(res.json.session.cwd, null);
+  assert.equal(res.json.session.agentSessionId, null, 'the fake agent has no transcript to carry: a summary instead');
+  for (const f of ['package.json', 'AGENTS.md', '.git', '.hub/hub.yaml']) assert.ok(existsSync(join(dest, f)), f);
+  assert.ok(!existsSync(chat.cwd), 'the inbox folder moved');
+  assert.equal((await call('POST', `/sessions/${chat.id}/convert`, {})).status, 400, 'only inbox chats');
+  assert.deepEqual((await call('GET', `/sessions/${chat.id}/project-suggestion`)).json.suggest, false);
+});

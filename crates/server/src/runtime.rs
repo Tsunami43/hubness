@@ -64,6 +64,8 @@ pub struct Turn {
     pub session: Mutex<Session>,
     pub cwd: String,
     pub prompt: String,
+    /// Files attached to this message (paths are already in `prompt`).
+    pub attachments: Vec<hubness_core::Attachment>,
     pub extra_dirs: Vec<String>,
     pub system_prompt: Option<String>,
     pub wrap: Wrap,
@@ -232,7 +234,7 @@ fn now_ms() -> i64 {
 }
 
 /// Start a turn: record the user message, launch the agent, return the updated session.
-pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult<Session> {
+pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments: Vec<hubness_core::Attachment>) -> ApiResult<Session> {
     let rt = &state.runtime;
     let (turn, session) = {
         let db = state.db()?;
@@ -241,7 +243,7 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
         if rt.is_active(session_id) {
             return Err(HttpError::new(409, "The agent is still working — wait for it or stop it"));
         }
-        if text.trim().is_empty() {
+        if text.trim().is_empty() && attachments.is_empty() {
             return Err(HttpError::bad_request("Empty message"));
         }
         let project = match &session.project_id {
@@ -259,7 +261,12 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
             _ => vec![],
         };
         if session.title.is_empty() || DEFAULT_TITLES.contains(&session.title.as_str()) {
-            let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let source = if text.trim().is_empty() {
+                attachments.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+            } else {
+                text.to_string()
+            };
+            let t = source.split_whitespace().collect::<Vec<_>>().join(" ");
             let title = if t.encode_utf16().count() > 60 { format!("{}…", truncate(&t, 57)) } else { t };
             session = repo::update(&db, session_id, repo::Patch { title: Some(title), agent: None })?.expect("session exists");
         }
@@ -298,10 +305,12 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
         let turn = Arc::new(Turn {
             state: state.clone(),
             session: Mutex::new(session.clone()),
+            // the agent is told where attached files are; images also go to the model directly
             prompt: match handoff {
                 Some(h) => format!("{h}\n{text}"),
                 None => text.to_string(),
-            },
+            } + &crate::attachments::note(&attachments),
+            attachments: attachments.clone(),
             cwd,
             // a group session sees exactly the member repositories (real paths, not symlinks)
             extra_dirs: members.iter().map(|p| p.path.clone()).collect(),
@@ -317,8 +326,13 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str) -> ApiResult
         (turn, session)
     };
 
-    turn.put(&format!("u:{}", now_ms()), json!({ "kind": "user", "text": text }), true);
-    turn.raw(&json!({ "hub": "user", "ts": db::now(), "text": text, "attachments": [] }).to_string());
+    let mut user = json!({ "kind": "user", "text": text });
+    if !attachments.is_empty() {
+        user["attachments"] = json!(attachments);
+    }
+    turn.put(&format!("u:{}", now_ms()), user, true);
+    let paths: Vec<&str> = attachments.iter().map(|a| a.path.as_str()).collect();
+    turn.raw(&json!({ "hub": "user", "ts": db::now(), "text": text, "attachments": paths }).to_string());
     set_status(state, session_id, SessionStatus::Running);
 
     match agents::start(&session.agent.kind, turn.clone()) {

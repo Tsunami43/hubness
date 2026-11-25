@@ -436,6 +436,26 @@ pub struct Session {
     pub updated_at: String,
 }
 
+/// A file attached to a message, stored in the session folder (`.hub/attachments/`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Attachment {
+    /// File name in the attachments folder (unique).
+    pub id: String,
+    /// Original file name.
+    pub name: String,
+    pub mime: String,
+    pub size: u64,
+    /// Absolute path on the server (what the agent is told).
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectSuggestion {
+    pub suggest: bool,
+    pub reason: Option<String>,
+    pub name: String,
+}
+
 /// An event of the session feed. Kept as raw JSON (`{uid, seq, ts, kind, ...}`, see
 /// `HubEvent` in packages/shared) until the agent runtime is ported.
 pub type HubEvent = serde_json::Value;

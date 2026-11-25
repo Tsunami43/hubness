@@ -7,7 +7,6 @@
 //! no-prompt mode) is described in `Spec`; the client itself is agent-agnostic. Codex,
 //! OpenCode and Grok specs are at the bottom.
 //!
-//! TODO(rust-port): image attachments.
 
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -556,6 +555,14 @@ impl Client {
             .call("initialize", json!({ "protocolVersion": 1, "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false } }))
             .await?;
         let caps = &init["agentCapabilities"];
+        // images go to the model only if the agent says it takes them; otherwise just the path
+        let images_supported = truthy(caps["promptCapabilities"].get("image"));
+        if !self.turn.attachments.is_empty() {
+            self.turn.raw(
+                &json!({ "hub": "promptCapabilities", "value": caps.get("promptCapabilities").cloned().unwrap_or(Value::Null) })
+                    .to_string(),
+            );
+        }
         let extra_dirs = caps["sessionCapabilities"]["additionalDirectories"].as_bool().unwrap_or(false)
             || truthy(caps["sessionCapabilities"].get("additionalDirectories"));
         let meta = self.spec.session_meta.map(|f| f(self.mode));
@@ -645,7 +652,15 @@ impl Client {
         };
         let started = Instant::now();
         let text = format!("{head}{preface}{}", self.turn.prompt);
-        let res = self.call("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": text }] })).await?;
+        let mut prompt = vec![json!({ "type": "text", "text": text })];
+        if images_supported {
+            for a in self.turn.attachments.iter().filter(|a| crate::attachments::is_model_image(a)) {
+                if let Ok(b) = std::fs::read(&a.path) {
+                    prompt.push(json!({ "type": "image", "mimeType": a.mime, "data": super::claude::base64_encode(&b) }));
+                }
+            }
+        }
+        let res = self.call("session/prompt", json!({ "sessionId": sid, "prompt": prompt })).await?;
         let mut st = self.state.lock().expect("acp state");
         self.flush_thought(&mut st);
         self.flush_text(&mut st);

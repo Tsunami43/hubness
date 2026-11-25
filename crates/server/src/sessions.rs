@@ -36,6 +36,13 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions/{id}/messages", post(messages))
         .route("/sessions/{id}/stop", post(stop))
         .route("/sessions/{id}/approvals/{request_id}", post(approval))
+        .route(
+            "/sessions/{id}/attachments",
+            post(upload).layer(axum::extract::DefaultBodyLimit::max(crate::attachments::MAX_ATTACHMENT + 1024)),
+        )
+        .route("/sessions/{id}/attachments/{file}", get(attachment))
+        .route("/sessions/{id}/project-suggestion", get(project_suggestion))
+        .route("/sessions/{id}/convert", post(convert))
         .route("/sessions/{id}/pane", post(set_pane))
         .route("/sessions/{id}/stream", get(session_stream))
         .route("/stream", get(global_stream))
@@ -178,7 +185,7 @@ async fn create(State(s): State<AppState>, JsonBody(b): JsonBody<CreateBody>) ->
     })?;
     s.bus.emit_global(GlobalStreamMsg::Session { session: session.0.clone() });
     match b.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
-        Some(prompt) => Ok((StatusCode::CREATED, axum::Json(runtime::send_message(&s, &session.0.id, prompt)?))),
+        Some(prompt) => Ok((StatusCode::CREATED, axum::Json(runtime::send_message(&s, &session.0.id, prompt, vec![])?))),
         None => Ok((StatusCode::CREATED, session)),
     }
 }
@@ -288,19 +295,18 @@ async fn messages(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b)
     if b.text.encode_utf16().count() > 1_000_000 {
         return Err(HttpError::bad_request("text: at most 1000000 characters"));
     }
-    if b.attachments.as_ref().and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
-        // TODO(rust-port): attachments.ts
-        return Err(HttpError::new(501, "Attachments are not supported by the Rust server yet"));
-    }
-    {
+    let files = {
         let db = s.db()?;
         let cur = session_or_404(&db, &id)?;
+        let cwd = runtime::session_cwd(&db, s.config(), &cur)?;
+        let files = crate::attachments::resolve(std::path::Path::new(&cwd), b.attachments.as_ref())?;
         // writing to an archived session brings it back
-        if cur.archived_at.is_some() && !b.text.trim().is_empty() {
+        if cur.archived_at.is_some() && (!b.text.trim().is_empty() || !files.is_empty()) {
             repo::set_archived(&db, &cur.id, false)?;
         }
-    }
-    Ok(axum::Json(runtime::send_message(&s, &id, &b.text)?))
+        files
+    };
+    Ok(axum::Json(runtime::send_message(&s, &id, &b.text, files)?))
 }
 
 async fn stop(State(s): State<AppState>, Path(id): Path<String>) -> axum::Json<Value> {
@@ -410,4 +416,179 @@ async fn global_stream(State(s): State<AppState>) -> Sse<impl Stream<Item = Resu
     let updates = BroadcastStream::new(s.bus.on_global()).filter_map(|m| async move { m.ok().map(|m| sse_event(&m)) });
     let pings = ticks().map(|_| Ok(Event::default().event("ping").data("")));
     Sse::new(stream::select(updates, pings))
+}
+
+// ---------- attachments ----------
+
+/// Attach a file to the next message: the raw bytes in the body, the name in X-Filename
+/// (URI-encoded), the type in Content-Type. Saved into the session's working folder.
+async fn upload(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> ApiResult<(StatusCode, axum::Json<hubness_core::Attachment>)> {
+    let cwd = {
+        let db = s.db()?;
+        let cur = session_or_404(&db, &id)?;
+        runtime::session_cwd(&db, s.config(), &cur)?
+    };
+    let header = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+    let raw_name = header("x-filename");
+    let name = percent_decode(if raw_name.is_empty() { "file" } else { &raw_name }).unwrap_or_else(|| "file".into());
+    let a = crate::attachments::save(std::path::Path::new(&cwd), &name, &header("content-type"), &body)?;
+    Ok((StatusCode::CREATED, axum::Json(a)))
+}
+
+/// `decodeURIComponent`; `None` on a malformed sequence.
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// An attachment's content (thumbnails and downloads in the feed). Attached HTML/SVG is
+/// never rendered as a page of the hub's origin.
+async fn attachment(State(s): State<AppState>, Path((id, file)): Path<(String, String)>) -> ApiResult<axum::response::Response> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let path = {
+        let db = s.db()?;
+        let cur = session_or_404(&db, &id)?;
+        let cwd = runtime::session_cwd(&db, s.config(), &cur)?;
+        crate::attachments::path_of(std::path::Path::new(&cwd), &file)?
+    };
+    let mime = crate::attachments::serve_mime(&path);
+    let disposition = if mime.starts_with("image/") || mime.starts_with("video/") { "inline" } else { "attachment" };
+    let bytes = std::fs::read(&path)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_SECURITY_POLICY, "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+// ---------- Inbox → Project ----------
+
+async fn project_suggestion(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<axum::Json<hubness_core::ProjectSuggestion>> {
+    s.with(|db, _| Ok(inbox::suggestion(&session_or_404(db, &id)?)))
+}
+
+#[derive(Deserialize)]
+struct ConvertBody {
+    #[serde(default)]
+    name: String,
+}
+
+/// Move a chat from Inbox into a new project and continue the same session there.
+async fn convert(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b): JsonBody<ConvertBody>) -> ApiResult<axum::Json<Value>> {
+    if b.name.encode_utf16().count() > 200 {
+        return Err(HttpError::bad_request("name: at most 200 characters"));
+    }
+    if s.runtime.is_active(&id) {
+        return Err(HttpError::new(409, "The agent is still working — wait for it or stop it"));
+    }
+    let (project, session) = s
+        .with(|db, cfg| {
+            let cur = session_or_404(db, &id)?;
+            let Some(from) = cur.cwd.clone().filter(|_| cur.project_id.is_none()) else {
+                return Err(HttpError::bad_request("Only inbox chats can be converted"));
+            };
+            let name = if b.name.trim().is_empty() { cur.title.clone() } else { b.name.trim().to_string() };
+            let dest = cfg.projects_dir.join(inbox::slug(&name));
+            if dest.exists() {
+                return Err(HttpError::new(409, format!("Folder already exists: {}", dest.display())));
+            }
+            if std::fs::rename(&from, &dest).is_err() {
+                copy_dir(std::path::Path::new(&from), &dest)?;
+                std::fs::remove_dir_all(&from)?;
+            }
+            if !dest.join(".git").exists() {
+                let _ = std::process::Command::new("git").args(["init", "-q"]).arg(&dest).status();
+            }
+            if !dest.join("AGENTS.md").exists() {
+                std::fs::write(dest.join("AGENTS.md"), format!("# {name}\n\nProject rules for any agent working here.\n"))?;
+            }
+            let dest_s = crate::paths::to_string(&dest);
+            let project = crate::db::projects::create(db, &name, &dest_s, hubness_core::ProjectKind::Normal)?;
+            crate::manifest::create(&project)?;
+            db.execute(
+                "UPDATE sessions SET project_id = ?, cwd = NULL, updated_at = ? WHERE id = ?",
+                (&project.id, crate::db::now(), &cur.id),
+            )?;
+            // continue the same session if the agent can carry its transcript over to the new path,
+            // otherwise pass the conversation summary as the next message
+            if !relocate(db, &cur, &from, &dest_s) {
+                let handoff = inbox::handoff_text(&repo::events(db, &cur.id)?, &from, &dest_s);
+                db.execute(
+                    "UPDATE sessions SET agent_session_id = NULL, handoff = ?, updated_at = ? WHERE id = ?",
+                    (handoff, crate::db::now(), &cur.id),
+                )?;
+            }
+            let project = crate::db::projects::get(db, &project.id)?.expect("project exists");
+            Ok((project, repo::get(db, &cur.id)?.expect("session exists")))
+        })?
+        .0;
+    announce(&s, &session);
+    Ok(axum::Json(json!({ "project": project, "session": session })))
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)? {
+        let e = e?;
+        let target = to.join(e.file_name());
+        let t = e.file_type()?;
+        if t.is_dir() {
+            copy_dir(&e.path(), &target)?;
+        } else if t.is_symlink() {
+            std::os::unix::fs::symlink(std::fs::read_link(e.path())?, &target)?;
+        } else {
+            std::fs::copy(e.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// The session folder moved: Claude Code continues the same session if its transcript is
+/// copied into the folder of the new path (other agents get a summary instead).
+fn relocate(db: &Connection, s: &Session, from: &str, to: &str) -> bool {
+    if s.agent.kind != "claude-code" {
+        return false;
+    }
+    let Some(sid) = &s.agent_session_id else { return false };
+    let config_dir = match s.agent.account.as_deref().filter(|a| *a != "default") {
+        Some(account) => crate::db::kv::get::<Vec<Value>>(db, "claude.profiles")
+            .ok()
+            .flatten()
+            .and_then(|ps| ps.into_iter().find(|p| p["id"] == account))
+            .and_then(|p| p["dir"].as_str().map(std::path::PathBuf::from)),
+        None => None,
+    }
+    .unwrap_or_else(|| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".claude"));
+    let project_dir = |cwd: &str| {
+        config_dir.join("projects").join(cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>())
+    };
+    let src = project_dir(from).join(format!("{sid}.jsonl"));
+    if !src.exists() {
+        return false;
+    }
+    let dst = project_dir(to);
+    std::fs::create_dir_all(&dst).is_ok() && std::fs::copy(&src, dst.join(format!("{sid}.jsonl"))).is_ok()
 }

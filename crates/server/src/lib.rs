@@ -4,6 +4,7 @@
 //! The port is incremental: routes not ported yet answer 404, as unknown routes do.
 
 pub mod agents;
+pub mod attachments;
 pub mod bus;
 pub mod catalog;
 pub mod config;
@@ -84,7 +85,8 @@ impl AppState {
 
 /// The whole app: `/api` plus the built web app (with the SPA fallback to index.html).
 pub fn app(state: AppState) -> Router {
-    let api = routes::api().layer(axum::middleware::from_fn(http::csrf_guard));
+    // messages (up to 1M characters) and file writes can exceed axum's default 2 MB limit
+    let api = routes::api().layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)).layer(axum::middleware::from_fn(http::csrf_guard));
     let mut router = Router::new().nest("/api", api);
     let dist = &state.config.web_dist;
     if dist.is_dir() {
