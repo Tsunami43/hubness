@@ -39,6 +39,7 @@ pub fn api() -> Router<AppState> {
         .merge(crate::system::routes())
         .merge(crate::files::routes())
         .merge(crate::git::routes())
+        .merge(crate::extensions::routes())
         .merge(crate::harness::routes())
         .merge(crate::git_auth::routes())
         .merge(crate::terminal::routes())

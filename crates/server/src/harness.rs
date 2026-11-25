@@ -940,7 +940,7 @@ async fn grok_harness(s: &AppState) -> Value {
 // ---------- registry: status, models, harness ----------
 
 /// Registered agents in UI order (the order of the TS registry).
-const LABELS: &[(&str, &str, &str)] =
+pub(crate) const LABELS: &[(&str, &str, &str)] =
     &[(OPENCODE, "Opencode", "search"), (CLAUDE, "Claude Code", "options"), (GROK, "Grok CLI", "search"), (CODEX, "Codex", "search")];
 
 fn label_of(kind: &str) -> ApiResult<(&'static str, &'static str, &'static str)> {

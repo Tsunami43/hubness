@@ -167,3 +167,129 @@ export interface AgentModelsResponse {
   /** Labels and descriptions, when the agent provides them (modelStyle: options). */
   options?: ModelOption[];
 }
+
+// ---- Harness: MCP servers and extensions (skills, rules, subagents, commands) ----
+
+export type McpTransport = 'stdio' | 'http' | 'sse';
+/** user — the agent's own user config; project — a project's config (shown, never written). */
+export type McpScope = 'user' | 'project';
+
+/** Where one agent has a server: its scope, file and whether the agent has it turned on. */
+export interface McpEntry {
+  agent: AgentKind;
+  scope: McpScope;
+  /** The config file the definition comes from. */
+  source: string;
+  enabled: boolean;
+}
+
+/**
+ * One MCP server, as a row of the matrix. Secrets never leave the server: `env` and
+ * `headers` list the variable / header names only.
+ */
+export interface McpServerInfo {
+  name: string;
+  transport: McpTransport;
+  command: string | null;
+  args: string[];
+  /** Environment variable names (values are not sent). */
+  env: string[];
+  url: string | null;
+  /** Header names (values are not sent). */
+  headers: string[];
+  /** The hub's own server, attached to hub sessions by the hub: read-only. */
+  builtIn: boolean;
+  /** Per agent: the scope it has the server in (user wins over project), builtin, or null. */
+  agents: Record<AgentKind, McpScope | 'builtin' | null>;
+  entries: McpEntry[];
+}
+
+export interface McpAgentInfo {
+  kind: AgentKind;
+  label: string;
+  /** The hub can write this agent's MCP config. */
+  supported: boolean;
+  /** The user config file the hub writes (null when unsupported). */
+  configPath: string | null;
+  /** The transports the agent's config can hold. */
+  transports: McpTransport[];
+  /** Why it is unsupported, or why its config can't be read (it is then left alone). */
+  error: string | null;
+}
+
+export interface McpResponse {
+  servers: McpServerInfo[];
+  agents: McpAgentInfo[];
+}
+
+/** A server to add to (or replace in) the selected agents' user configs. */
+export interface McpServerInput {
+  name: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  agents: AgentKind[];
+}
+
+/** user — the user's own folder; project — the project; plugin — an installed plugin. */
+export type ExtensionScope = 'user' | 'project' | 'plugin';
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+  scope: ExtensionScope;
+}
+
+/** A rules / memory file the agent reads (CLAUDE.md, AGENTS.md…), listed even when missing. */
+export interface RulesFileInfo {
+  label: string;
+  path: string;
+  scope: ExtensionScope;
+  exists: boolean;
+  size: number;
+  /** The beginning of the file. */
+  preview: string | null;
+}
+
+export interface SubagentInfo {
+  name: string;
+  description: string;
+  model: string | null;
+  path: string;
+  scope: ExtensionScope;
+}
+
+export interface CommandInfo {
+  name: string;
+  description: string;
+  path: string;
+  scope: ExtensionScope;
+}
+
+export interface PluginInfo {
+  name: string;
+  version: string | null;
+  enabled: boolean;
+  path: string;
+  scope: ExtensionScope;
+}
+
+/** What an agent is extended with, read from its own folders (and the project's). */
+export interface HarnessExtensions {
+  kind: AgentKind;
+  skills: SkillInfo[];
+  rules: RulesFileInfo[];
+  agents: SubagentInfo[];
+  commands: CommandInfo[];
+  plugins: PluginInfo[];
+}
+
+export interface RulesFileContent {
+  path: string;
+  exists: boolean;
+  content: string;
+}

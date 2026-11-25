@@ -30,6 +30,7 @@ serde_path_to_error = "0.1.20"
 sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["full"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
+toml_edit = "0.25.21"
 tower-http = { version = "0.7.1", features = ["fs"] }
 uuid = { version = "1.29.3", features = ["v4"] }
 
