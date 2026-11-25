@@ -25,7 +25,7 @@ type stripping — there is no server build step).
 apps/server     Hono HTTP + SSE API, agent runtime, SQLite storage
 apps/web        React 19 + Vite + Tailwind 4 single-page app
 packages/shared Types shared by server and web (@hubness/shared)
-crates/         Rust port of the server (Cargo workspace, in progress)
+crates/         Rust server, API client and terminal UI (Cargo workspace)
 ```
 
 ### Server (`apps/server/src`)
@@ -65,19 +65,22 @@ crates/         Rust port of the server (Cargo workspace, in progress)
   added to both files.
 - Vite proxies `/api` to the server in dev; in production the server serves `apps/web/dist`.
 
-### Rust port (`crates/`)
+### Rust (`crates/`)
 
-The server is being ported to Rust incrementally; the TypeScript server stays the reference
-until the port catches up. Both use the same `HUBNESS_*` settings and the same SQLite file,
-so they can be switched on one data folder (not run at the same time).
+The Rust server implements the whole `/api` of the TypeScript server. Both use the same
+`HUBNESS_*` settings and the same SQLite file, so they can be switched on one data folder
+(not run at the same time). Until the TypeScript server is retired, an API change goes into
+both servers, backed by a contract test.
 
 - `core` — API types (`hubness-core`), JSON shape identical to `packages/shared`.
 - `server` — axum + rusqlite. `db/migrations.rs` must mirror `db/migrations.ts` exactly:
-  a new migration is added to both servers. `README.md` lists what is ported.
-- `hubness` — the binary: `hubness serve`.
+  a new migration is added to both servers. `README.md` lists the domains and deviations.
+- `client` — HTTP + SSE client of the API (`hubness-client`).
+- `tui` — ratatui terminal UI on top of the client (`hubness-tui`).
+- `hubness` — the binary: `hubness serve`, `hubness tui`, plus `mcp` and
+  `git-credential-helper` that the server itself starts for agents and git.
 - `apps/server/test/contract.test.ts` — black-box HTTP tests every server must pass; they
-  run against TS in `pnpm test` and against Rust with `pnpm test:contract:rust`. Port a
-  route by adding its contract test first.
+  run against TS in `pnpm test` and against Rust with `pnpm test:contract:rust`.
 
 ## Commands
 
@@ -90,6 +93,7 @@ pnpm build    # typecheck and build the web app
 pnpm start    # production server, serves the built web app
 
 cargo run -p hubness -- serve   # the Rust server (same port and data folder)
+cargo run -p hubness -- tui     # terminal UI for a running hub (--url, HUBNESS_URL)
 pnpm check:rust                 # cargo fmt --check, clippy -D warnings, cargo test
 pnpm test:contract:rust         # contract tests against the Rust server
 ```

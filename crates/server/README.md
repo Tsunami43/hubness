@@ -1,8 +1,8 @@
 # hubness-server (Rust)
 
-Incremental Rust port of `apps/server`. It reads the same `HUBNESS_*` settings and the
-same SQLite database, so the two servers can be switched on one data folder. Routes that
-are not ported yet answer `404 {"error": "Not found"}`.
+Rust implementation of the hubness server, a port of `apps/server` covering its whole
+`/api`. It reads the same `HUBNESS_*` settings and the same SQLite database, so the two
+servers can be switched on one data folder.
 
 ```sh
 cargo run -p hubness -- serve      # http://127.0.0.1:8787, data in ./.data
@@ -10,10 +10,10 @@ cargo run -p hubness -- mcp        # the hub MCP server (agents get it automatic
 pnpm test:contract:rust            # apps/server/test/contract.test.ts against this server
 ```
 
-## Porting rules
+## Rules while both servers exist
 
-- The TypeScript server is the reference. A route is ported when its contract test passes
-  against both servers (`apps/server/test/contract.test.ts`).
+- An API change goes into both servers, with a contract test that passes against both
+  (`apps/server/test/contract.test.ts`).
 - JSON shapes come from `hubness-core`, which mirrors `packages/shared`.
 - `src/db/migrations.rs` mirrors `apps/server/src/db/migrations.ts` step by step. A new
   migration is added to both servers with the same version number.
