@@ -30,7 +30,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (local symlink workspace) | done |
 | Manifest | `GET/POST /projects/:id/manifest`, manifest section of the agent context | done |
 | Projects | `GET /projects/:id` (repo info, provider links, languages), `POST /projects/new-repo`, `GET /groups/:id/context`, background repo-meta refresh on `GET /projects` | done |
-| Projects | `POST /projects/clone` (a terminal job) | todo |
+| Projects | `POST /projects/clone` (a terminal job with the stored host login; the project appears after a successful clone) | done |
 | Git logins | `GET /git-credentials`, `PUT/DELETE /git-credentials/:host` (same encrypted rows as TS), credential helper `hubness git-credential-helper` for fetch/pull/push | done |
 | Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
 | Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
@@ -49,7 +49,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Preview | `POST /projects/:id/preview`, per-port proxy (`HUBNESS_PREVIEW_PORTS`, HTTP + upgrades) | done |
 | Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |
 | Harness | `/agents`, `/agents/:kind/models`, `/harness`, `/harness/agents`, `/harness/:kind` (versions, latest checks, auth, limits, models), default model, provider account ops | done |
-| Harness | `POST /harness/:kind/actions/:action` (needs terminal jobs) | todo |
+| Harness | `POST /harness/:kind/actions/:action` (only actions from the harness's own list, as terminal jobs) | done |
 | System | `/system/*`: platform, overview (CPU, memory, disks, GPUs, sensors), Docker containers/networks/volumes (logs, actions, safe removal), systemd units (launchd on macOS), package managers and pacman package info; `POST /ask` | done |
 
 Session events are passed through as JSON (`HubEvent` is

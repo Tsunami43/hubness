@@ -506,6 +506,71 @@ fn target_dir(config: &Config, name: &str, group: Option<&ProjectGroup>) -> ApiR
     Ok((dir, slug))
 }
 
+/// Clone a repository into storage as a terminal job: progress, password prompts or host key
+/// confirmation are visible. The project appears when git clone has finished successfully.
+pub fn clone_repo(
+    s: &AppState,
+    url: &str,
+    name: Option<&str>,
+    group_id: Option<&str>,
+    size: &crate::runs::TermSize,
+) -> ApiResult<hubness_core::JobInfo> {
+    let url = crate::git_providers::js_trim(url).to_string();
+    if !crate::git_providers::is_clone_url(&url) {
+        return Err(HttpError::bad_request("Use an https://, ssh:// or git@host:path repository URL"));
+    }
+    let name = name
+        .map(|n| crate::git_providers::js_trim(n).to_string())
+        .filter(|n| !n.is_empty())
+        .or_else(|| crate::git_providers::repo_name_from_url(&url))
+        .ok_or_else(|| HttpError::bad_request("Couldn’t derive a folder name from the URL"))?;
+    let (dir, slug, group, auth) = {
+        let db = s.db()?;
+        let group = match group_id.filter(|g| !g.is_empty()) {
+            Some(id) => Some(group_or_404(&db, id)?),
+            None => None,
+        };
+        let (dir, slug) = target_dir(&s.config, &name, group.as_ref())?;
+        // a login stored for the host (Settings → Git access) is used; otherwise git asks in the terminal
+        let auth = crate::git_auth::git_auth_for(&db, &s.config.data_dir, std::slice::from_ref(&url))?;
+        (dir, slug, group, auth)
+    };
+    if let Some(parent) = dir.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let sh = crate::terminal::shq;
+    let mut parts = vec!["git".to_string()];
+    parts.extend(auth.args.iter().map(|a| sh(a)));
+    parts.extend(["clone".into(), "--progress".into(), "--".into(), sh(&url), sh(&paths::to_string(&dir))]);
+    let title = format!("Clone {slug}");
+    let state = s.clone();
+    let on_exit = move |code: Option<i32>| {
+        if code != Some(0) || !dir.join(".git").exists() {
+            return;
+        }
+        let Ok(db) = state.db() else { return };
+        let path = paths::to_string(&dir);
+        let project = match projects::by_path(&db, &path) {
+            Ok(Some(p)) => Some(p),
+            _ => projects::create(&db, &slug, &path, ProjectKind::Normal).ok(),
+        };
+        if let (Some(p), Some(g)) = (project, group.as_ref())
+            && let Ok(Some(g)) = groups::get(&db, &g.id)
+        {
+            let _ = add_to_group(&db, &g, std::slice::from_ref(&p.id));
+        }
+    };
+    Ok(crate::terminal::start_job(crate::terminal::JobOpts {
+        title,
+        command: parts.join(" "),
+        env: auth.env,
+        cols: size.cols,
+        rows: size.rows,
+        on_exit: Some(Box::new(on_exit)),
+        ..Default::default()
+    }))
+}
+
 /// A new empty project in storage (group or projects folder): folder + `git init`.
 pub async fn create_repo(s: &AppState, name: Option<&str>, group_id: Option<&str>) -> ApiResult<Project> {
     let (dir, slug, group) = {

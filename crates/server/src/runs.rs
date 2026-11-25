@@ -438,13 +438,13 @@ fn is_running(run_id: &str) -> bool {
 /// Terminal size of a job / shell (characters).
 #[derive(Deserialize, Default)]
 pub struct TermSize {
-    cols: Option<f64>,
-    rows: Option<f64>,
-    fresh: Option<bool>,
+    pub cols: Option<f64>,
+    pub rows: Option<f64>,
+    pub fresh: Option<bool>,
 }
 
 impl TermSize {
-    fn check(&self) -> ApiResult<()> {
+    pub fn check(&self) -> ApiResult<()> {
         for (name, v, max) in [("cols", self.cols, 1000.0), ("rows", self.rows, 500.0)] {
             if let Some(v) = v
                 && (v.fract() != 0.0 || !(1.0..=max).contains(&v))

@@ -24,8 +24,8 @@ pub fn api() -> Router<AppState> {
         .route("/projects/discover", get(discover))
         .route("/projects/import", axum::routing::post(import))
         .route("/projects/new-repo", axum::routing::post(new_repo))
-        // clone by URL is a terminal job: not ported yet
-        .route("/projects/clone", axum::routing::post(|| async { HttpError::not_found("Not found") }))
+        // clone by URL is a terminal job (/api/jobs/:id/stream); the project appears after a successful clone
+        .route("/projects/clone", axum::routing::post(clone_project))
         .route("/projects/{id}", get(project_detail).patch(update_project).delete(delete_project))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/groups", get(list_groups).post(create_group))
@@ -106,6 +106,31 @@ async fn update_project(
 ) -> ApiResult<Json<Value>> {
     let patch = ProjectPatch { name: b.name, description: b.description, instructions: b.instructions };
     s.with(|db, _| Ok(json!(catalog::update_project(db, &id, patch)?)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloneBody {
+    url: String,
+    name: Option<String>,
+    group_id: Option<String>,
+    #[serde(flatten)]
+    size: crate::runs::TermSize,
+}
+
+async fn clone_project(
+    State(s): State<AppState>,
+    crate::http::JsonBody(b): crate::http::JsonBody<CloneBody>,
+) -> ApiResult<(axum::http::StatusCode, Json<hubness_core::JobInfo>)> {
+    b.size.check()?;
+    if b.url.encode_utf16().count() > 2000 {
+        return Err(HttpError::bad_request("url: at most 2000 characters"));
+    }
+    if b.name.as_ref().is_some_and(|n| n.encode_utf16().count() > 200) {
+        return Err(HttpError::bad_request("name: at most 200 characters"));
+    }
+    let job = catalog::clone_repo(&s, &b.url, b.name.as_deref(), b.group_id.as_deref(), &b.size)?;
+    Ok((axum::http::StatusCode::CREATED, Json(job)))
 }
 
 /// Remove a project from the hub; its processes and container are stopped. Files stay on

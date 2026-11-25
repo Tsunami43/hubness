@@ -785,7 +785,7 @@ test('attachments: upload, serve, attach to a message', async () => {
   const inProject = (await call('POST', '/sessions', { projectId: p.id, agent: { kind: 'claude-code' } })).json;
   const png = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000000', 'hex');
   const upload = (id: string, name: string, type: string, body: Uint8Array) =>
-    raw(`/api/sessions/${id}/attachments`, { method: 'POST', headers: { 'X-Hubness-Request': '1', 'Content-Type': type, 'X-Filename': encodeURIComponent(name) }, body });
+    raw(`/api/sessions/${id}/attachments`, { method: 'POST', headers: { 'X-Hubness-Request': '1', 'Content-Type': type, 'X-Filename': encodeURIComponent(name) }, body: new Blob([body as Uint8Array<ArrayBuffer>]) });
   const up = await upload(inProject.id, 'скрин (1).png', 'image/png', png);
   assert.equal(up.status, 201);
   const a = (await up.json()) as any;
@@ -1595,4 +1595,20 @@ test('removing a project stops its processes', async () => {
   const ending = readJob(job.id);
   assert.equal((await call('DELETE', `/projects/${envProject.id}`)).status, 200);
   assert.deepEqual((await ending).exit, { code: null });
+});
+
+test('clone by URL is a terminal job; harness actions only from the list', async () => {
+  assert.equal((await call('POST', '/projects/clone', { url: 'file:///etc' })).status, 400);
+  assert.equal((await call('POST', '/projects/clone', { url: 'https://example.invalid/team/thing.git', groupId: 'missing' })).status, 404);
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(join(tmp, 'hub', 'projects', 'busy'), { recursive: true });
+  assert.equal((await call('POST', '/projects/clone', { url: 'https://example.invalid/team/busy.git' })).status, 409);
+  const job = await call('POST', '/projects/clone', { url: 'https://example.invalid/team/thing.git', cols: 100, rows: 30 });
+  assert.equal(job.status, 201);
+  assert.equal(job.json.title, 'Clone thing');
+  const { exit } = await readJob(job.json.id, undefined, 30_000);
+  assert.notEqual(exit?.code, 0, 'the clone fails without a reachable remote');
+  assert.ok(!(await call('GET', '/projects')).json.some((p: any) => p.path === join(tmp, 'hub', 'projects', 'thing')), 'no project after a failed clone');
+  assert.equal((await call('POST', '/harness/grok/actions/nope')).status, 404);
+  assert.equal((await call('POST', '/harness/nope/actions/install')).status, 404);
 });

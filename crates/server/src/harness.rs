@@ -1084,6 +1084,7 @@ pub fn routes() -> Router<AppState> {
         .route("/harness/{kind}", get(one_route))
         .route("/harness/{kind}/default-model", put(default_model_route))
         .route("/harness/{kind}/accounts/{provider}/{account}/{op}", post(account_route))
+        .route("/harness/{kind}/actions/{action}", post(action_route))
 }
 
 #[derive(Deserialize)]
@@ -1140,6 +1141,36 @@ async fn default_model_route(
     }
     s.harness.invalidate(Some(&kind));
     Ok(axum::Json(json!({ "ok": true })))
+}
+
+/// Run one of the harness's own actions (install, update, login…) as a terminal job. Only
+/// actions from the harness's list run — never arbitrary commands.
+async fn action_route(
+    State(s): State<AppState>,
+    UrlPath((kind, id)): UrlPath<(String, String)>,
+    crate::http::LenientBody(size): crate::http::LenientBody<crate::runs::TermSize>,
+) -> ApiResult<(axum::http::StatusCode, axum::Json<hubness_core::JobInfo>)> {
+    let (_, label, _) = label_of(&kind)?;
+    size.check()?;
+    let info = harness_one(&s, &kind, false).await?;
+    let act = info["info"]["actions"]
+        .as_array()
+        .and_then(|a| a.iter().find(|x| x["id"] == id.as_str()).cloned())
+        .ok_or_else(|| HttpError::not_found("Action is not available"))?;
+    if act["runnable"] != true {
+        return Err(HttpError::new(403, "This command needs root — run it in a terminal yourself"));
+    }
+    let caches = s.harness.clone();
+    let k = kind.clone();
+    let job = crate::terminal::start_job(crate::terminal::JobOpts {
+        title: format!("{label} · {id}"),
+        command: act["command"].as_str().unwrap_or_default().to_string(),
+        cols: size.cols,
+        rows: size.rows,
+        on_exit: Some(Box::new(move |_| caches.invalidate(Some(&k)))),
+        ..Default::default()
+    });
+    Ok((axum::http::StatusCode::CREATED, axum::Json(job)))
 }
 
 /// Provider credentials (accountMode: providers): switch / sign out one connection.
