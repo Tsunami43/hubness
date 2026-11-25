@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import type { EnvironmentStatus, Project, ProjectGroup, ProjectRuntime } from '@hubness/shared';
 import { config, repoRoot } from './config.ts';
 import { groups, projectRuntime, projects } from './db/index.ts';
@@ -334,5 +334,3 @@ export async function environmentStatus(p: Project): Promise<EnvironmentStatus> 
     devcontainerImage: devcontainerImage(p.path),
   };
 }
-
-export const resolvedHome = resolve(HOME);

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { JobInfo, Project, ProjectGroup, RunConfig, RunState, RunSuggestion } from '@hubness/shared';
+import type { JobInfo, Project, RunConfig, RunState, RunSuggestion } from '@hubness/shared';
 import { runConfigs } from './db/index.ts';
 import { HttpError } from './errors.ts';
 import { containerIp, execCommand, runtimeOf, type Scope } from './environments.ts';
@@ -321,5 +321,3 @@ export async function previewPortFor(p: Project, port: number): Promise<number> 
   if (!pp) throw new HttpError(503, 'No free preview ports (HUBNESS_PREVIEW_PORTS)');
   return pp;
 }
-
-export type { ProjectGroup };
