@@ -1005,14 +1005,14 @@ async fn harness_of(s: &AppState, kind: &str, refresh: bool) -> Value {
     }
 }
 
-/// A value list with the time it was read.
-type ModelsLikeCache = Mutex<Option<(Instant, Vec<Value>)>>;
+/// The agents list with the time it was read.
+type AgentsCache = Mutex<Option<(Instant, Vec<Value>)>>;
 
 /// Harness caches: each harness for a minute, the agents list for a minute.
 #[derive(Default, Clone)]
 pub struct Caches {
     harness: Arc<Mutex<HashMap<String, (Instant, Value)>>>,
-    agents: Arc<ModelsLikeCache>,
+    agents: Arc<AgentsCache>,
 }
 
 impl Caches {
