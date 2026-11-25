@@ -1,6 +1,12 @@
 //! A project (the web app's project workspace): Sessions, Files, Search, Git, Run, Shell,
 //! Secrets and Settings tabs. Each tab is its own screen in this folder.
 
+pub mod files;
+pub mod git;
+pub mod search;
+
+use std::sync::{Arc, Mutex};
+
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -17,7 +23,6 @@ pub mod shell;
 pub mod termpane;
 
 use super::tabs::{Tab, Tabs};
-use super::todo::Todo;
 use crate::core::{Action, Ctx, Handled, Screen};
 use crate::ui::Theme;
 
@@ -25,21 +30,61 @@ pub struct ProjectScreen {
     id: String,
     project: Value,
     tabs: Tabs,
+    opener: Opener,
+}
+
+/// A request from one tab (Search, Git) to show a file in the Files tab, at a line.
+#[derive(Clone, Default)]
+pub struct Opener(Arc<Mutex<Option<OpenRequest>>>);
+
+/// A file path and an optional 1-based line.
+pub type OpenRequest = (String, Option<usize>);
+
+impl Opener {
+    pub fn request(&self, path: &str, line: Option<usize>) {
+        *self.0.lock().expect("opener lock") = Some((path.to_string(), line));
+    }
+    pub fn take(&self) -> Option<OpenRequest> {
+        self.0.lock().expect("opener lock").take()
+    }
+    fn pending(&self) -> bool {
+        self.0.lock().expect("opener lock").is_some()
+    }
+}
+
+/// Percent-encode a query value or path segment.
+pub fn enc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 impl ProjectScreen {
     pub fn new(id: &str) -> Self {
+        let opener = Opener::default();
         let tabs = vec![
             Tab::new("sessions", "Sessions", Box::new(sessions::SessionsTab::new(sessions::Scope::Project(id.to_string())))),
-            Tab::new("files", "Files", Box::new(Todo("Files"))),
-            Tab::new("search", "Search", Box::new(Todo("Search"))),
-            Tab::new("git", "Git", Box::new(Todo("Git"))),
+            Tab::new("files", "Files", Box::new(files::FilesTab::new(id, opener.clone()))),
+            Tab::new("search", "Search", Box::new(search::SearchTab::new(id, opener.clone()))),
+            Tab::new("git", "Git", Box::new(git::GitTab::new(id, opener.clone()))),
             Tab::new("run", "Run", Box::new(run::RunTab::new(id))),
             Tab::new("shell", "Shell", Box::new(shell::ShellTab::project(id))),
             Tab::new("secrets", "Secrets", Box::new(secrets::SecretsTab::new(id))),
             Tab::new("settings", "Settings", Box::new(settings::SettingsTab::new(id))),
         ];
-        Self { id: id.to_string(), project: Value::Null, tabs: Tabs::new(tabs) }
+        Self { id: id.to_string(), project: Value::Null, tabs: Tabs::new(tabs), opener }
+    }
+
+    /// A tab asked to open a file: switch to the Files tab (it takes the request on show).
+    fn follow_opener(&mut self, ctx: &mut Ctx) {
+        if self.opener.pending() {
+            self.tabs.select_id("files", ctx);
+        }
     }
 }
 
@@ -80,7 +125,9 @@ impl Screen for ProjectScreen {
     }
 
     fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
-        self.tabs.on_key(k, ctx)
+        let r = self.tabs.on_key(k, ctx);
+        self.follow_opener(ctx);
+        r
     }
 
     fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
@@ -90,6 +137,7 @@ impl Screen for ProjectScreen {
         {
             self.project = v;
         }
+        self.follow_opener(ctx);
     }
 
     fn on_stream(&mut self, key: &str, msg: Value, ctx: &mut Ctx) {
@@ -110,5 +158,6 @@ impl Screen for ProjectScreen {
 
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         self.tabs.on_action(key, ctx);
+        self.follow_opener(ctx);
     }
 }

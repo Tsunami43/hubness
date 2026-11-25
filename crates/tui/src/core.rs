@@ -86,7 +86,9 @@ pub enum Handled {
 pub type ScreenId = u64;
 
 /// One screen of the app.
-pub trait Screen: Send {
+/// Screens live on the app loop's task and never cross threads, so they need not be `Send`
+/// (editor state from edtui holds an `Rc`).
+pub trait Screen {
     fn title(&self) -> String;
     fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx);
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Ctx) -> Handled;

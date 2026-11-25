@@ -5,9 +5,9 @@ pub mod feed;
 pub mod group;
 pub mod home;
 pub mod project;
+pub mod projects;
 pub mod session;
 pub mod tabs;
-pub mod todo;
 
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
@@ -22,6 +22,7 @@ pub fn make(route: &Route) -> Box<dyn Screen> {
         Route::Home => Box::new(home::Home::default()),
         Route::Chat(id) => Box::new(session::SessionView::new(id)),
         Route::ProjectSession { session, .. } | Route::GroupSession { session, .. } => Box::new(session::SessionView::new(session)),
+        Route::Projects => Box::new(projects::Projects::default()),
         Route::Project(id) => Box::new(project::ProjectScreen::new(id)),
         Route::Group(id) => Box::new(group::GroupScreen::new(id)),
         other => Box::new(Placeholder(format!("{other:?}"))),
