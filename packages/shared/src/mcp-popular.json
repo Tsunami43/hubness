@@ -1,0 +1,86 @@
+[
+  {
+    "name": "com.microsoft/playwright-mcp",
+    "title": "Playwright",
+    "description": "Drive a real browser: open pages, click, type, read the page and take screenshots.",
+    "repository": { "url": "https://github.com/microsoft/playwright-mcp" },
+    "packages": [{ "registryType": "npm", "identifier": "@playwright/mcp@latest", "transport": { "type": "stdio" } }]
+  },
+  {
+    "name": "io.github.github/github-mcp-server",
+    "title": "GitHub",
+    "description": "Repositories, issues, pull requests and code search on GitHub. Needs a personal access token.",
+    "repository": { "url": "https://github.com/github/github-mcp-server" },
+    "remotes": [
+      {
+        "type": "streamable-http",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "headers": [{ "name": "Authorization", "description": "Bearer and a GitHub personal access token", "isRequired": true, "isSecret": true, "value": "Bearer {token}" }]
+      }
+    ],
+    "packages": [
+      {
+        "registryType": "oci",
+        "identifier": "ghcr.io/github/github-mcp-server",
+        "transport": { "type": "stdio" },
+        "environmentVariables": [{ "name": "GITHUB_PERSONAL_ACCESS_TOKEN", "description": "A GitHub personal access token", "isRequired": true, "isSecret": true }]
+      }
+    ]
+  },
+  {
+    "name": "io.github.upstash/context7",
+    "title": "Context7",
+    "description": "Up-to-date documentation and code examples for libraries, fetched on demand.",
+    "repository": { "url": "https://github.com/upstash/context7" },
+    "packages": [
+      {
+        "registryType": "npm",
+        "identifier": "@upstash/context7-mcp",
+        "transport": { "type": "stdio" },
+        "environmentVariables": [{ "name": "CONTEXT7_API_KEY", "description": "API key (optional, raises the rate limits)", "isSecret": true }]
+      }
+    ],
+    "remotes": [
+      {
+        "type": "streamable-http",
+        "url": "https://mcp.context7.com/mcp",
+        "headers": [{ "name": "CONTEXT7_API_KEY", "description": "API key (optional)", "isSecret": true }]
+      }
+    ]
+  },
+  {
+    "name": "io.github.modelcontextprotocol/server-filesystem",
+    "title": "Filesystem",
+    "description": "Read, write and search files inside the folders you allow.",
+    "repository": { "url": "https://github.com/modelcontextprotocol/servers" },
+    "packages": [
+      {
+        "registryType": "npm",
+        "identifier": "@modelcontextprotocol/server-filesystem",
+        "transport": { "type": "stdio" },
+        "packageArguments": [{ "type": "positional", "isRequired": true, "valueHint": "/path/to/allowed/folder" }]
+      }
+    ]
+  },
+  {
+    "name": "io.github.modelcontextprotocol/server-fetch",
+    "title": "Fetch",
+    "description": "Fetch web pages and turn them into markdown for the agent.",
+    "repository": { "url": "https://github.com/modelcontextprotocol/servers" },
+    "packages": [{ "registryType": "pypi", "identifier": "mcp-server-fetch", "transport": { "type": "stdio" } }]
+  },
+  {
+    "name": "io.github.modelcontextprotocol/server-sequential-thinking",
+    "title": "Sequential thinking",
+    "description": "A scratchpad for step-by-step reasoning on hard problems.",
+    "repository": { "url": "https://github.com/modelcontextprotocol/servers" },
+    "packages": [{ "registryType": "npm", "identifier": "@modelcontextprotocol/server-sequential-thinking", "transport": { "type": "stdio" } }]
+  },
+  {
+    "name": "io.github.modelcontextprotocol/server-memory",
+    "title": "Memory",
+    "description": "A persistent knowledge graph the agent can store facts in and recall later.",
+    "repository": { "url": "https://github.com/modelcontextprotocol/servers" },
+    "packages": [{ "registryType": "npm", "identifier": "@modelcontextprotocol/server-memory", "transport": { "type": "stdio" } }]
+  }
+]

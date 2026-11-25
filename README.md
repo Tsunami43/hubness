@@ -22,9 +22,10 @@ own machine or server and work with them from one browser UI — on a desktop or
 - **Sandboxing** — run agents and commands in a bubblewrap sandbox that hides other
   projects, hub data and credentials.
 - **Secrets** — encrypted per-project environment variables.
-- **Harness** — install, update, sign in and configure the agent CLIs from the UI; connect MCP
-  servers to the agents (written to their own config files) and see their skills, rules,
-  subagents and commands.
+- **Harness** — install, update, sign in and configure the agent CLIs from the UI. Extensions
+  pages show every agent at once: MCP servers (with a catalog from the official MCP Registry,
+  written to the agents' own config files), skills (copy between agents, write, import from
+  git), rules files, subagents, commands and plugins.
 - **System** — Docker containers, systemd units, packages and disks of the host, with an
   "ask about this" button that starts a chat with the relevant logs attached.
 - English and Russian UI, light and dark themes, keyboard-driven navigation.
@@ -150,6 +151,7 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `HUBNESS_HOME` | `~/hub` | Hub working folder: `inbox`, `projects`, `home` |
 | `HUBNESS_SECRET_KEY` | generated | Key for project secrets (comma-separated for rotation) |
 | `HUBNESS_PREVIEW_PORTS` | `8790-8809` | Port range for the preview proxy |
+| `HUBNESS_MCP_REGISTRY` | `https://registry.modelcontextprotocol.io` | MCP Registry searched by Harness → MCP servers → Catalog |
 | `HUBNESS_CLAUDE_BIN`, `HUBNESS_OPENCODE_BIN`, `HUBNESS_GROK_BIN` | binary name | Agent CLI paths |
 | `HUBNESS_CODEX_ACP` | pinned `npx` command | Codex ACP adapter command |
 

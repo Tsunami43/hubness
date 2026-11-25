@@ -90,7 +90,7 @@ v4).
 | Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |
 | Harness | `/agents`, `/agents/:kind/models`, `/harness`, `/harness/agents`, `/harness/:kind` (versions, latest checks, auth, limits, models), default model, provider account ops | done |
 | Harness | `POST /harness/:kind/actions/:action` (only actions from the harness's own list, as terminal jobs) | done |
-| Harness | `/harness/mcp` (MCP servers × agents from the agents' own configs: add, connect, disconnect, delete; TOML edited with `toml_edit`), `/harness/:kind/extensions`, `/harness/:kind/rules` (`extensions.rs`) | done |
+| Harness | `/harness/mcp` (MCP servers × agents from the agents' own configs: add, connect, disconnect, delete; TOML edited with `toml_edit`), `/harness/mcp/catalog` (the MCP Registry, proxied and normalized, `catalog.rs`), `/harness/skills…` (skills × agents: view, copy, create, import from git, remove into the hub trash, `skills.rs`), `/harness/extensions`, `/harness/:kind/extensions`, `/harness/:kind/rules`, `/harness/:kind/file` (`extensions/`) | done |
 | System | `/system/*`: platform, overview (CPU, memory, disks, GPUs, sensors), Docker containers/networks/volumes (logs, actions, safe removal), systemd units (launchd on macOS), package managers and pacman package info; `POST /ask` | done |
 
 Session events are passed through as JSON (`HubEvent` is

@@ -1,8 +1,9 @@
 //! Harness → MCP (the web app's MCP page): MCP servers × agents, read from each agent's own
 //! config file. Enter toggles the agent column under the cursor (connect copies the server's
 //! definition from another agent, disconnect removes it from that agent's user config), `a`
-//! adds a server through prompts, `x` removes it from every agent. Project servers and the
-//! hub's built-in server are read-only.
+//! adds a server through prompts, `c` installs one from the catalog (the MCP Registry, or a
+//! built-in list of popular servers for an empty search), `x` removes it from every agent.
+//! Project servers and the hub's built-in server are read-only.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use hubness_client::Method;
@@ -14,8 +15,9 @@ use ratatui::widgets::{List, ListItem, Paragraph, Wrap};
 use serde_json::{Map, Value, json};
 
 use super::harness_ext::tilde;
-use super::kit::{Nav, click_items, click_select, clicked_row, s};
+use super::kit::{MultiPick, Nav, click_items, click_select, clicked_row, s};
 use super::session::enc;
+use crate::core::Modal;
 use crate::core::{Action, Ctx, Handled, Hit, Screen};
 use crate::ui::theme::icon;
 use crate::ui::{Theme, block};
@@ -31,6 +33,22 @@ struct Draft {
     url: String,
 }
 
+/// A catalog entry being installed: the chosen option and the values asked so far.
+#[derive(Default, Clone)]
+struct Install {
+    name: String,
+    option: Value,
+    args: Vec<String>,
+    url: String,
+    /// The variables (env for a local command, headers for a remote) and the next one to ask.
+    vars: Vec<Value>,
+    next: usize,
+    values: Map<String, Value>,
+}
+
+/// What the tab is, in plain words (the line under the tab bar).
+pub const MCP_HELP: &str = "Tools and data sources the agent calls itself (browser, GitHub, docs…). Written into each agent's own config, so it works outside the hub too; applies to new sessions. Secret values stay in the agent config and are never shown.";
+
 #[derive(Default)]
 pub struct McpTab {
     data: Value,
@@ -41,6 +59,12 @@ pub struct McpTab {
     /// A project whose own config is shown too: (id, name).
     project: Option<(String, String)>,
     draft: Draft,
+    /// The catalog: the last search, its entries and the next page.
+    query: String,
+    catalog: Vec<Value>,
+    cursor: Option<String>,
+    install: Install,
+    pick_agents: MultiPick,
 }
 
 const NAME_W: usize = 26;
@@ -125,6 +149,147 @@ impl McpTab {
         ctx.send("changed", Method::POST, format!("/harness/mcp{}", self.query()), body);
     }
 
+    // ---------- the catalog ----------
+
+    fn search(&mut self, cursor: Option<&str>, ctx: &mut Ctx) {
+        let mut path = format!("/harness/mcp/catalog?q={}", enc(&self.query));
+        if let Some(c) = cursor {
+            path.push_str(&format!("&cursor={}", enc(c)));
+        }
+        ctx.info(if self.query.is_empty() {
+            "loading popular servers…".to_string()
+        } else {
+            format!("searching the MCP Registry for “{}”…", self.query)
+        });
+        ctx.get(if cursor.is_some() { "catalog-more" } else { "catalog" }, path);
+    }
+
+    fn pick_entry(&self, ctx: &mut Ctx) {
+        let mut items: Vec<(String, String)> = self
+            .catalog
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let n = e["options"].as_array().map(Vec::len).unwrap_or(0);
+                let how = if n == 0 { "  (no install option)" } else { "" };
+                let desc: String = s(&e["description"], "").chars().take(70).collect();
+                (i.to_string(), format!("{} — {desc}{how}", s(&e["title"], "")))
+            })
+            .collect();
+        if self.cursor.is_some() {
+            items.push(("more".into(), "More results…".into()));
+        }
+        let title = if self.query.is_empty() {
+            "Popular MCP servers (c again to search the registry)".to_string()
+        } else {
+            format!("MCP Registry: {}", self.query)
+        };
+        ctx.pick("cat-entry", title, items);
+    }
+
+    fn option_label(o: &Value) -> String {
+        match s(&o["kind"], "") {
+            "remote" => format!("remote {} · {}", s(&o["transport"], "").to_uppercase(), s(&o["url"], "")),
+            kind => {
+                let mut parts = vec![s(&o["command"], "").to_string()];
+                parts.extend(o["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(String::from)));
+                format!("{kind} · {}", parts.join(" "))
+            }
+        }
+    }
+
+    fn choose_option(&mut self, entry: &Value, option: Value, ctx: &mut Ctx) {
+        let remote = option["transport"] != "stdio";
+        self.install = Install {
+            args: option["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(String::from)).collect(),
+            url: s(&option["url"], "").to_string(),
+            vars: option[if remote { "headers" } else { "env" }].as_array().cloned().unwrap_or_default(),
+            option,
+            ..Default::default()
+        };
+        ctx.prompt("cat-name", "MCP server name (letters, digits, - and _)", s(&entry["suggestedName"], ""));
+    }
+
+    /// The next question of the install: placeholders in the command or URL, then each variable,
+    /// then the agents.
+    fn ask_next(&mut self, ctx: &mut Ctx) {
+        let placeholder = |t: &str| t.contains('<') || t.contains('{');
+        if self.install.next == 0 {
+            self.install.next = 1;
+            let inst = &self.install;
+            if inst.option["transport"] == "stdio" && inst.args.iter().any(|a| placeholder(a)) {
+                let cmd = s(&inst.option["command"], "");
+                return ctx.prompt(
+                    "cat-args",
+                    format!("Arguments for {cmd}: replace the <…> parts (split on spaces)"),
+                    inst.args.join(" "),
+                );
+            }
+            if inst.option["transport"] != "stdio" && placeholder(&inst.url) {
+                return ctx.prompt("cat-url", "URL: replace the {…} parts", inst.url.clone());
+            }
+        }
+        let i = self.install.next - 1;
+        if let Some(v) = self.install.vars.get(i) {
+            let what = if self.install.option["transport"] == "stdio" { "env" } else { "header" };
+            let mut notes = vec![];
+            if v["required"] == true {
+                notes.push("required");
+            }
+            if v["secret"] == true {
+                notes.push("secret");
+            }
+            if v["required"] != true {
+                notes.push("optional");
+            }
+            let desc = s(&v["description"], "");
+            let title = format!(
+                "{what} {} ({}){}",
+                s(&v["name"], ""),
+                notes.join(", "),
+                if desc.is_empty() { String::new() } else { format!(": {desc}") }
+            );
+            let value = s(&v["value"], "").to_string();
+            return ctx.modal(Modal::Input { title, value, key: "cat-var".into(), secret: v["secret"] == true, multiline: false });
+        }
+        let transport = s(&self.install.option["transport"], "stdio").to_string();
+        let mut chosen = vec![];
+        let items: Vec<(String, String)> = self
+            .agents()
+            .iter()
+            .map(|a| {
+                let (kind, label) = (s(&a["kind"], ""), s(&a["label"], ""));
+                let fits = a["transports"].as_array().is_some_and(|t| t.iter().any(|x| x == transport.as_str()));
+                if a["supported"] != true || !a["error"].is_null() {
+                    (format!("!{kind}"), format!("{label} — {}", s(&a["error"], "not supported")))
+                } else if !fits {
+                    (format!("!{kind}"), format!("{label} — no {} MCP servers", transport.to_uppercase()))
+                } else {
+                    chosen.push(kind.to_string());
+                    (kind.to_string(), label.to_string())
+                }
+            })
+            .collect();
+        self.pick_agents = MultiPick::new("cat-agents", format!("Install {} for", self.install.name), items, chosen);
+        self.pick_agents.open(ctx, 0);
+    }
+
+    fn install_submit(&mut self, ctx: &mut Ctx) {
+        let inst = std::mem::take(&mut self.install);
+        let kinds = self.pick_agents.chosen.clone();
+        if kinds.is_empty() {
+            return ctx.error("pick at least one agent");
+        }
+        let o = &inst.option;
+        let body = if o["transport"] == "stdio" {
+            json!({ "name": inst.name, "transport": "stdio", "command": o["command"], "args": inst.args, "env": inst.values, "agents": kinds })
+        } else {
+            json!({ "name": inst.name, "transport": o["transport"], "url": inst.url, "headers": inst.values, "agents": kinds })
+        };
+        ctx.info(format!("installing {}…", inst.name));
+        ctx.send("changed", Method::POST, format!("/harness/mcp{}", self.query()), body);
+    }
+
     /// `KEY=value` / `Name: value` pairs separated by `;`.
     fn pairs(text: &str, sep: char) -> Result<Map<String, Value>, String> {
         let mut out = Map::new();
@@ -197,13 +362,18 @@ impl Screen for McpTab {
         "MCP".into()
     }
 
+    fn help(&self) -> Option<String> {
+        Some("tools the agent calls itself; new sessions pick them up".into())
+    }
+
     fn on_show(&mut self, ctx: &mut Ctx) {
         self.load(ctx);
     }
 
     fn actions(&self) -> Vec<Action> {
         let mut a = vec![
-            Action::new("a", "Add an MCP server"),
+            Action::new("c", "Catalog: find and install a server"),
+            Action::new("a", "Add an MCP server by hand"),
             Action::new("r", "Reload"),
             Action::new("P", "Show a project's servers too"),
             Action::new("[", "Previous agent column"),
@@ -221,6 +391,7 @@ impl Screen for McpTab {
                 self.draft = Draft::default();
                 ctx.prompt("add-name", "MCP server name (letters, digits, - and _)", "");
             }
+            "c" => ctx.prompt("cat-query", "Search the MCP Registry (empty: popular servers)", self.query.clone()),
             "r" => self.load(ctx),
             "x" => {
                 if let Some(srv) = self.selected().filter(|s| s["builtIn"] != true) {
@@ -310,6 +481,97 @@ impl Screen for McpTab {
                     ctx.send("changed", Method::DELETE, format!("/harness/mcp/{}{}", enc(name), self.query()), Value::Null);
                 }
             }
+            "cat-query" => {
+                let Ok(Value::String(q)) = result else { return };
+                self.query = q.trim().to_string();
+                self.search(None, ctx);
+            }
+            "catalog" | "catalog-more" => {
+                let Some(v) = ctx.ok(result) else { return };
+                let entries = v["entries"].as_array().cloned().unwrap_or_default();
+                if key == "catalog" {
+                    self.catalog = entries;
+                } else {
+                    self.catalog.extend(entries);
+                }
+                self.cursor = v["nextCursor"].as_str().map(String::from);
+                if self.catalog.is_empty() {
+                    return ctx.info(format!("nothing found for “{}”", self.query));
+                }
+                ctx.info(format!("{} servers", self.catalog.len()));
+                self.pick_entry(ctx);
+            }
+            "cat-entry" => {
+                let Ok(Value::String(id)) = result else { return };
+                if id == "more" {
+                    let c = self.cursor.clone();
+                    return self.search(c.as_deref(), ctx);
+                }
+                let Some(entry) = id.parse::<usize>().ok().and_then(|i| self.catalog.get(i).cloned()) else { return };
+                let options = entry["options"].as_array().cloned().unwrap_or_default();
+                match options.len() {
+                    0 => ctx.error(format!(
+                        "{} has no install option the hub knows — see {}",
+                        s(&entry["title"], ""),
+                        s(&entry["repository"], s(&entry["website"], "its page"))
+                    )),
+                    1 => self.choose_option(&entry, options[0].clone(), ctx),
+                    _ => {
+                        let items = options.iter().enumerate().map(|(i, o)| (format!("{id}:{i}"), Self::option_label(o))).collect();
+                        ctx.pick("cat-option", format!("{}: how to run it", s(&entry["title"], "")), items);
+                    }
+                }
+            }
+            "cat-option" => {
+                let Ok(Value::String(id)) = result else { return };
+                let Some((e, o)) = id.split_once(':').and_then(|(e, o)| Some((e.parse::<usize>().ok()?, o.parse::<usize>().ok()?))) else {
+                    return;
+                };
+                let Some(entry) = self.catalog.get(e).cloned() else { return };
+                if let Some(option) = entry["options"].get(o).cloned() {
+                    self.choose_option(&entry, option, ctx);
+                }
+            }
+            "cat-name" => {
+                let Ok(Value::String(name)) = result else { return };
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return;
+                }
+                self.install.name = name;
+                self.install.next = 0;
+                self.ask_next(ctx);
+            }
+            "cat-args" => {
+                let Ok(Value::String(text)) = result else { return };
+                self.install.args = text.split_whitespace().map(String::from).collect();
+                self.ask_next(ctx);
+            }
+            "cat-url" => {
+                let Ok(Value::String(url)) = result else { return };
+                self.install.url = url.trim().to_string();
+                self.ask_next(ctx);
+            }
+            "cat-var" => {
+                let Ok(Value::String(value)) = result else { return };
+                let i = self.install.next.saturating_sub(1);
+                let Some(v) = self.install.vars.get(i).cloned() else { return };
+                let value = value.trim().to_string();
+                if value.is_empty() && v["required"] == true {
+                    ctx.error(format!("{} is required", s(&v["name"], "")));
+                } else {
+                    if !value.is_empty() {
+                        self.install.values.insert(s(&v["name"], "").to_string(), json!(value));
+                    }
+                    self.install.next += 1;
+                }
+                self.ask_next(ctx);
+            }
+            "cat-agents" => {
+                if self.pick_agents.answer(&result, ctx) == Some(true) {
+                    self.install_submit(ctx);
+                }
+            }
             "add-name" => {
                 let Ok(Value::String(name)) = result else { return };
                 let name = name.trim().to_string();
@@ -377,15 +639,9 @@ impl Screen for McpTab {
         let servers = self.servers();
         let agents = self.agents();
         let [hint, head, body, detail] =
-            Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(4), Constraint::Length(10)]).areas(area);
+            Layout::vertical([Constraint::Length(2), Constraint::Length(1), Constraint::Min(4), Constraint::Length(10)]).areas(area);
         let project = self.project.as_ref().map(|(_, n)| format!("   project: {n}")).unwrap_or_default();
-        f.render_widget(
-            Paragraph::new(Line::styled(
-                format!(" Written to each agent's own config — the agent sees them outside the hub too.{project}"),
-                t.muted_style(),
-            )),
-            hint,
-        );
+        f.render_widget(Paragraph::new(Line::styled(format!(" {MCP_HELP}{project}"), t.muted_style())).wrap(Wrap { trim: false }), hint);
         if self.data.is_null() {
             let msg = self.error.clone().unwrap_or_else(|| "Loading…".into());
             f.render_widget(Paragraph::new(msg).wrap(Wrap { trim: false }).block(block("MCP servers", true)), body);
@@ -434,7 +690,7 @@ impl Screen for McpTab {
                 ListItem::new(Line::from(spans))
             })
             .collect();
-        let title = "MCP servers — Enter toggle · [ ] column · a add · x remove · P project";
+        let title = "MCP servers — Enter toggle · [ ] column · c catalog · a add · x remove · P project";
         let b = block(title, true);
         let inner = b.inner(body);
         f.render_stateful_widget(List::new(items).block(b).highlight_style(Style::default().bg(t.selection)), body, &mut self.nav.state);

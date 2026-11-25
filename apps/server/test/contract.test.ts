@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 /**
  * HTTP contract tests: black-box checks of the API that every server implementation must
@@ -114,6 +116,28 @@ process.env.XDG_CONFIG_HOME = join(tmp, 'xdg');
 process.env.CODEX_HOME = join(tmp, 'codex-home');
 delete process.env.CLAUDE_CONFIG_DIR;
 delete process.env.GROK_HOME;
+
+// the MCP Registry: a local server with a fixture (the tests never reach the network)
+const registryHits: URL[] = [];
+const registryServer = createServer((req, res) => {
+  const url = new URL(req.url ?? '/', 'http://x');
+  registryHits.push(url);
+  const q = url.searchParams.get('search');
+  if (q === 'offline') return req.socket.destroy();
+  if (url.pathname !== '/v0/servers' || q === 'fail') {
+    res.writeHead(500).end('{}');
+    return;
+  }
+  res.writeHead(200, { 'content-type': 'application/json' }).end(readFileSync(join(import.meta.dirname, 'fixtures', 'mcp-registry.json')));
+});
+await new Promise<void>((ok) => registryServer.listen(0, '127.0.0.1', ok));
+process.env.HUBNESS_MCP_REGISTRY = `http://127.0.0.1:${(registryServer.address() as AddressInfo).port}/`;
+// skills import: file:// repositories are allowed only with this flag (https otherwise)
+process.env.HUBNESS_ALLOW_FILE_GIT = '1';
+after(() => {
+  registryServer.closeAllConnections();
+  registryServer.close();
+});
 
 const { call, raw } = await makeClient();
 
@@ -1528,6 +1552,300 @@ test('harness extensions: skills, rules, subagents, commands, plugins; rules rea
   const codexRules = join(cx, 'AGENTS.md');
   assert.equal((await call('PUT', `/harness/codex/rules?path=${encodeURIComponent(codexRules)}`, { content: '# Codex\n' })).status, 200);
   assert.equal(readFileSync(codexRules, 'utf8'), '# Codex\n');
+
+  // ---- skill / subagent / command files: read-only, only listed markdown files ----
+  const file = (kind: string, p: string) => `/harness/${kind}/file?path=${encodeURIComponent(p)}`;
+  assert.deepEqual((await call('GET', file('claude-code', join(cl, 'agents', 'reviewer.md')))).json, {
+    path: join(cl, 'agents', 'reviewer.md'),
+    exists: true,
+    content: "---\nname: code-reviewer\ndescription: 'Reviews diffs: it''s strict'\nmodel: sonnet\n---\nYou review.\n",
+  });
+  assert.equal((await call('GET', file('claude-code', join(cl, 'commands', 'deploy.md')))).json.content, '---\ndescription: "Deploy it"\n---\nRun the deploy.\n');
+  assert.equal((await call('GET', file('claude-code', join(cl, 'skills', 'pdf', 'SKILL.md')))).status, 200);
+  assert.equal((await call('GET', file('opencode', join(ocDir, 'opencode.json')))).status, 403, 'an agent defined in a JSON config is not served');
+  assert.equal((await call('GET', file('claude-code', join(cl, 'CLAUDE.md')))).status, 403);
+  assert.equal((await call('GET', file('claude-code', '/etc/passwd'))).status, 403);
+  assert.equal((await call('GET', file('codex', join(cl, 'agents', 'reviewer.md')))).status, 403, 'another agent\'s file');
+  assert.equal((await call('GET', '/harness/claude-code/file')).status, 400);
+
+  // ---- every agent at once ----
+  const all = await call('GET', `/harness/extensions?project=${proj.id}`);
+  assert.equal(all.status, 200);
+  assert.deepEqual(all.json.agents.map((a: any) => a.kind), ['opencode', 'claude-code', 'grok', 'codex']);
+  assert.deepEqual(all.json.agents[1], (await call('GET', `/harness/claude-code/extensions?project=${proj.id}`)).json);
+  assert.equal((await call('GET', '/harness/extensions?project=missing')).status, 404);
+});
+
+test('harness MCP catalog: popular list, registry search through the hub, errors', async () => {
+  const popular = await call('GET', '/harness/mcp/catalog');
+  assert.equal(popular.status, 200);
+  assert.equal(popular.json.source, 'popular');
+  assert.equal(popular.json.nextCursor, null);
+  assert.deepEqual(
+    popular.json.entries.map((e: any) => e.suggestedName),
+    ['playwright', 'github', 'context7', 'filesystem', 'fetch', 'sequential-thinking', 'memory'],
+  );
+  assert.deepEqual(popular.json.entries[0].options, [{ kind: 'npm', transport: 'stdio', command: 'npx', args: ['-y', '@playwright/mcp@latest'], url: null, env: [], headers: [] }]);
+  const github = popular.json.entries[1];
+  assert.deepEqual(github.options.map((o: any) => [o.kind, o.command, o.args, o.url]), [
+    ['docker', 'docker', ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server'], null],
+    ['remote', null, [], 'https://api.githubcopilot.com/mcp/'],
+  ]);
+  assert.deepEqual(github.options[1].headers, [{ name: 'Authorization', description: 'Bearer and a GitHub personal access token', required: true, secret: true, value: 'Bearer {token}' }]);
+  assert.equal(registryHits.length, 0, 'the popular list is built in');
+
+  const found = await call('GET', '/harness/mcp/catalog?q=browser');
+  assert.equal(found.status, 200);
+  const hit = registryHits.at(-1)!;
+  assert.equal(hit.pathname, '/v0/servers');
+  assert.deepEqual(Object.fromEntries(hit.searchParams), { limit: '30', version: 'latest', search: 'browser' });
+  assert.deepEqual(found.json, {
+    source: 'registry',
+    nextCursor: 'io.example/nothing:1.0.0',
+    entries: [
+      {
+        id: 'io.example/browser-mcp',
+        title: 'Browser',
+        description: 'Drive a browser.',
+        version: '1.2.0',
+        repository: 'https://example.com/browser',
+        website: 'https://browser.example',
+        suggestedName: 'browser',
+        options: [
+          {
+            kind: 'npm',
+            transport: 'stdio',
+            command: 'npx',
+            args: ['-y', '@example/browser@1.2.0', '--root', '<dir>', '--headless', '--port', '9000', 'serve'],
+            url: null,
+            env: [
+              { name: 'BROWSER_TOKEN', description: 'Token', required: true, secret: true, value: null },
+              { name: 'BROWSER_MODE', description: '', required: false, secret: false, value: 'fast' },
+            ],
+            headers: [],
+          },
+          {
+            kind: 'remote',
+            transport: 'http',
+            command: null,
+            args: [],
+            url: 'https://browser.example/mcp',
+            env: [],
+            headers: [{ name: 'Authorization', description: 'Bearer token', required: true, secret: true, value: 'Bearer {token}' }],
+          },
+          { kind: 'remote', transport: 'sse', command: null, args: [], url: 'https://browser.example/sse', env: [], headers: [] },
+        ],
+      },
+      {
+        id: 'io.example/mcp-server-py',
+        title: 'mcp-server-py',
+        description: 'A Python one.',
+        version: '0.3.0',
+        repository: null,
+        website: null,
+        suggestedName: 'py',
+        options: [
+          { kind: 'pypi', transport: 'stdio', command: 'uvx', args: ['py-mcp@0.3.0', '<path>'], url: null, env: [], headers: [] },
+          {
+            kind: 'docker',
+            transport: 'stdio',
+            command: 'docker',
+            args: ['run', '-i', '--rm', '-e', 'API_KEY', 'ghcr.io/example/py-mcp:0.3.0'],
+            url: null,
+            env: [{ name: 'API_KEY', description: '', required: false, secret: true, value: null }],
+            headers: [],
+          },
+          { kind: 'docker', transport: 'stdio', command: 'podman', args: ['run', '-i', 'ghcr.io/example/py-mcp:edge'], url: null, env: [], headers: [] },
+        ],
+      },
+      { id: 'io.example/nothing', title: 'nothing', description: '', version: null, repository: null, website: null, suggestedName: 'nothing', options: [] },
+    ],
+  });
+  const hits = registryHits.length;
+  assert.deepEqual((await call('GET', '/harness/mcp/catalog?q=browser')).json, found.json);
+  assert.equal(registryHits.length, hits, 'a repeated search comes from the cache');
+  assert.equal((await call('GET', '/harness/mcp/catalog?q=browser&cursor=io.example%2Fnothing%3A1.0.0')).status, 200);
+  assert.deepEqual(Object.fromEntries(registryHits.at(-1)!.searchParams), { limit: '30', version: 'latest', search: 'browser', cursor: 'io.example/nothing:1.0.0' });
+
+  const failed = await call('GET', '/harness/mcp/catalog?q=fail');
+  assert.equal(failed.status, 502);
+  assert.match(failed.json.error, /MCP Registry/);
+  const offline = await call('GET', '/harness/mcp/catalog?q=offline');
+  assert.equal(offline.status, 502);
+  assert.match(offline.json.error, /unreachable/);
+  assert.equal((await call('GET', `/harness/mcp/catalog?q=${'x'.repeat(201)}`)).status, 400);
+});
+
+test('harness skills: matrix, view, copy, trash, create, import from git', async () => {
+  const { lstatSync, readdirSync, symlinkSync } = await import('node:fs');
+  const H = agentHome;
+  const dirs = {
+    'claude-code': join(H, '.claude', 'skills'),
+    codex: join(tmp, 'codex-home', 'skills'),
+    opencode: join(tmp, 'xdg', 'opencode', 'skills'),
+    grok: join(H, '.grok', 'skills'),
+  };
+  const trash = join(tmp, 'data', 'trash', 'skills');
+  const trashed = () => (existsSync(trash) ? readdirSync(trash) : []);
+  const pdfMd = readFileSync(join(dirs['claude-code'], 'pdf', 'SKILL.md'), 'utf8');
+  put(join(dirs['claude-code'], 'pdf', 'scripts', 'fill.py'), 'print(1)\n');
+  // a symlink inside the folder is copied as a file, one pointing outside is left out
+  put(join(tmp, 'outside-secret.txt'), 'secret');
+  symlinkSync(join(dirs['claude-code'], 'pdf', 'scripts', 'fill.py'), join(dirs['claude-code'], 'pdf', 'alias.py'));
+  symlinkSync(join(tmp, 'outside-secret.txt'), join(dirs['claude-code'], 'pdf', 'leak.txt'));
+
+  const m = await call('GET', '/harness/skills');
+  assert.equal(m.status, 200);
+  assert.deepEqual(m.json.agents, [
+    { kind: 'opencode', label: 'Opencode', supported: true, dir: dirs.opencode },
+    { kind: 'claude-code', label: 'Claude Code', supported: true, dir: dirs['claude-code'] },
+    { kind: 'grok', label: 'Grok CLI', supported: true, dir: dirs.grok },
+    { kind: 'codex', label: 'Codex', supported: true, dir: dirs.codex },
+  ]);
+  const row = (r: any, name: string) => r.skills.find((s: any) => s.name === name);
+  assert.deepEqual(row(m.json, 'pdf'), {
+    name: 'pdf',
+    description: 'Read PDFs. Use it for forms.',
+    agents: { opencode: null, 'claude-code': 'user', grok: null, codex: null },
+    entries: [{ agent: 'claude-code', scope: 'user', path: join(dirs['claude-code'], 'pdf') }],
+  });
+  assert.deepEqual(row(m.json, 'demo-skill').agents, { opencode: null, 'claude-code': 'plugin', grok: null, codex: null });
+  assert.deepEqual(row(m.json, 'g1').agents, { opencode: null, 'claude-code': null, grok: 'user', codex: null });
+  assert.ok(!row(m.json, 'notaskill'), 'a folder without SKILL.md is not a skill');
+  assert.ok(!row(m.json, 'proj-skill'), 'project skills only with ?project=');
+  const proj = (await call('GET', '/projects')).json.find((p: any) => p.name === 'ext-project');
+  const withProject = (await call('GET', `/harness/skills?project=${proj.id}`)).json;
+  assert.deepEqual(row(withProject, 'proj-skill').agents['claude-code'], 'project');
+  assert.deepEqual(withProject.skills.map((s: any) => s.name), [...withProject.skills.map((s: any) => s.name)].sort());
+
+  // ---- view ----
+  const view = await call('GET', '/harness/skills/pdf');
+  assert.equal(view.status, 200);
+  assert.deepEqual(view.json, {
+    name: 'pdf',
+    agent: 'claude-code',
+    scope: 'user',
+    path: join(dirs['claude-code'], 'pdf'),
+    content: pdfMd,
+    files: [
+      { path: 'SKILL.md', size: Buffer.byteLength(pdfMd) },
+      { path: 'alias.py', size: 9 },
+      { path: 'scripts/fill.py', size: 9 },
+    ],
+  });
+  assert.equal((await call('GET', '/harness/skills/pdf?agent=codex')).status, 404);
+  assert.equal((await call('GET', '/harness/skills/nope')).status, 404);
+  assert.equal((await call('GET', '/harness/skills/bad.name')).status, 400);
+  assert.equal((await call('GET', '/harness/skills/demo-skill')).json.scope, 'plugin');
+
+  // ---- copy to another agent ----
+  const copied = await call('PUT', '/harness/skills/pdf/agents/codex');
+  assert.equal(copied.status, 200);
+  assert.equal(row(copied.json, 'pdf').agents.codex, 'user');
+  assert.equal(readFileSync(join(dirs.codex, 'pdf', 'SKILL.md'), 'utf8'), pdfMd);
+  assert.equal(readFileSync(join(dirs.codex, 'pdf', 'scripts', 'fill.py'), 'utf8'), 'print(1)\n');
+  assert.ok(lstatSync(join(dirs.codex, 'pdf', 'alias.py')).isFile(), 'an inner symlink becomes a file');
+  assert.ok(!existsSync(join(dirs.codex, 'pdf', 'leak.txt')), 'a symlink out of the folder is not followed');
+  assert.equal((await call('PUT', '/harness/skills/pdf/agents/codex')).status, 200, 'already there: nothing to do');
+  assert.equal((await call('PUT', '/harness/skills/demo-skill/agents/grok')).status, 200, 'a plugin skill can be copied to a user folder');
+  assert.equal(row((await call('GET', '/harness/skills')).json, 'demo-skill').agents.grok, 'user');
+  assert.equal((await call('PUT', '/harness/skills/nope/agents/codex')).status, 404);
+  assert.equal((await call('PUT', '/harness/skills/pdf/agents/nope')).status, 404);
+  assert.equal((await call('PUT', '/harness/skills/..%2F..%2Fetc/agents/codex')).status, 400);
+  mkdirSync(join(dirs.opencode, 'pdf'), { recursive: true });
+  assert.equal((await call('PUT', '/harness/skills/pdf/agents/opencode')).status, 409, 'a folder that is not a skill is never overwritten');
+
+  // ---- remove: into the hub trash ----
+  const off = await call('DELETE', '/harness/skills/pdf/agents/codex');
+  assert.equal(off.status, 200);
+  assert.equal(row(off.json, 'pdf').agents.codex, null);
+  assert.ok(!existsSync(join(dirs.codex, 'pdf')));
+  const inTrash = trashed().find((n) => n.endsWith('-codex-pdf'))!;
+  assert.match(inTrash, /^\d+-codex-pdf$/);
+  assert.equal(readFileSync(join(trash, inTrash, 'SKILL.md'), 'utf8'), pdfMd);
+  assert.equal((await call('DELETE', '/harness/skills/pdf/agents/codex')).status, 404);
+  assert.equal((await call('DELETE', '/harness/skills/demo-skill/agents/claude-code')).status, 409, 'plugin skills are read-only');
+  assert.equal((await call('DELETE', `/harness/skills/proj-skill/agents/claude-code?project=${proj.id}`)).status, 409, 'project skills are read-only');
+
+  // ---- create ----
+  const body = { name: 'notes', description: 'Use when: taking "notes"', body: '# Notes\nWrite them down.', agents: ['claude-code', 'grok'] };
+  const made = await call('POST', '/harness/skills', body);
+  assert.equal(made.status, 200);
+  assert.deepEqual(row(made.json, 'notes').agents, { opencode: null, 'claude-code': 'user', grok: 'user', codex: null });
+  const notesMd = '---\nname: notes\ndescription: "Use when: taking \\"notes\\""\n---\n\n# Notes\nWrite them down.\n';
+  assert.equal(readFileSync(join(dirs.grok, 'notes', 'SKILL.md'), 'utf8'), notesMd);
+  assert.equal(row(made.json, 'notes').description, 'Use when: taking "notes"');
+  assert.equal((await call('POST', '/harness/skills', body)).status, 200, 'the same skill again: nothing changes');
+  const changed = { ...body, body: 'Other text', agents: ['grok', 'codex'] };
+  assert.equal((await call('POST', '/harness/skills', changed)).status, 409);
+  assert.ok(!existsSync(join(dirs.codex, 'notes')), 'a conflict writes nothing');
+  assert.equal((await call('POST', '/harness/skills', { ...changed, replace: true })).status, 200);
+  assert.match(readFileSync(join(dirs.grok, 'notes', 'SKILL.md'), 'utf8'), /Other text/);
+  assert.ok(trashed().some((n) => n.endsWith('-grok-notes')), 'the replaced skill went to the trash');
+  assert.equal((await call('POST', '/harness/skills', { ...body, name: 'bad/name' })).status, 400);
+  assert.equal((await call('POST', '/harness/skills', { ...body, description: '  ' })).status, 400);
+  assert.equal((await call('POST', '/harness/skills', { ...body, agents: [] })).status, 400);
+  assert.equal((await call('POST', '/harness/skills', { ...body, agents: ['nope'] })).status, 404);
+  assert.equal((await call('POST', '/harness/skills', { ...body, body: 5 })).status, 400);
+
+  // ---- import from a git repository ----
+  const work = makeRepo(join(tmp, 'skills-src'));
+  put(join(work, 'README.md'), '# Skills\n');
+  put(join(work, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: First\n---\nA\n');
+  put(join(work, 'skills', 'alpha', 'scripts', 'run.sh'), 'echo a\n');
+  put(join(work, 'skills', 'beta', 'SKILL.md'), '---\nname: beta\ndescription: Second\n---\nB\n');
+  put(join(work, 'skills', 'bad.name', 'SKILL.md'), '---\nname: bad\n---\n');
+  put(join(work, 'node_modules', 'dep', 'SKILL.md'), '---\nname: dep\n---\n');
+  const git = (...args: string[]) => execFileSync('git', ['-C', work, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args]);
+  git('add', '-A', '-f');
+  git('commit', '-qm', 'skills');
+  const bare = join(tmp, 'skills.git');
+  execFileSync('git', ['clone', '-q', '--bare', work, bare]);
+  const url = `file://${bare}`;
+
+  const preview = await call('POST', '/harness/skills/import/preview', { url });
+  assert.equal(preview.status, 200, JSON.stringify(preview.json));
+  assert.match(preview.json.id, /^[0-9a-f-]{36}$/);
+  assert.equal(preview.json.url, url);
+  assert.deepEqual(preview.json.skills, [
+    { name: 'alpha', description: 'First', path: 'skills/alpha' },
+    { name: 'beta', description: 'Second', path: 'skills/beta' },
+  ]);
+  assert.equal((await call('POST', '/harness/skills/import/preview', { url: 'http://example.com/x.git' })).status, 400, 'https only');
+  assert.equal((await call('POST', '/harness/skills/import/preview', { url: 'ext::sh -c id' })).status, 400);
+  assert.equal((await call('POST', '/harness/skills/import/preview', { url: `file://${join(tmp, 'no-such-repo')}` })).status, 422);
+  const empty = makeRepo(join(tmp, 'no-skills'));
+  put(join(empty, 'a.txt'), 'a');
+  execFileSync('git', ['-C', empty, 'add', '-A']);
+  execFileSync('git', ['-C', empty, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'a']);
+  assert.equal((await call('POST', '/harness/skills/import/preview', { url: `file://${empty}` })).status, 422, 'no skills in it');
+
+  assert.equal((await call('POST', '/harness/skills/import', { id: preview.json.id, skills: ['nope'], agents: ['opencode'] })).status, 404);
+  assert.equal((await call('POST', '/harness/skills/import', { id: preview.json.id, skills: [], agents: ['opencode'] })).status, 400);
+  assert.equal((await call('POST', '/harness/skills/import', { id: 'not-an-id', skills: ['alpha'], agents: ['opencode'] })).status, 400);
+  const imported = await call('POST', '/harness/skills/import', { id: preview.json.id, skills: ['alpha'], agents: ['opencode', 'codex'] });
+  assert.equal(imported.status, 200, JSON.stringify(imported.json));
+  assert.deepEqual(row(imported.json, 'alpha').agents, { opencode: 'user', 'claude-code': null, grok: null, codex: 'user' });
+  assert.equal(readFileSync(join(dirs.opencode, 'alpha', 'scripts', 'run.sh'), 'utf8'), 'echo a\n');
+  assert.equal((await call('POST', '/harness/skills/import', { id: preview.json.id, skills: ['alpha'], agents: ['opencode'] })).status, 404, 'the clone is gone after an import');
+
+  put(join(dirs.grok, 'beta', 'SKILL.md'), '---\nname: beta\ndescription: Mine\n---\n');
+  const again = (await call('POST', '/harness/skills/import/preview', { url })).json;
+  assert.equal((await call('POST', '/harness/skills/import', { id: again.id, skills: ['alpha', 'beta'], agents: ['grok'] })).status, 409);
+  assert.ok(!existsSync(join(dirs.grok, 'alpha')), 'a conflict imports nothing');
+  assert.equal((await call('POST', '/harness/skills/import', { id: again.id, skills: ['alpha', 'beta'], agents: ['grok', 'opencode'], replace: true })).status, 200);
+  assert.match(readFileSync(join(dirs.grok, 'beta', 'SKILL.md'), 'utf8'), /Second/);
+  assert.ok(trashed().some((n) => n.endsWith('-grok-beta')));
+  assert.ok(!trashed().some((n) => n.endsWith('-opencode-alpha')), 'an identical skill is left as it is');
+
+  // ---- remove from every agent ----
+  const gone = await call('DELETE', '/harness/skills/alpha');
+  assert.equal(gone.status, 200);
+  assert.ok(!row(gone.json, 'alpha'));
+  assert.ok(!existsSync(join(dirs.opencode, 'alpha')) && !existsSync(join(dirs.codex, 'alpha')) && !existsSync(join(dirs.grok, 'alpha')));
+  assert.equal((await call('DELETE', '/harness/skills/alpha')).status, 404);
+  assert.equal((await call('DELETE', '/harness/skills/demo-skill')).status, 200, 'the user copy goes, the plugin one stays');
+  assert.equal(row((await call('GET', '/harness/skills')).json, 'demo-skill').agents['claude-code'], 'plugin');
 });
 
 test('removing a project together with its folder', async () => {

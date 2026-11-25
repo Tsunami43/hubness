@@ -150,6 +150,10 @@ impl Tabs {
         self.tabs[self.active].screen.mode()
     }
 
+    pub fn help(&self) -> Option<String> {
+        self.tabs[self.active].screen.help()
+    }
+
     pub fn names(&self) -> Vec<String> {
         self.tabs.iter().map(|t| t.label.clone()).collect()
     }

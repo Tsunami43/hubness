@@ -1,4 +1,11 @@
 import type {
+  HarnessExtensionsAll,
+  McpCatalogResponse,
+  SkillContent,
+  SkillCreateInput,
+  SkillImportInput,
+  SkillImportPreview,
+  SkillsResponse,
   AgentConfig,
   AgentKind,
   AgentModelsResponse,
@@ -141,6 +148,19 @@ export const api = {
   rulesFile: (kind: AgentKind, path: string, project?: string) => req<RulesFileContent>('GET', `/harness/${kind}/rules${q({ path, project })}`),
   saveRulesFile: (kind: AgentKind, path: string, content: string, project?: string) =>
     req<RulesFileContent>('PUT', `/harness/${kind}/rules${q({ path, project })}`, { content }),
+  extensionFile: (kind: AgentKind, path: string, project?: string) => req<RulesFileContent>('GET', `/harness/${kind}/file${q({ path, project })}`),
+  extensionsAll: (project?: string) => req<HarnessExtensionsAll>('GET', `/harness/extensions${q({ project })}`),
+  mcpCatalog: (query: string, cursor?: string) => req<McpCatalogResponse>('GET', `/harness/mcp/catalog${q({ q: query || undefined, cursor })}`),
+  skills: (project?: string) => req<SkillsResponse>('GET', `/harness/skills${q({ project })}`),
+  skill: (name: string, agent?: AgentKind, project?: string) => req<SkillContent>('GET', `/harness/skills/${encodeURIComponent(name)}${q({ agent, project })}`),
+  skillConnect: (name: string, kind: AgentKind, project?: string) =>
+    req<SkillsResponse>('PUT', `/harness/skills/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  skillDisconnect: (name: string, kind: AgentKind, project?: string) =>
+    req<SkillsResponse>('DELETE', `/harness/skills/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  skillDelete: (name: string, project?: string) => req<SkillsResponse>('DELETE', `/harness/skills/${encodeURIComponent(name)}${q({ project })}`),
+  skillCreate: (input: SkillCreateInput, project?: string) => req<SkillsResponse>('POST', `/harness/skills${q({ project })}`, input),
+  skillImportPreview: (url: string) => req<SkillImportPreview>('POST', '/harness/skills/import/preview', { url }),
+  skillImport: (input: SkillImportInput, project?: string) => req<SkillsResponse>('POST', `/harness/skills/import${q({ project })}`, input),
   jobInput: (id: string, data: string) => req<{ ok: true }>('POST', `/jobs/${id}/input`, { data }),
   jobKill: (id: string) => req<{ ok: boolean }>('POST', `/jobs/${id}/kill`),
   browse: (path?: string) => req<BrowseResponse>('GET', `/fs/browse${q({ path })}`),

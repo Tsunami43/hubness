@@ -1,8 +1,8 @@
 //! Harness (the web app's Harness page): a tab per agent CLI — version and updates, sign-in
 //! and plan, provider accounts, limits, models and the default model, usage. Install, update,
 //! sign in and sign out run as terminal jobs inside the TUI (interactive, so device codes and
-//! prompts work); commands that need root are only shown and copied. The first tab is MCP
-//! servers across the agents; each agent tab also lists its skills, rules, subagents,
+//! prompts work); commands that need root are only shown and copied. The first tabs are MCP
+//! servers and skills across the agents; each agent tab also lists its skills, rules, subagents,
 //! commands and plugins (`[` / `]` switch the section).
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::harness_ext::{ExtView, SECTIONS};
 use super::harness_mcp::McpTab;
+use super::harness_skills::SkillsTab;
 use super::kit::{bar_with, copy, num, report, row, s, since, until};
 use super::tabs::{Tab, Tabs};
 use crate::core::{Action, Ctx, Handled, Hit, Screen};
@@ -40,7 +41,8 @@ impl HarnessScreen {
         if list.is_empty() {
             return;
         }
-        let mut tabs: Vec<Tab> = vec![Tab::new("mcp", "MCP", Box::new(McpTab::new()))];
+        let mut tabs: Vec<Tab> =
+            vec![Tab::new("mcp", "MCP", Box::new(McpTab::new())), Tab::new("skills", "Skills", Box::new(SkillsTab::new()))];
         tabs.extend(list.iter().map(|a| {
             let kind = s(&a["kind"], "").to_string();
             let id = kind.clone();
@@ -119,6 +121,10 @@ impl Screen for HarnessScreen {
 
     fn tab_names(&self) -> Vec<String> {
         self.tabs.as_ref().map(|t| t.names()).unwrap_or_default()
+    }
+
+    fn help(&self) -> Option<String> {
+        self.tabs.as_ref().and_then(|t| t.help())
     }
 
     fn on_click(&mut self, id: &str, ctx: &mut Ctx) {

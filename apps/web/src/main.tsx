@@ -40,7 +40,12 @@ const StoragePage = page(() => import('./pages/settings/StoragePage'), 'StorageP
 const HarnessLayout = page(() => import('./pages/HarnessPage'), 'HarnessLayout');
 const HarnessIndex = page(() => import('./pages/HarnessPage'), 'HarnessIndex');
 const HarnessDetail = page(() => import('./pages/HarnessPage'), 'HarnessDetail');
-const HarnessMcp = page(() => import('./pages/HarnessMcp'), 'HarnessMcp');
+const HarnessMcp = page(() => import('./pages/harness/Mcp'), 'HarnessMcp');
+const HarnessSkills = page(() => import('./pages/harness/Skills'), 'HarnessSkills');
+const HarnessRules = page(() => import('./pages/harness/Lists'), 'HarnessRules');
+const HarnessSubagents = page(() => import('./pages/harness/Lists'), 'HarnessSubagents');
+const HarnessCommands = page(() => import('./pages/harness/Lists'), 'HarnessCommands');
+const HarnessPlugins = page(() => import('./pages/harness/Lists'), 'HarnessPlugins');
 const SystemLayout = page(() => import('./pages/SystemPage'), 'SystemLayout');
 const SystemIndex = page(() => import('./pages/SystemPage'), 'SystemIndex');
 const SystemSection = page(() => import('./pages/SystemPage'), 'SystemSection');
@@ -87,6 +92,11 @@ createRoot(document.getElementById('root')!).render(
             <Route path="harness" element={<HarnessLayout />}>
               <Route index element={<HarnessIndex />} />
               <Route path="mcp" element={<HarnessMcp />} />
+              <Route path="skills" element={<HarnessSkills />} />
+              <Route path="rules" element={<HarnessRules />} />
+              <Route path="subagents" element={<HarnessSubagents />} />
+              <Route path="commands" element={<HarnessCommands />} />
+              <Route path="plugins" element={<HarnessPlugins />} />
               <Route path=":kind" element={<HarnessDetail />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -147,7 +147,7 @@ pub(super) struct Rules {
 
 #[derive(Default)]
 pub(super) struct Layout {
-    skills: Vec<Dir>,
+    pub(super) skills: Vec<Dir>,
     rules: Vec<Rules>,
     agents: Vec<Dir>,
     commands: Vec<Dir>,
