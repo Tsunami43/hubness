@@ -389,15 +389,18 @@ pub struct TextView {
     lines: usize,
     /// Scrolled to the end on open (logs: the newest lines matter most).
     follow: bool,
+    /// `text` wrapped to a width (re-wrapped only when the text or the width changes).
+    wrapped: Option<(u16, Vec<Line<'static>>)>,
 }
 
 impl TextView {
     pub fn new(title: impl Into<String>, follow: bool) -> Self {
-        Self { title: title.into(), text: None, scroll: 0, height: 1, lines: 0, follow }
+        Self { title: title.into(), text: None, scroll: 0, height: 1, lines: 0, follow, wrapped: None }
     }
 
     pub fn set(&mut self, text: String) {
         self.text = Some(text);
+        self.wrapped = None;
         self.scroll = if self.follow { usize::MAX } else { 0 };
     }
 
@@ -423,10 +426,16 @@ impl TextView {
         let t = Theme::get();
         let b = block(format!("{} — {hint}", self.title), true);
         let inner = b.inner(area);
-        let lines: Vec<Line<'static>> = match &self.text {
-            None => vec![Line::styled("Loading…", t.muted_style())],
-            Some(text) if text.trim().is_empty() => vec![Line::styled("(empty)", t.muted_style())],
-            Some(text) => text.lines().flat_map(|l| wrap(Line::raw(l.replace('\t', "    ")), inner.width as usize)).collect(),
+        let lines: &[Line<'static>] = match &self.text {
+            None => &[Line::styled("Loading…", t.muted_style())],
+            Some(text) if text.trim().is_empty() => &[Line::styled("(empty)", t.muted_style())],
+            Some(text) => {
+                if self.wrapped.as_ref().is_none_or(|(w, _)| *w != inner.width) {
+                    let lines = text.lines().flat_map(|l| wrap(Line::raw(l.replace('\t', "    ")), inner.width as usize)).collect();
+                    self.wrapped = Some((inner.width, lines));
+                }
+                self.wrapped.as_ref().map(|(_, l)| l.as_slice()).unwrap_or_default()
+            }
         };
         self.height = inner.height as usize;
         self.lines = lines.len();
@@ -434,7 +443,9 @@ impl TextView {
         self.scroll = self.scroll.min(max);
         let pos = if max > 0 { format!(" {}/{} ", self.scroll + self.height.min(self.lines), self.lines) } else { String::new() };
         let b = b.title_bottom(Line::styled(pos, t.muted_style()).right_aligned());
-        f.render_widget(Paragraph::new(lines).scroll((self.scroll as u16, 0)).block(b), area);
+        // only the visible rows (also no u16 limit on the scroll offset of long logs)
+        let shown: Vec<Line> = lines.iter().skip(self.scroll).take(self.height).cloned().collect();
+        f.render_widget(Paragraph::new(shown).block(b), area);
     }
 }
 

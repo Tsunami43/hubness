@@ -96,12 +96,12 @@ pub fn wrap(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// Wrap every line and keep the last `height` lines visible, `scroll` lines up from the end.
-pub fn tail(lines: Vec<Line<'static>>, width: usize, height: usize, scroll: usize) -> Vec<Line<'static>> {
-    let wrapped: Vec<Line> = lines.into_iter().flat_map(|l| wrap(l, width)).collect();
-    let max = wrapped.len().saturating_sub(height);
+/// The rows shown of `len` (already wrapped) rows: the last `height`, `scroll` rows up
+/// from the end.
+pub fn tail_range(len: usize, height: usize, scroll: usize) -> std::ops::Range<usize> {
+    let max = len.saturating_sub(height);
     let offset = max.saturating_sub(scroll.min(max));
-    wrapped.into_iter().skip(offset).take(height).collect()
+    offset..(offset + height).min(len)
 }
 
 /// A short relative time ("5m", "3h", "2d") from an ISO timestamp.
@@ -179,6 +179,8 @@ mod tests {
     #[test]
     fn wraps() {
         assert_eq!(wrap(Line::raw("abcdefghij"), 4).len(), 3);
-        assert_eq!(tail(vec![Line::raw("a"), Line::raw("b"), Line::raw("c")], 10, 2, 0).len(), 2);
+        assert_eq!(tail_range(3, 2, 0), 1..3);
+        assert_eq!(tail_range(3, 2, 5), 0..2);
+        assert_eq!(tail_range(1, 5, 0), 0..1);
     }
 }
