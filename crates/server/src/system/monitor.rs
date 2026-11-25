@@ -234,7 +234,7 @@ fn uptime_sec() -> i64 {
     let out = std::process::Command::new("sysctl").args(["-n", "kern.boottime"]).output().map(|o| o.stdout).unwrap_or_default();
     let boot = String::from_utf8_lossy(&out);
     let sec: Option<i64> = boot.split("sec = ").nth(1).and_then(|s| s.split(',').next()).and_then(|s| s.trim().parse().ok());
-    sec.map(|s| chrono::Utc::now().timestamp() - s).unwrap_or(0)
+    sec.map(|s| jiff::Timestamp::now().as_second() - s).unwrap_or(0)
 }
 
 fn loadavg() -> [f64; 3] {

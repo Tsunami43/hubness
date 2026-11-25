@@ -230,7 +230,7 @@ pub fn session_cwd(db: &Connection, cfg: &crate::Config, s: &Session) -> ApiResu
 }
 
 fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    jiff::Timestamp::now().as_millisecond()
 }
 
 /// Start a turn: record the user message, launch the agent, return the updated session.

@@ -293,8 +293,7 @@ fn kv_with_time(db: &rusqlite::Connection, key: &str) -> Option<(Value, String)>
 }
 
 fn fresh(iso: &str, ttl: Duration) -> bool {
-    chrono::DateTime::parse_from_rfc3339(iso)
-        .is_ok_and(|t| (chrono::Utc::now().timestamp_millis() - t.timestamp_millis()) < ttl.as_millis() as i64)
+    iso.parse::<jiff::Timestamp>().is_ok_and(|t| (jiff::Timestamp::now().as_millisecond() - t.as_millisecond()) < ttl.as_millis() as i64)
 }
 
 fn human_tier(tier: Option<&str>) -> Option<String> {
@@ -359,8 +358,7 @@ fn cli_cached_limits(claude_json: Option<&Value>) -> Option<(Vec<Value>, String)
             .map(|id| json!({ "id": id, "utilization": u[*id]["utilization"].as_f64().unwrap_or(0.0).round() as i64, "resetsAt": u[*id].get("resets_at").cloned().unwrap_or(Value::Null) }))
             .collect();
     }
-    let at = chrono::DateTime::from_timestamp_millis(c["fetchedAtMs"].as_i64().unwrap_or(0))?
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let at = crate::db::iso(jiff::Timestamp::from_millisecond(c["fetchedAtMs"].as_i64().unwrap_or(0)).ok()?);
     (!limits.is_empty()).then_some((limits, at))
 }
 

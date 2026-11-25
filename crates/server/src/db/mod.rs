@@ -26,7 +26,23 @@ pub fn init(db: &Connection) -> anyhow::Result<()> {
 
 /// ISO 8601 timestamp with milliseconds, as JavaScript's `Date.toISOString()`.
 pub fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    iso(jiff::Timestamp::now())
+}
+
+/// `2026-11-06T15:09:30.123Z`: UTC, always three fraction digits (`Date.toISOString()`).
+pub fn iso(t: jiff::Timestamp) -> String {
+    format!("{t:.3}")
+}
+
+#[cfg(test)]
+#[test]
+fn iso_matches_javascript_to_iso_string() {
+    let t = |ms: i64| iso(jiff::Timestamp::from_millisecond(ms).unwrap());
+    assert_eq!(t(0), "1970-01-01T00:00:00.000Z");
+    assert_eq!(t(1_762_441_770_120), "2025-11-06T15:09:30.120Z");
+    assert_eq!(t(1_762_441_770_007), "2025-11-06T15:09:30.007Z");
+    let parsed: jiff::Timestamp = "2025-11-06T17:09:30.5+02:00".parse().unwrap();
+    assert_eq!(iso(parsed), "2025-11-06T15:09:30.500Z");
 }
 
 pub fn new_id() -> String {

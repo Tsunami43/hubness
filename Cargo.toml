@@ -35,11 +35,11 @@ aes-gcm = "=0.11.1"
 argon2 = "=0.6.0"
 axum = "=0.8.9"
 base64 = "=0.23.1"
-chrono = { version = "=0.4.45", default-features = false }
 dotenvy = "=0.15.7"
 http-body-util = "=0.1.5"
 hyper = { version = "=1.13.0", features = ["client", "http1", "server"] }
 hyper-util = { version = "=0.1.21", features = ["tokio"] }
+jiff = "=1.0.3"
 libc = "=0.2.191"
 mime_guess = "=2.0.5"
 notify = "=9.0.0"
