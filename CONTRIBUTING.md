@@ -3,10 +3,19 @@
 ## Setup
 
 ```sh
-corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev
 ```
+
+The pnpm version is pinned in `package.json` (`packageManager`). Without a global pnpm,
+run it through npx: `npx -y pnpm@11.29.0 install --frozen-lockfile`, `npx -y pnpm@11.29.0 dev`.
+Corepack is not required.
+
+## Dependencies
+
+- JavaScript dependencies are pinned to exact versions (`saveExact` in
+  `pnpm-workspace.yaml`, `save-exact` in `.npmrc`); versions published less than a day ago
+  are not resolved (`minimumReleaseAge`). Check with `pnpm outdated -r` and `pnpm audit`.
 
 ## Branches (Git Flow)
 

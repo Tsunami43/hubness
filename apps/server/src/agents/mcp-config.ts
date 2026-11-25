@@ -275,7 +275,8 @@ function removeBlocks(lines: string[], name: string): string[] {
 /** Sorted-key JSON: the comparison of two parsed documents. */
 function canon(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
-  if (v && typeof v === 'object' && !(v instanceof Date) && v.constructor === Object)
+  // plain objects; smol-toml parses tables into null-prototype objects
+  if (v && typeof v === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(v)))
     return `{${Object.keys(v)
       .sort()
       .map((k) => `${JSON.stringify(k)}:${canon((v as Json)[k])}`)

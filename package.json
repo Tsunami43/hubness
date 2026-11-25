@@ -2,16 +2,16 @@
   "name": "hubness",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.13.1",
+  "packageManager": "pnpm@11.29.0",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "dev": "corepack pnpm --parallel -r run dev",
-    "build": "corepack pnpm --filter @hubness/web run build",
-    "start": "corepack pnpm --filter @hubness/server run start",
-    "check": "corepack pnpm -r run check",
-    "test": "corepack pnpm --filter @hubness/server run test",
+    "dev": "pnpm --parallel -r run dev",
+    "build": "pnpm --filter @hubness/web run build",
+    "start": "pnpm --filter @hubness/server run start",
+    "check": "pnpm -r run check",
+    "test": "pnpm --filter @hubness/server run test",
     "check:rust": "cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
     "test:contract:rust": "cargo build && HUBNESS_CONTRACT_SERVER=rust node --disable-warning=ExperimentalWarning --test apps/server/test/contract.test.ts"
   }
