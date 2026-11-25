@@ -1136,3 +1136,21 @@ test('new empty repository in the projects folder or a group folder', async () =
   assert.equal(detail.repo.links, null);
   await call('DELETE', `/groups/${g.id}`);
 });
+
+test('pane file and diff of a session', async () => {
+  const repo = repoWithCommit(join(tmp, 'elsewhere', 'pane'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const s = (await call('POST', '/sessions', { projectId: p.id, agent: { kind: 'claude-code' } })).json;
+  writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n');
+  writeFileSync(join(repo, 'fresh.txt'), 'new\n');
+  gitIn(repo, 'add', 'fresh.txt');
+  const file = (await call('GET', `/sessions/${s.id}/file?path=a.txt`)).json;
+  assert.equal(file.content, 'one\ntwo\n');
+  assert.equal((await call('GET', `/sessions/${s.id}/file?path=${encodeURIComponent(join(repo, 'a.txt'))}`)).json.content, 'one\ntwo\n', 'absolute inside the project');
+  assert.equal((await call('GET', `/sessions/${s.id}/file?path=/etc/hostname`)).status, 400);
+  const d = (await call('GET', `/sessions/${s.id}/diff?path=a.txt`)).json.diff;
+  assert.match(d, /\+two/);
+  const staged = (await call('GET', `/sessions/${s.id}/diff?path=fresh.txt`)).json.diff;
+  assert.match(staged, /\+new/);
+  assert.equal((await call('GET', `/sessions/missing/file?path=a.txt`)).status, 404);
+});

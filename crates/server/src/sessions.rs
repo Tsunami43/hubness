@@ -43,6 +43,8 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions/{id}/attachments/{file}", get(attachment))
         .route("/sessions/{id}/project-suggestion", get(project_suggestion))
         .route("/sessions/{id}/convert", post(convert))
+        .route("/sessions/{id}/file", get(pane_file))
+        .route("/sessions/{id}/diff", get(pane_diff))
         .route("/sessions/{id}/pane", post(set_pane))
         .route("/sessions/{id}/stream", get(session_stream))
         .route("/stream", get(global_stream))
@@ -591,4 +593,65 @@ fn relocate(db: &Connection, s: &Session, from: &str, to: &str) -> bool {
     }
     let dst = project_dir(to);
     std::fs::create_dir_all(&dst).is_ok() && std::fs::copy(&src, dst.join(format!("{sid}.jsonl"))).is_ok()
+}
+
+// ---------- files for the pane ----------
+
+/// Folders a pane file may come from: the project, the group's repositories and workspace,
+/// or the chat folder.
+fn pane_roots(db: &Connection, cfg: &crate::Config, s: &Session) -> ApiResult<Vec<String>> {
+    if let Some(pid) = &s.project_id {
+        return Ok(crate::db::projects::get(db, pid)?.map(|p| vec![p.path]).unwrap_or_default());
+    }
+    if let Some(gid) = &s.group_id {
+        let Some(g) = crate::db::groups::get(db, gid)? else { return Ok(vec![]) };
+        let mut roots: Vec<String> = catalog::group_projects(db, &g)?.into_iter().map(|p| p.path).collect();
+        roots.push(runtime::session_cwd(db, cfg, s)?);
+        return Ok(roots);
+    }
+    Ok(vec![runtime::session_cwd(db, cfg, s)?])
+}
+
+/// The file for the pane: relative to the session folder, or absolute inside one of its roots.
+fn resolve_pane_file(s: &AppState, id: &str, target: &str) -> ApiResult<(String, String)> {
+    let db = s.db()?;
+    let session = session_or_404(&db, id)?;
+    for root in pane_roots(&db, s.config(), &session)? {
+        let rel =
+            if target.starts_with('/') { target.strip_prefix(&format!("{root}/")).map(String::from) } else { Some(target.to_string()) };
+        if let Some(rel) = rel {
+            return Ok((root, rel));
+        }
+    }
+    Err(HttpError::bad_request("File is outside the session folders"))
+}
+
+#[derive(Deserialize)]
+struct PaneQuery {
+    path: Option<String>,
+}
+
+async fn pane_file(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<PaneQuery>,
+) -> ApiResult<axum::Json<hubness_core::FileContent>> {
+    let (root, rel) = resolve_pane_file(&s, &id, q.path.as_deref().unwrap_or(""))?;
+    Ok(axum::Json(crate::files::read_file_safe(std::path::Path::new(&root), &rel)?))
+}
+
+async fn pane_diff(State(s): State<AppState>, Path(id): Path<String>, Query(q): Query<PaneQuery>) -> ApiResult<axum::Json<Value>> {
+    let (root, rel) = resolve_pane_file(&s, &id, q.path.as_deref().unwrap_or(""))?;
+    let root = std::path::Path::new(&root);
+    crate::files::safe_join(root, &rel)?;
+    let st = crate::git::status(root).await;
+    let f = st.files.iter().find(|x| x.path == rel);
+    let untracked = f.is_some_and(|f| f.untracked);
+    let diff = crate::git::diff(root, Some(&rel), false, untracked).await;
+    let staged = match f {
+        Some(f) if f.index != " " && !f.untracked => crate::git::diff(root, Some(&rel), true, false).await,
+        _ => String::new(),
+    };
+    let parts: Vec<String> = [staged, diff].into_iter().filter(|d| !d.is_empty()).collect();
+    Ok(axum::Json(json!({ "diff": parts.join("\n") })))
 }

@@ -36,7 +36,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
 | Sandbox | bubblewrap wrap for project/group agent runs (same hidden paths as TS) | done |
 | Sessions | attachments (upload, serve, images to the model), project suggestion, Inbox → project conversion | done |
-| Sessions | pane file/diff (needs git) | todo |
+| Sessions | pane file and diff (`/sessions/:id/file`, `/sessions/:id/diff`) | done |
 | Agents | Claude Code (stream-json, approvals, limits) | done |
 | Agents | Codex, OpenCode and Grok over ACP (load/resume, models, modes, client-side policy, provider retries) | done |
 | MCP | `hubness mcp`: the hub MCP server (`open_pane`, `close_pane`) attached to every agent session | done |
