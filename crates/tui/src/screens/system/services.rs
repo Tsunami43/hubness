@@ -141,7 +141,7 @@ impl Screen for Services {
             a.push(Action::new("u", "Scope: all / system / user"));
         }
         if let Some(u) = self.selected() {
-            a.push(Action::new("l", "Logs"));
+            a.push(Action::new("L", "Logs"));
             if u["scope"] == "user" {
                 a.push(Action::new("R", "Restart"));
                 if u["active"] == "active" {
@@ -185,7 +185,7 @@ impl Screen for Services {
                 self.nav.reset();
             }
             ("r", _) => ctx.get("units", "/system/units"),
-            ("l", Some(u)) => self.open_logs(u, ctx),
+            ("L", Some(u)) => self.open_logs(u, ctx),
             ("R", Some(u)) if u["scope"] == "user" => self.act(&u, "restart", ctx),
             ("s", Some(u)) if u["scope"] == "user" => self.act(&u, "start", ctx),
             ("S", Some(u)) if u["scope"] == "user" => {

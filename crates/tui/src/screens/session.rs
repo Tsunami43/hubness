@@ -59,7 +59,8 @@ impl SessionView {
             show_pane: false,
             composer: TextInput::multiline(),
             attachments: vec![],
-            focus: Focus::Composer,
+            // NORMAL first, like Vim: i (or a, o, Enter) starts typing
+            focus: Focus::Feed,
             scroll: 0,
             detail: Detail::Compact,
             suggestion: Value::Null,
@@ -338,8 +339,8 @@ impl Screen for SessionView {
             KeyCode::Down | KeyCode::Char('j') => self.scroll = self.scroll.saturating_sub(1),
             KeyCode::PageUp => self.scroll += 10,
             KeyCode::PageDown => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::Char('g') => self.scroll = usize::MAX / 2,
-            KeyCode::Char('G') => self.scroll = 0,
+            KeyCode::Home => self.scroll = usize::MAX / 2,
+            KeyCode::End => self.scroll = 0,
             _ => return Handled::No,
         }
         Handled::Yes

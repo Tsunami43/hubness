@@ -365,8 +365,8 @@ impl Screen for SettingsTab {
             Action::new("d", "Description"),
             Action::new("I", "AI instructions"),
             Action::new("o", "Open the repository in the browser"),
-            Action::new("g", "Add to a group"),
-            Action::new("G", "New group with this project"),
+            Action::new("a", "Add to a group"),
+            Action::new("N", "New group with this project"),
         ];
         if matches!(self.form.current(), Some(Act::Group(_))) {
             a.push(Action::new("x", "Remove from the selected group"));
@@ -397,8 +397,8 @@ impl Screen for SettingsTab {
                 Some(u) => Act::Url(u.into()),
                 None => return ctx.info("the repository has no web page (no known provider)"),
             },
-            "g" => Act::AddGroup,
-            "G" => Act::NewGroup,
+            "a" => Act::AddGroup,
+            "N" => Act::NewGroup,
             "x" => {
                 if let Some(Act::Group(gid)) = self.form.current() {
                     let name = self.groups.iter().find(|g| g["id"] == gid.as_str()).and_then(|g| g["name"].as_str()).unwrap_or("the group");

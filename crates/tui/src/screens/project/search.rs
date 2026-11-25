@@ -298,15 +298,15 @@ impl Screen for SearchTab {
             KeyCode::PageDown => self.move_by(10),
             KeyCode::PageUp => self.move_by(-10),
             KeyCode::Enter | KeyCode::Char('o') => self.activate(),
-            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l') => {
+            KeyCode::Left | KeyCode::Right => {
                 let path = match self.list.selected().and_then(|i| self.rows.get(i)) {
                     Some(Hit::File { path, .. }) | Some(Hit::Match { path, .. }) => path.clone(),
                     None => return Handled::Yes,
                 };
                 let open = !self.collapsed.contains(&path);
                 let want_open = match k.code {
-                    KeyCode::Left | KeyCode::Char('h') => false,
-                    KeyCode::Right | KeyCode::Char('l') => true,
+                    KeyCode::Left => false,
+                    KeyCode::Right => true,
                     _ => !open,
                 };
                 if want_open != open {
@@ -444,7 +444,7 @@ impl Screen for SearchTab {
         }
         f.render_stateful_widget(
             List::new(items)
-                .block(block("results — Enter open in Files · Space fold · z / Z fold all", focused))
+                .block(block("results — Enter open in Files · h / l fold · z / Z fold all", focused))
                 .highlight_style(t.selected()),
             results,
             &mut state,

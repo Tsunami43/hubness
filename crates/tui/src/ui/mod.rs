@@ -13,14 +13,35 @@ use ratatui::widgets::{Block, BorderType, Borders};
 
 pub use theme::Theme;
 
+/// The hubness wordmark (the home screen's header).
+pub const LOGO: [&str; 5] =
+    ["█ █ █ █ █▀▄ █▄ █ █▀▀ █▀▀ █▀▀", "█▀█ █ █ █▀▄ █ ▀█ █▀▀ ▀▀█ ▀▀█", "▀ ▀ ▀▀▀ ▀▀  ▀  ▀ ▀▀▀ ▀▀▀ ▀▀▀", "", "agents on your own machine"];
+
+/// The wordmark centered, in the theme's accent.
+pub fn logo() -> ratatui::widgets::Paragraph<'static> {
+    let t = Theme::get();
+    let mut lines = vec![Line::raw("")];
+    for (i, l) in LOGO.iter().enumerate() {
+        let style = if i < 3 { Style::default().fg(t.accent).add_modifier(ratatui::style::Modifier::BOLD) } else { t.dim_style() };
+        lines.push(Line::styled(*l, style));
+    }
+    ratatui::widgets::Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center)
+}
+
 /// A bordered block with a title; highlighted when focused.
 pub fn block(title: impl Into<String>, focused: bool) -> Block<'static> {
     let t = Theme::get();
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(if focused { t.accent_style() } else { t.line_style() })
-        .title(Span::styled(format!(" {} ", title.into()), if focused { t.accent_style() } else { t.muted_style() }))
+    let title = title.into();
+    let b = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(if focused {
+        Style::default().fg(t.border)
+    } else {
+        t.line_style()
+    });
+    if title.is_empty() {
+        return b;
+    }
+    let style = if focused { Style::default().fg(t.accent).add_modifier(ratatui::style::Modifier::BOLD) } else { t.dim_style() };
+    b.title(Span::styled(format!(" {title} "), style))
 }
 
 /// A rectangle of `w` × `h` centered in `area` (clamped to it).

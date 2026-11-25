@@ -575,7 +575,7 @@ impl Screen for Connection {
                 t.muted_style(),
             ),
             Line::styled(
-                "  Appearance and language of the web app are stored in the browser; the TUI follows your terminal's colors.",
+                "  Appearance and language of the web app are stored in the browser; the TUI takes its colors from the active Omarchy theme.",
                 t.muted_style(),
             ),
         ];
@@ -591,33 +591,41 @@ impl Screen for Connection {
 /// The keyboard reference: global keys, then per-screen keys.
 pub const KEYS: &[(&str, &[(&str, &str)])] = &[
     (
-        "Leader (Ctrl+Space or Ctrl+G), then",
+        "Modes (like Vim)",
         &[
-            ("c", "Chats"),
-            ("p", "Projects"),
-            ("s", "System"),
-            ("h", "Harness (agents)"),
-            (",", "Settings"),
-            ("j", "Jump to a session…"),
-            ("b", "Toggle the sidebar"),
-            ("r", "Reload"),
-            ("q", "Quit"),
-            ("any", "an action of the current screen (the panel lists them)"),
+            ("NORMAL", "browse: motions and single-letter actions"),
+            ("INSERT", "typing in a box, prompt, filter or terminal — Esc back to NORMAL"),
+            (":", "command palette: every action of the screen and global commands"),
+            ("?", "which-key: the keys of this screen"),
         ],
     ),
     (
-        "Everywhere",
+        "Motions (NORMAL)",
         &[
-            ("Ctrl+Q", "Quit"),
-            ("Ctrl+B", "Toggle the sidebar"),
-            ("Esc", "Back"),
-            ("Alt+←", "Back (on tabbed screens: the previous tab)"),
-            ("Alt+1…9", "Switch tabs (projects, groups, System, Harness, Settings)"),
-            ("Alt+→", "Next tab"),
-            ("letters", "the current screen's actions, when not typing"),
+            ("j k", "down / up (counts work: 5j)"),
+            ("h l", "left / right: fold, unfold, out of / into a folder"),
+            ("gg G", "first / last"),
+            ("Ctrl+d Ctrl+u", "half a page down / up"),
+            ("Ctrl+f Ctrl+b", "a page down / up"),
+            ("Ctrl+h Ctrl+l", "focus the pane to the left / right (also Ctrl+w h / l)"),
+            ("gt gT", "next / previous tab (also Alt+1…9)"),
+            ("Enter", "open / confirm"),
+            ("/", "filter or search the list"),
+            ("i", "start typing (Enter in a feed)"),
+            ("q Esc", "back (q quits on the first screen)"),
         ],
     ),
-    ("Lists", &[("↑↓ / j k", "Move"), ("PgUp PgDn", "Page"), ("g / G", "First / last"), ("Enter", "Open"), ("/", "Filter or search")]),
+    (
+        "Leader: Space (Ctrl+G while typing)",
+        &[
+            ("Space", "jump to a session"),
+            ("c p s h ,", "chats · projects · system · harness · settings"),
+            ("e", "toggle the sidebar"),
+            ("1…9", "tab 1…9"),
+            ("r", "reload"),
+            ("q", "quit (also Ctrl+Q)"),
+        ],
+    ),
     (
         "Chats and sessions",
         &[

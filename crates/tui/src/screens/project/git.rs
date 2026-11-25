@@ -542,7 +542,7 @@ impl Screen for GitTab {
         }
         match self.panel {
             Panel::Files => a.extend([
-                Action::new("␣", "Stage / unstage the file"),
+                Action::new("-", "Stage / unstage the file (also Enter)"),
                 Action::new("a", "Stage all / unstage all"),
                 Action::new("d", "Discard the file's changes"),
                 Action::new("c", "Commit"),
@@ -550,7 +550,7 @@ impl Screen for GitTab {
                 Action::new("o", "Open the file in Files"),
             ]),
             Panel::Branches => a.extend([
-                Action::new("␣", "Switch to the branch"),
+                Action::new("-", "Switch to the branch (also Enter)"),
                 Action::new("n", "New branch"),
                 Action::new("M", "Merge into the current branch"),
                 Action::new("r", "Rebase the current branch onto it"),
@@ -564,7 +564,7 @@ impl Screen for GitTab {
                 Action::new("A", if self.log_all { "Log: current branch only" } else { "Log: all branches" }),
                 Action::new("m", "Load more commits"),
             ]),
-            Panel::Stash => a.extend([Action::new("␣", "Apply"), Action::new("g", "Pop"), Action::new("d", "Drop")]),
+            Panel::Stash => a.extend([Action::new("-", "Apply (also Enter)"), Action::new("A", "Pop"), Action::new("d", "Drop")]),
         }
         a
     }
@@ -590,7 +590,7 @@ impl Screen for GitTab {
                     );
                 }
             }
-            "␣" => self.space(ctx),
+            "-" => self.space(ctx),
             _ => {}
         }
         match (self.panel, key) {
@@ -703,7 +703,7 @@ impl Screen for GitTab {
                     self.load_rest(ctx);
                 }
             }
-            (Panel::Stash, "g") => {
+            (Panel::Stash, "A") => {
                 if let Some(s) = self.sel_stash() {
                     let r = s["ref"].as_str().unwrap_or_default().to_string();
                     self.run("stash", &format!("Stash pop {r}"), json!({ "action": "pop", "rev": r }), ctx);
@@ -727,7 +727,7 @@ impl Screen for GitTab {
             KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
             KeyCode::Tab | KeyCode::Char(']') => self.cycle(1),
             KeyCode::BackTab | KeyCode::Char('[') => self.cycle(-1),
-            KeyCode::Char(' ') => self.space(ctx),
+            KeyCode::Enter | KeyCode::Char('-') => self.space(ctx),
             KeyCode::Char('J') => self.detail_scroll += 1,
             KeyCode::Char('K') => self.detail_scroll = self.detail_scroll.saturating_sub(1),
             KeyCode::PageDown => self.detail_scroll += page,

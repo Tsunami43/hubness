@@ -37,9 +37,10 @@ impl Default for Home {
     fn default() -> Self {
         Self {
             new: NewSession::default(),
-            focus: Focus::Composer,
+            // NORMAL first, like Vim: i starts typing
+            focus: Focus::List,
             scope: None,
-            list: ListState::default(),
+            list: ListState::default().with_selected(Some(0)),
             filter: String::new(),
             archive: false,
             archived: vec![],
@@ -248,8 +249,14 @@ impl Screen for Home {
     fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx) {
         let t = Theme::get();
         let comp_h = (self.new.input.height(area.width.saturating_sub(2)) + 2).clamp(4, 10);
-        let [settings, composer, list] =
-            Layout::vertical([Constraint::Length(1), Constraint::Length(comp_h), Constraint::Min(3)]).areas(area);
+        // a dashboard header (like LazyVim's) when there is room
+        let logo_h = if area.height > 30 { crate::ui::LOGO.len() as u16 + 2 } else { 0 };
+        let [logo, settings, composer, list] =
+            Layout::vertical([Constraint::Length(logo_h), Constraint::Length(1), Constraint::Length(comp_h), Constraint::Min(3)])
+                .areas(area);
+        if logo_h > 0 {
+            f.render_widget(crate::ui::logo(), logo);
+        }
         let mut spans = self.new.settings_spans(ctx);
         spans.extend([Span::styled(" w ", t.key_style()), Span::raw(format!(" {}", self.scope_label(ctx)))]);
         f.render_widget(Paragraph::new(Line::from(spans)), settings);

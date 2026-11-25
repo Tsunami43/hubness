@@ -99,9 +99,10 @@ impl Editor {
     fn new(content: &str, path: &str) -> Self {
         let mut state = EditorState::new(Lines::from(content));
         state.set_clipboard(InternalClipboard::default());
-        state.mode = EditorMode::Insert;
+        // like Vim: open in NORMAL (i / a / o to insert, Esc back, :w :q :wq :q!)
+        state.mode = EditorMode::Normal;
         let ext = path.rsplit('.').next().unwrap_or_default().to_string();
-        Self { state, handler: EditorEventHandler::emacs_mode(), original: content.to_string(), ext }
+        Self { state, handler: EditorEventHandler::vim_mode(), original: content.to_string(), ext }
     }
 
     fn text(&self) -> String {
@@ -368,11 +369,38 @@ impl FilesTab {
         }
     }
 
+    /// `:w`, `:q`, `:wq` / `:x`, `:q!` typed in the editor's command line.
+    fn editor_command(&mut self, cmd: &str, ctx: &mut Ctx) {
+        let dirty = self.file.as_ref().and_then(|f| f.editor.as_ref()).is_some_and(Editor::dirty);
+        let close = |me: &mut Self| {
+            if let Some(f) = &mut me.file {
+                f.editor = None;
+            }
+            me.focus = Focus::Viewer;
+        };
+        match cmd.trim() {
+            "w" => self.save(false, ctx),
+            "wq" | "x" => {
+                if dirty {
+                    self.save(false, ctx);
+                }
+                close(self);
+            }
+            "q" if dirty => ctx.error("unsaved changes — :w to save, :q! to discard"),
+            "q" | "q!" => close(self),
+            "" => {}
+            other => ctx.error(format!("not an editor command: :{other}")),
+        }
+    }
+
     fn editor_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        let normal = self.file.as_ref().and_then(|f| f.editor.as_ref()).is_some_and(|e| e.state.mode == EditorMode::Normal);
         match k.code {
             KeyCode::Char('s') if ctrl => self.save(false, ctx),
-            KeyCode::Esc => {
+            // Vim's command line inside the editor: :w :q :wq :x :q!
+            KeyCode::Char(':') if normal => ctx.prompt("editor-cmd", ":", ""),
+            KeyCode::Esc if normal => {
                 let dirty = self.file.as_ref().and_then(|f| f.editor.as_ref()).is_some_and(Editor::dirty);
                 if dirty {
                     ctx.confirm("discard", "Unsaved changes", "Discard the unsaved changes of this file?", true);
@@ -453,11 +481,16 @@ impl FilesTab {
 
         if let Some(ed) = &mut file.editor {
             let dirty = ed.dirty();
-            let title = format!("{}{} — editing · Ctrl+S save · Esc stop", file.path, if dirty { " ●" } else { "" });
+            let mode = match ed.state.mode {
+                EditorMode::Insert => "INSERT",
+                EditorMode::Visual => "VISUAL",
+                _ => "NORMAL",
+            };
+            let title = format!("{}{} — {mode} · :w save · :q close · Esc leave", file.path, if dirty { " ●" } else { "" });
             let theme = EditorTheme::default()
-                .base(Style::default())
-                .cursor_style(Style::default().add_modifier(Modifier::REVERSED))
-                .selection_style(Style::default().bg(t.info))
+                .base(Style::default().bg(t.bg).fg(t.fg))
+                .cursor_style(Style::default().bg(t.accent).fg(t.bg))
+                .selection_style(Style::default().bg(t.selection))
                 .line_numbers_style(t.muted_style())
                 .hide_status_line()
                 .block(block(title, focus == Focus::Editor));
@@ -778,6 +811,11 @@ impl Screen for FilesTab {
                 Some("overwrite") => self.save(true, ctx),
                 _ => {}
             },
+            "editor-cmd" => {
+                if let Ok(Value::String(cmd)) = result {
+                    self.editor_command(&cmd, ctx);
+                }
+            }
             "discard" => {
                 if result.ok() == Some(Value::Bool(true)) {
                     if let Some(f) = &mut self.file {

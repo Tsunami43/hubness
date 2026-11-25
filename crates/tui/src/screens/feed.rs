@@ -35,9 +35,12 @@ pub fn event_lines(e: &Value, detail: Detail) -> Vec<Line<'static>> {
     match e["kind"].as_str().unwrap_or_default() {
         "user" => {
             let mut out = vec![Line::raw("")];
-            for (i, l) in text("text").lines().enumerate() {
-                let prefix = if i == 0 { "› " } else { "  " };
-                out.push(Line::styled(format!("{prefix}{l}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)));
+            // the user's message: an accent bar on the left, like a quote
+            for l in text("text").lines() {
+                out.push(Line::from(vec![
+                    Span::styled("▍ ", Style::default().fg(t.accent)),
+                    Span::styled(l.to_string(), Style::default().fg(t.fg).add_modifier(Modifier::BOLD)),
+                ]));
             }
             if let Some(files) = e["attachments"].as_array() {
                 for a in files {
@@ -70,10 +73,10 @@ pub fn event_lines(e: &Value, detail: Detail) -> Vec<Line<'static>> {
         }
         "tool" => {
             let (mark, color) = match e["status"].as_str() {
-                Some("ok") => ("✓", t.ok),
-                Some("error") => ("✗", t.danger),
-                Some("denied") => ("⊘", t.warn),
-                _ => ("…", t.info),
+                Some("ok") => (crate::ui::theme::icon("\u{f00c}", "✓"), t.ok),
+                Some("error") => (crate::ui::theme::icon("\u{f00d}", "✗"), t.danger),
+                Some("denied") => (crate::ui::theme::icon("\u{f05e}", "⊘"), t.warn),
+                _ => (crate::ui::theme::icon("\u{f110}", "…"), t.info),
             };
             let mut out = vec![Line::from(vec![
                 Span::styled(format!("  {mark} "), Style::default().fg(color)),

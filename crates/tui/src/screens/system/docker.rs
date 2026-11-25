@@ -149,7 +149,7 @@ impl Screen for Containers {
         let mut a =
             vec![Action::new("/", "Filter containers"), Action::new("f", "Show: running / stopped / all"), Action::new("r", "Refresh")];
         if let Some(c) = self.selected() {
-            a.push(Action::new("l", "Logs"));
+            a.push(Action::new("L", "Logs"));
             if c["state"] == "running" {
                 a.push(Action::new("R", "Restart"));
                 a.push(Action::new("S", "Stop"));
@@ -186,7 +186,7 @@ impl Screen for Containers {
                 self.nav.reset();
             }
             ("r", _) => self.load(ctx),
-            ("l", Some(c)) => self.open_logs(s(&c["name"], ""), ctx),
+            ("L", Some(c)) => self.open_logs(s(&c["name"], ""), ctx),
             ("R", Some(c)) => self.act(&c, "restart", ctx),
             ("s", Some(c)) => self.act(&c, "start", ctx),
             ("S", Some(c)) => {

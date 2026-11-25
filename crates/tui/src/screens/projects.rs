@@ -252,8 +252,8 @@ impl Projects {
                         self.browse(Some(&p), ctx);
                     }
                 }
-                KeyCode::Char('g') => ctx.prompt("browse-path", "Go to folder", data["path"].as_str().unwrap_or_default()),
-                KeyCode::Char(' ') | KeyCode::Char('s') => {
+                KeyCode::Char('e') => ctx.prompt("browse-path", "Go to folder", data["path"].as_str().unwrap_or_default()),
+                KeyCode::Char('s') => {
                     let path = data["path"].as_str().unwrap_or_default().to_string();
                     if data["isGitRepo"] == true {
                         if !im.picked.contains(&path) {
@@ -275,7 +275,7 @@ impl Projects {
             KeyCode::Esc => self.import = None,
             KeyCode::Down | KeyCode::Char('j') => Self::move_list(&mut im.list, visible.len(), 1),
             KeyCode::Up | KeyCode::Char('k') => Self::move_list(&mut im.list, visible.len(), -1),
-            KeyCode::Char(' ') => {
+            KeyCode::Char('x') | KeyCode::Char('v') => {
                 if let Some(p) = im.list.selected().and_then(|i| visible.get(i)) {
                     match im.picked.iter().position(|x| x == p) {
                         Some(i) => {
@@ -305,7 +305,7 @@ impl Projects {
             }
             KeyCode::Enter => {
                 if im.picked.is_empty() {
-                    ctx.error("check repositories with Space first");
+                    ctx.error("check repositories with x first");
                 } else {
                     ctx.send("imported", Method::POST, "/projects/import", json!({ "paths": im.picked }));
                 }
@@ -321,7 +321,7 @@ impl Projects {
             KeyCode::Esc => self.group = None,
             KeyCode::Down | KeyCode::Char('j') => Self::move_list(&mut g.list, ids.len(), 1),
             KeyCode::Up | KeyCode::Char('k') => Self::move_list(&mut g.list, ids.len(), -1),
-            KeyCode::Char(' ') => {
+            KeyCode::Char('x') | KeyCode::Char('v') => {
                 if let Some(id) = g.list.selected().and_then(|i| ids.get(i))
                     && !g.picked.remove(id)
                 {
@@ -367,7 +367,7 @@ impl Projects {
         let r = centered(area, 100, area.height.saturating_sub(4).max(12));
         f.render_widget(Clear, r);
         if let Some((data, list)) = &mut im.browse {
-            let b = block("Browse server folders — Enter open · h up · g go to · Space choose this folder · Esc back", true);
+            let b = block("Browse server folders — Enter / l open · h up · e type a path · s choose this folder · Esc back", true);
             let inner = b.inner(r);
             f.render_widget(b, r);
             let [head, body] = Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(inner);
@@ -375,11 +375,8 @@ impl Projects {
                 f.render_widget(Paragraph::new("loading…"), head);
                 return;
             }
-            let repo = if data["isGitRepo"] == true {
-                "  — a git repository: Space imports it"
-            } else {
-                "  — Space looks for repositories here"
-            };
+            let repo =
+                if data["isGitRepo"] == true { "  — a git repository: s imports it" } else { "  — s looks for repositories here" };
             f.render_widget(
                 Paragraph::new(vec![Line::from(vec![
                     Span::styled(data["path"].as_str().unwrap_or_default().to_string(), t.bold()),
@@ -405,7 +402,7 @@ impl Projects {
             return;
         }
         let title = format!(
-            "Import repositories ({} checked) — Space check · a all · / filter · o other folder · Enter import · Esc cancel",
+            "Import repositories ({} checked) — x check · a all · / filter · o other folder · Enter import · Esc cancel",
             im.picked.len()
         );
         let b = block(title, true);
@@ -475,10 +472,8 @@ impl Projects {
         let Some(g) = &mut self.group else { return };
         let r = centered(area, 90, area.height.saturating_sub(4).max(12));
         f.render_widget(Clear, r);
-        let b = block(
-            format!("New group “{}” — members ({}) · Space check · / filter · Enter create · Esc cancel", g.name, g.picked.len()),
-            true,
-        );
+        let b =
+            block(format!("New group “{}” — members ({}) · x check · / filter · Enter create · Esc cancel", g.name, g.picked.len()), true);
         let inner = b.inner(r);
         f.render_widget(b, r);
         let [head, body] = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(inner);
@@ -545,11 +540,11 @@ impl Screen for Projects {
             Action::new("c", "Clone a repository by URL"),
             Action::new("e", "New empty repository"),
             Action::new("i", "Import repositories from the server"),
-            Action::new("G", "New group"),
+            Action::new("N", "New group"),
             Action::new("x", "Remove the selected project"),
             Action::new("/", "Find projects"),
-            Action::new("g", "Filter by group"),
-            Action::new("l", "Filter by language"),
+            Action::new("F", "Filter by group"),
+            Action::new("L", "Filter by language"),
             Action::new("s", sort),
         ]
     }
@@ -580,10 +575,10 @@ impl Screen for Projects {
                 });
                 self.discover(None, ctx);
             }
-            "G" => ctx.prompt("group-name", "New group — name", ""),
+            "N" => ctx.prompt("group-name", "New group — name", ""),
             "x" => self.remove(ctx),
             "/" => ctx.prompt("filter", "Find projects", self.filter.clone()),
-            "g" => {
+            "F" => {
                 let mut items = vec![(String::new(), "All groups".to_string())];
                 items.extend(
                     self.groups
@@ -592,7 +587,7 @@ impl Screen for Projects {
                 );
                 ctx.pick("group-filter", "Filter by group", items);
             }
-            "l" => {
+            "L" => {
                 let mut langs: Vec<String> =
                     self.projects.iter().filter_map(|p| p["language"]["name"].as_str().map(String::from)).collect();
                 langs.sort();
