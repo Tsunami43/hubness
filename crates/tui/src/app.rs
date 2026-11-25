@@ -26,6 +26,8 @@ enum Overlay {
     Leader,
     /// `?`: the keys of the current screen.
     Help,
+    /// `Space w`: moving between panes (windows).
+    Window,
 }
 
 struct Slot {
@@ -264,6 +266,10 @@ impl App {
                 }
                 return;
             }
+            Overlay::Window => {
+                self.overlay = Overlay::None;
+                return self.on_window_key(k);
+            }
             Overlay::None => {}
         }
         if ctrl && k.code == KeyCode::Char('q') {
@@ -315,8 +321,8 @@ impl App {
                 "gg" => self.send_key(KeyCode::Home, none, 1),
                 "gt" => self.next_tab(true, n),
                 "gT" => self.next_tab(false, n),
-                "^wh" | "^w^h" => self.send_key(KeyCode::BackTab, KeyModifiers::SHIFT, 1),
-                "^wl" | "^w^l" | "^ww" => self.send_key(KeyCode::Tab, none, 1),
+                "^wh" | "^w^h" | "^wk" | "^w^k" => self.focus_prev(),
+                "^wl" | "^w^l" | "^wj" | "^w^j" | "^ww" => self.send_key(KeyCode::Tab, none, 1),
                 _ => {}
             }
             return;
@@ -338,7 +344,7 @@ impl App {
             (KeyCode::Char('u'), true) => self.send_key(KeyCode::PageUp, none, n),
             (KeyCode::Char('f'), true) => self.send_key(KeyCode::PageDown, none, 2 * n),
             (KeyCode::Char('b'), true) => self.send_key(KeyCode::PageUp, none, 2 * n),
-            (KeyCode::Char('h'), true) => self.send_key(KeyCode::BackTab, KeyModifiers::SHIFT, 1),
+            (KeyCode::Char('h'), true) => self.focus_prev(),
             (KeyCode::Char('l'), true) => self.send_key(KeyCode::Tab, none, 1),
             (KeyCode::Char(' '), false) => self.overlay = Overlay::Leader,
             (KeyCode::Char('?'), false) => self.overlay = Overlay::Help,
@@ -370,6 +376,14 @@ impl App {
         }
         if k.code != KeyCode::Char('g') && !(ctrl && k.code == KeyCode::Char('w')) {
             self.count = None;
+        }
+    }
+
+    /// Focus the previous pane (Shift+Tab); screens with two panes may only know Tab.
+    fn focus_prev(&mut self) {
+        let ev = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        if matches!(self.with_screen(|s, ctx| s.on_key(ev, ctx)).unwrap_or(Handled::No), Handled::No) {
+            self.send_key(KeyCode::Tab, KeyModifiers::NONE, 1);
         }
     }
 
@@ -407,6 +421,7 @@ impl App {
             ("s", "System", Some(Route::System(None))),
             ("h", "Harness (agents)", Some(Route::Harness(None))),
             (",", "Settings", Some(Route::Settings(None))),
+            ("w", "Windows (panes) +h j k l", None),
             ("e", "Toggle sidebar", None),
             ("1-9", "Tab 1…9", None),
             ("r", "Reload", None),
@@ -425,6 +440,7 @@ impl App {
         match (key.as_str(), route) {
             (_, Some(r)) => self.go(r),
             (" ", _) => self.open_jump(),
+            ("w", _) => self.overlay = Overlay::Window,
             ("e", _) => self.sidebar = !self.sidebar,
             ("r", _) => {
                 self.refresh_shared();
@@ -438,6 +454,19 @@ impl App {
                 }
             }
         }
+    }
+
+    /// `Space w` then h / k (previous pane), l / j (next pane), w (cycle).
+    fn on_window_key(&mut self, k: KeyEvent) {
+        match k.code {
+            KeyCode::Char('h') | KeyCode::Char('k') | KeyCode::Left | KeyCode::Up => self.focus_prev(),
+            KeyCode::Char('l') | KeyCode::Char('j') | KeyCode::Char('w') | KeyCode::Right | KeyCode::Down => {
+                self.send_key(KeyCode::Tab, KeyModifiers::NONE, 1)
+            }
+            KeyCode::Char('e') => self.sidebar = !self.sidebar,
+            _ => {}
+        }
+        self.apply_requests();
     }
 
     fn open_jump(&mut self) {
@@ -610,6 +639,7 @@ impl App {
         match self.overlay {
             Overlay::Leader => self.draw_which_key(f, main, true),
             Overlay::Help => self.draw_which_key(f, main, false),
+            Overlay::Window => self.draw_window_keys(f, main),
             Overlay::None => {}
         }
         if let Some((_, modal, input)) = &self.modal {
@@ -626,7 +656,7 @@ impl App {
             } else {
                 ("PROMPT", t.magenta)
             }
-        } else if self.overlay == Overlay::Leader {
+        } else if matches!(self.overlay, Overlay::Leader | Overlay::Window) {
             ("LEADER", t.magenta)
         } else if self.typing() {
             ("INSERT", t.ok)
@@ -740,6 +770,34 @@ impl App {
                 .block(Block::default().borders(Borders::RIGHT).border_style(t.line_style()).style(Style::default().bg(t.bg_dark))),
             area,
         );
+    }
+
+    fn draw_window_keys(&self, f: &mut Frame, area: Rect) {
+        let t = Theme::get();
+        let entries = [
+            ("h", "pane to the left"),
+            ("j", "pane below"),
+            ("k", "pane above"),
+            ("l", "pane to the right"),
+            ("w", "next pane"),
+            ("e", "toggle sidebar"),
+        ];
+        let h = entries.len() as u16 + 2;
+        let rect =
+            Rect { x: area.x + 1, y: area.y + area.height.saturating_sub(h), width: 40.min(area.width.saturating_sub(2)), height: h };
+        f.render_widget(Clear, rect);
+        let b = block(format!("{}  leader › windows", icon("\u{f2d2}", "")), true).style(Style::default().bg(t.bg_dark));
+        let lines: Vec<Line> = entries
+            .iter()
+            .map(|(k, l)| {
+                Line::from(vec![
+                    Span::styled(format!("{k:>3}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                    Span::styled(" → ", t.muted_style()),
+                    Span::styled(*l, Style::default().fg(t.fg)),
+                ])
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines).block(b), rect);
     }
 
     /// which-key: the leader's global keys (`Space`) or the screen's keys (`?`).

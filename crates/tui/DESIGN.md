@@ -25,7 +25,7 @@ Motions work in every list, feed, tree and viewer:
 | `Ctrl+d` / `Ctrl+u` | half a page down / up |
 | `Ctrl+f` / `Ctrl+b` | a page down / up |
 | `Enter` | open / confirm |
-| `Ctrl+h` / `Ctrl+l` (or `Ctrl+w h/l`) | focus the pane to the left / right |
+| `Ctrl+h` / `Ctrl+l`, `Ctrl+w h/j/k/l`, `Space w h/j/k/l` | focus another pane |
 | `gt` / `gT` | next / previous tab (also `Alt+1…9`) |
 | `/` | filter / search the current list |
 | `i` | start typing (the message box; `Enter` too in a feed) |
@@ -47,6 +47,7 @@ Every other letter is a screen action, listed by `?` and in the palette. Screens
 | `Space s` | system |
 | `Space h` | harness (agents) |
 | `Space ,` | settings |
+| `Space w h/j/k/l` | focus the pane left / below / above / right (`w` cycles) |
 | `Space e` | toggle the sidebar |
 | `Space 1…9` | tab 1…9 |
 | `Space r` | reload |

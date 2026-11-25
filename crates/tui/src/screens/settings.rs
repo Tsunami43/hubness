@@ -607,7 +607,7 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("gg G", "first / last"),
             ("Ctrl+d Ctrl+u", "half a page down / up"),
             ("Ctrl+f Ctrl+b", "a page down / up"),
-            ("Ctrl+h Ctrl+l", "focus the pane to the left / right (also Ctrl+w h / l)"),
+            ("Ctrl+h Ctrl+l", "focus the pane to the left / right (also Ctrl+w h/j/k/l, Space w h/j/k/l)"),
             ("gt gT", "next / previous tab (also Alt+1…9)"),
             ("Enter", "open / confirm"),
             ("/", "filter or search the list"),
@@ -620,6 +620,7 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("Space", "jump to a session"),
             ("c p s h ,", "chats · projects · system · harness · settings"),
+            ("w h/j/k/l", "focus another pane (w cycles)"),
             ("e", "toggle the sidebar"),
             ("1…9", "tab 1…9"),
             ("r", "reload"),
