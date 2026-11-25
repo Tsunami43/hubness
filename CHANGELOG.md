@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
+### Added
+
+- Rust server implementing the whole API on the same SQLite data folder, with contract
+  tests shared with the TypeScript server, and a terminal UI client on top of it.
+- One `hubness` command: `serve`, `server start|stop|restart|status|logs|config|uninstall`
+  (systemd user service), `user add|passwd|rm|list`, `tui`, `webapp` and `update`
+  (self-update from GitHub Releases, `--check` for scripts). It comes in a full build (the
+  hub with the web app inside) and a client build (TUI, webapp, update; no server code).
+- User accounts with sign-in in the web app, the TUI and the API; a public address is
+  refused while the hub has no accounts.
+- `curl | sh` installer (`--tui-only` for the client build, `--from-source`, `--data-dir`)
+  and release builds for Linux and macOS on x86_64 and aarch64.
+- Harness Extensions: MCP servers in the agents' own configs with a catalog from the MCP
+  Registry, skills across agents, rules, subagents, commands and plugins.
+
+### Changed
+
+- The pre-release Rust binaries `hubcli` and `hubtui` are replaced by `hubness` (`hubtui`
+  is now `hubness tui`). The installer removes the old binaries and moves a service that
+  runs `hubcli` over to `hubness`; `hubness server start` also rewrites such a unit.
+- Faster feeds, file trees and the preview proxy (less re-rendering, no blocking I/O).
+
 ## [0.1.0] - 2026-11-24
 
 ### Added
