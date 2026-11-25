@@ -3,10 +3,23 @@
 ## Setup
 
 ```sh
-corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm dev
 ```
+
+The pnpm version is pinned in `package.json` (`packageManager`). Without a global pnpm,
+run it through npx: `npx -y pnpm@11.29.0 install --frozen-lockfile`, `npx -y pnpm@11.29.0 dev`.
+Corepack is not required.
+
+## Dependencies
+
+- JavaScript dependencies are pinned to exact versions (`saveExact` in
+  `pnpm-workspace.yaml`, `save-exact` in `.npmrc`); versions published less than a day ago
+  are not resolved (`minimumReleaseAge`). Check with `pnpm outdated -r` and `pnpm audit`.
+- Rust dependencies are declared once in `[workspace.dependencies]` of the root
+  `Cargo.toml` with exact versions (`=x.y.z`) and referenced with `.workspace = true`;
+  `Cargo.lock` is committed, builds and installs use `--locked`. The MSRV is the
+  workspace `rust-version`. Check with `cargo audit` and `cargo tree -d`.
 
 ## Branches (Git Flow)
 

@@ -132,7 +132,7 @@ pub(crate) fn base64_encode(b: &[u8]) -> String {
 }
 
 fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    jiff::Timestamp::now().as_millisecond()
 }
 
 /// JavaScript template-literal rendering of an id (`${v}`).
@@ -448,8 +448,7 @@ fn on_rate_limit(turn: &Turn, state: &Mutex<State>, profile_id: &str, info: &Val
             let u = w["utilization"].as_f64()?;
             let resets = w.get("resetsAt").filter(|v| !v.is_null() && *v != &json!(0) && *v != &json!("")).and_then(|v| {
                 let secs = v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))?;
-                chrono::DateTime::from_timestamp_millis((secs * 1000.0) as i64)
-                    .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+                jiff::Timestamp::from_millisecond((secs * 1000.0) as i64).ok().map(crate::db::iso)
             });
             Some(json!({ "id": id, "utilization": (if u <= 1.0 { u * 100.0 } else { u }).round() as i64, "resetsAt": resets }))
         })

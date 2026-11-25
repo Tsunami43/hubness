@@ -175,7 +175,7 @@ pub fn write_file_safe(root: &Path, rel: &str, content: &str, base_hash: Option<
     }
     let mode = meta.permissions().mode() & 0o7777;
     let name = paths::basename(&abs);
-    let millis = chrono::Utc::now().timestamp_millis();
+    let millis = jiff::Timestamp::now().as_millisecond();
     let tmp = abs.with_file_name(format!(".{name}.hubness-{}-{millis}.tmp", std::process::id()));
     let result = (|| -> std::io::Result<()> {
         fs::write(&tmp, content.as_bytes())?;

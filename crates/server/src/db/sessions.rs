@@ -179,7 +179,7 @@ pub fn recover_interrupted(db: &Connection) -> rusqlite::Result<()> {
             "kind": "notice",
             "level": "info",
             "text": INTERRUPTED_NOTICE,
-            "uid": format!("restart:{}", chrono::Utc::now().timestamp_millis()),
+            "uid": format!("restart:{}", jiff::Timestamp::now().as_millisecond()),
             "seq": next_seq(db, &id)?,
             "ts": now(),
         });

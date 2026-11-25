@@ -32,7 +32,7 @@ own machine or server and work with them from one browser UI — on a desktop or
 ## Requirements
 
 - Node.js 24 or newer
-- pnpm 10 (via `corepack enable`)
+- pnpm 11 (or `npx -y pnpm@11.29.0`; corepack is not needed)
 - git
 - At least one agent CLI: `claude`, `codex` (through `@zed-industries/codex-acp`),
   `opencode` or `grok` — the Harness page can install them for you
@@ -83,7 +83,6 @@ requires, and keep it behind HTTPS or a VPN.
 ```sh
 git clone <repo-url> hubness
 cd hubness
-corepack enable
 pnpm install
 cp .env.example .env   # optional, defaults are fine
 pnpm dev

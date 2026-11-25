@@ -774,7 +774,7 @@ pub fn start(spec: &'static Spec, turn: Arc<Turn>) -> Result<Started, String> {
         out: out_tx,
         calls: Arc::default(),
         next_id: AtomicI64::new(0),
-        run_tag: base36(chrono::Utc::now().timestamp_millis() as u64),
+        run_tag: base36(jiff::Timestamp::now().as_millisecond() as u64),
         mode,
         pid,
     });
@@ -917,8 +917,8 @@ pub fn describe_opencode_retry(u: &Value) -> Option<(String, String)> {
         .filter(|s| truthy(Some(s)))
         .map(|s| format!("{} ", s.as_str().map(String::from).unwrap_or_else(|| s.to_string())))
         .unwrap_or_default();
-    let when = r["nextRetryAt"].as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|t| {
-        let secs = (t.timestamp_millis() - chrono::Utc::now().timestamp_millis()) as f64 / 1000.0;
+    let when = r["nextRetryAt"].as_str().and_then(|t| t.parse::<jiff::Timestamp>().ok()).map(|t| {
+        let secs = (t.as_millisecond() - jiff::Timestamp::now().as_millisecond()) as f64 / 1000.0;
         secs.round().max(0.0) as i64
     });
     let error = format!("{status}{reason}").trim().to_string();

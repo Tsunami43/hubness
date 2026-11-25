@@ -1215,7 +1215,9 @@ async function mcpProject(name: string): Promise<{ id: string; path: string }> {
 }
 
 test('harness MCP: the matrix from the agents own configs, add, connect, disconnect, delete', async () => {
-  const { parse: parseToml } = await import('smol-toml');
+  const toml = await import('smol-toml');
+  // smol-toml builds null-prototype objects; clone them into plain ones for deepStrictEqual
+  const parseToml = (text: string): any => structuredClone(toml.parse(text));
   const { statSync } = await import('node:fs');
   const proj = await mcpProject('mcp-project');
   const claudeJson = join(agentHome, '.claude.json');

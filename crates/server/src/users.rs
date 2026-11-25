@@ -161,18 +161,18 @@ pub fn token_hash(token: &str) -> String {
     Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn stamp(t: chrono::DateTime<chrono::Utc>) -> String {
-    t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+fn stamp(t: jiff::Timestamp) -> String {
+    crate::db::iso(t)
 }
 
 /// Start a session for the user; returns the token (shown to the client once).
 pub fn create_session(db: &Connection, user_id: &str) -> ApiResult<String> {
     let token = random_token()?;
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     db.execute("DELETE FROM auth_sessions WHERE expires < ?", [stamp(now)])?;
     db.execute(
         "INSERT INTO auth_sessions (token_hash, user_id, created_at, last_seen, expires) VALUES (?, ?, ?, ?, ?)",
-        params![token_hash(&token), user_id, stamp(now), stamp(now), stamp(now + chrono::Duration::days(SESSION_DAYS))],
+        params![token_hash(&token), user_id, stamp(now), stamp(now), stamp(now + jiff::SignedDuration::from_hours(SESSION_DAYS * 24))],
     )?;
     Ok(token)
 }
@@ -189,15 +189,15 @@ pub fn session_user(db: &Connection, token: &str) -> rusqlite::Result<Option<Use
         )
         .optional()?;
     let Some((user, last_seen, expires)) = row else { return Ok(None) };
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     if expires < stamp(now) {
         db.execute("DELETE FROM auth_sessions WHERE token_hash = ?", [&hash])?;
         return Ok(None);
     }
-    if last_seen < stamp(now - chrono::Duration::seconds(TOUCH_SECS)) {
+    if last_seen < stamp(now - jiff::SignedDuration::from_secs(TOUCH_SECS)) {
         db.execute(
             "UPDATE auth_sessions SET last_seen = ?, expires = ? WHERE token_hash = ?",
-            params![stamp(now), stamp(now + chrono::Duration::days(SESSION_DAYS)), hash],
+            params![stamp(now), stamp(now + jiff::SignedDuration::from_hours(SESSION_DAYS * 24)), hash],
         )?;
     }
     Ok(Some(user))

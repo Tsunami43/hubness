@@ -10,7 +10,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PNPM_VERSION="10.13.1"
+PNPM_VERSION="11.29.0"
 MIN_RUST="1.85"
 SERVICE="hubness"
 

@@ -11,12 +11,12 @@ use crate::paths;
 /// start of the session id, e.g. `2026-11-06_15-09-30_4333b6d2`. Not the message text: a
 /// title in a path is unreadable after transliteration and leaks the topic.
 pub fn inbox_dir_for(config: &Config, id: &str) -> ApiResult<String> {
-    let now = chrono::Local::now();
+    let now = jiff::ZonedDateTime::now();
     let short: String = id.chars().filter(char::is_ascii_alphanumeric).take(8).collect();
     let short = if short.is_empty() { "chat".to_string() } else { short };
-    let mut dir = config.inbox_dir.join(format!("{}_{short}", now.format("%Y-%m-%d_%H-%M-%S")));
+    let mut dir = config.inbox_dir.join(format!("{}_{short}", now.strftime("%Y-%m-%d_%H-%M-%S")));
     if dir.exists() {
-        let suffix = radix36(chrono::Utc::now().timestamp_millis() as u64);
+        let suffix = radix36(jiff::Timestamp::now().as_millisecond() as u64);
         dir = dir.with_file_name(format!("{}-{suffix}", paths::basename(&dir)));
     }
     fs::create_dir_all(&dir)?;
