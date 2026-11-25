@@ -23,15 +23,21 @@ pub fn api() -> Router<AppState> {
         .route("/projects", get(list_projects))
         .route("/projects/discover", get(discover))
         .route("/projects/import", axum::routing::post(import))
-        .route("/projects/{id}", axum::routing::patch(update_project).delete(delete_project))
+        .route("/projects/new-repo", axum::routing::post(new_repo))
+        // clone by URL is a terminal job: not ported yet
+        .route("/projects/clone", axum::routing::post(|| async { HttpError::not_found("Not found") }))
+        .route("/projects/{id}", get(project_detail).patch(update_project).delete(delete_project))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/groups", get(list_groups).post(create_group))
         .route("/groups/{id}", get(group_detail).patch(update_group).delete(delete_group))
+        .route("/groups/{id}/context", get(group_context))
         .merge(crate::sessions::routes())
         .merge(crate::kanban::routes())
         .merge(crate::secrets::routes())
         .merge(crate::manifest::routes())
         .merge(crate::files::routes())
+        .merge(crate::git::routes())
+        .merge(crate::git_auth::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 
@@ -39,8 +45,30 @@ type Q = Query<HashMap<String, String>>;
 
 // ---------- projects ----------
 
-async fn list_projects(State(s): State<AppState>) -> ApiResult<Json<Value>> {
-    s.with(|db, _| Ok(json!(catalog::list_projects(db)?)))
+async fn list_projects(State(s): State<AppState>) -> ApiResult<Json<Vec<hubness_core::Project>>> {
+    let list = s.with(|db, _| catalog::list_projects(db))?;
+    catalog::refresh_repo_meta_in_background(&s, &list.0);
+    Ok(list)
+}
+
+async fn project_detail(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<hubness_core::ProjectDetail>> {
+    Ok(Json(catalog::project_detail(&s, &id).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NewRepoBody {
+    name: Option<String>,
+    group_id: Option<String>,
+}
+
+/// A new empty project (folder + git init) in the group folder or the projects folder.
+async fn new_repo(State(s): State<AppState>, JsonBody(b): JsonBody<NewRepoBody>) -> ApiResult<(StatusCode, Json<hubness_core::Project>)> {
+    if b.name.as_ref().is_some_and(|n| n.encode_utf16().count() > 200) {
+        return Err(HttpError::bad_request("name: Too big: expected string to have <=200 characters"));
+    }
+    let p = catalog::create_repo(&s, b.name.as_deref(), b.group_id.as_deref()).await?;
+    Ok((StatusCode::CREATED, Json(p)))
 }
 
 async fn discover(State(s): State<AppState>, Query(q): Q) -> ApiResult<Json<Value>> {
@@ -153,6 +181,16 @@ async fn create_group(State(s): State<AppState>, JsonBody(b): JsonBody<GroupBody
 
 async fn update_group(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b): JsonBody<GroupBody>) -> ApiResult<Json<Value>> {
     s.with(|db, cfg| Ok(json!(catalog::update_group(db, cfg, &id, b.into())?)))
+}
+
+/// Aggregated context the agent will receive in a group session (preview).
+async fn group_context(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let g = s.with(|db, _| catalog::group_or_404(db, &id))?.0;
+    catalog::refresh_group_repos(&s, &g).await?;
+    s.with(|db, _| {
+        let g = catalog::group_or_404(db, &g.id)?;
+        Ok(json!({ "context": catalog::group_agent_context(db, &g)? }))
+    })
 }
 
 async fn delete_group(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {

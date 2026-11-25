@@ -1,5 +1,5 @@
-//! Catalog of projects and groups — a port of the parts of `apps/server/src/catalog.ts`
-//! that need neither git nor a running agent.
+//! Catalog of projects and groups — a port of `apps/server/src/catalog.ts` (except clone,
+//! which needs terminal jobs, and deleting project folders).
 //!
 //! - Project = exactly one git repository. Appears only explicitly (import, new, clone).
 //! - The projects folder is fixed (`HUBNESS_HOME/projects`); the hub never scans it on its
@@ -9,17 +9,20 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use hubness_core::{
-    DiscoverResult, DiscoveredRepo, GroupDetail, HubSettings, PermissionMode, Project, ProjectGroup, ProjectKind, WorkspaceScopeKind,
+    DiscoverResult, DiscoveredRepo, GroupDetail, GroupRef, HubSettings, Language, PermissionMode, Project, ProjectDetail, ProjectGroup,
+    ProjectKind, RepoInfo, RepoLinks, WorkspaceScopeKind,
 };
 use rusqlite::Connection;
 
+use crate::AppState;
 use crate::config::Config;
 use crate::db::{self, groups, kv, projects, sessions};
 use crate::error::{ApiResult, HttpError};
-use crate::paths;
 use crate::workspaces;
+use crate::{context, git, git_providers, languages, paths};
 
 const SKIP: &[&str] = &["node_modules", "target", "dist", "build", "vendor", "__pycache__", ".venv", "venv"];
 const MAX_DEPTH: usize = 3;
@@ -371,4 +374,186 @@ pub fn delete_group(db: &Connection, config: &Config, id: &str, is_active: &dyn 
     workspaces::remove_workspaces(db, config, WorkspaceScopeKind::Group, id)?;
     groups::delete(db, id)?;
     Ok(())
+}
+
+// ---------- repository info (needs git) ----------
+
+/// Repository info for lists (provider, remote, default branch, language) — refreshed once
+/// per server start, in the background, one project at a time.
+#[derive(Clone, Default)]
+pub struct MetaRefresh {
+    refreshed: Arc<Mutex<HashSet<String>>>,
+    queue: Arc<tokio::sync::Mutex<()>>,
+}
+
+pub fn refresh_repo_meta_in_background(s: &AppState, list: &[Project]) {
+    let todo: Vec<Project> = {
+        let Ok(mut done) = s.meta.refreshed.lock() else { return };
+        list.iter().filter(|p| p.kind == ProjectKind::Normal && p.missing.is_none() && done.insert(p.id.clone())).cloned().collect()
+    };
+    if todo.is_empty() {
+        return;
+    }
+    let s = s.clone();
+    tokio::spawn(async move {
+        // the queue lock is fair: batches run one after another, in the order they were queued
+        let _turn = s.meta.queue.lock().await;
+        for p in todo {
+            let _ = repo_info(&s, &p).await;
+        }
+    });
+}
+
+/// Repository info from git; cached in the project (provider, URL, default branch, language).
+pub async fn repo_info(s: &AppState, p: &Project) -> ApiResult<RepoInfo> {
+    let dir = Path::new(&p.path);
+    let b = git::repo_basics(dir).await;
+    let remote_url = b.remote_url.as_deref().map(git_providers::strip_credentials);
+    let prov = git_providers::resolve_provider(remote_url.as_deref());
+    let provider = prov.as_ref().map(|x| x.id);
+    if p.git_provider != provider || p.repo_url != remote_url || p.default_branch != b.default_branch {
+        projects::set_repo_meta(&*s.db()?, &p.id, provider, remote_url.as_deref(), b.default_branch.as_deref())?;
+    }
+    let links = prov.as_ref().and_then(|x| x.links());
+    let languages = if b.is_repo { languages::repo_languages(dir).await } else { vec![] };
+    let main = languages.first().map(|l| Language { name: l.name.clone(), color: l.color.clone() });
+    if main != p.language {
+        projects::set_language(&*s.db()?, &p.id, main.as_ref())?;
+    }
+    Ok(RepoInfo {
+        languages,
+        is_repo: b.is_repo,
+        provider,
+        provider_label: prov.as_ref().map(|x| x.label.to_string()),
+        remote_url,
+        links: links.map(|l| RepoLinks {
+            branch: b.branch.as_deref().map(|br| l.branch(br)),
+            new_pull_request: match (&b.branch, &b.default_branch) {
+                (Some(br), Some(def)) if br != def => Some(l.new_pull_request(br, Some(def))),
+                _ => None,
+            },
+            repo: l.repo,
+        }),
+        branch: b.branch,
+        default_branch: b.default_branch,
+    })
+}
+
+/// `GET /projects/:id`: the project with repository info, its groups and workspace.
+pub async fn project_detail(s: &AppState, id: &str) -> ApiResult<ProjectDetail> {
+    let p = project_or_404(&*s.db()?, id)?;
+    let repo = repo_info(s, &p).await?;
+    let db = s.db()?;
+    let fresh = projects::get(&db, id)?.ok_or_else(|| HttpError::not_found("Project not found"))?;
+    let mut refs = vec![];
+    for gid in &fresh.group_ids {
+        if let Some(g) = groups::get(&db, gid)? {
+            refs.push(GroupRef { id: g.id, name: g.name });
+        }
+    }
+    let workspace = workspaces::project_workspace(&db, &fresh)?;
+    Ok(ProjectDetail { project: fresh, repo, groups: refs, workspace })
+}
+
+/// Refresh the cached repository info of a group (for the context preview).
+pub async fn refresh_group_repos(s: &AppState, g: &ProjectGroup) -> ApiResult<()> {
+    let list: Vec<Project> = group_projects(&*s.db()?, g)?.into_iter().filter(|p| Path::new(&p.path).exists()).collect();
+    for r in futures_util::future::join_all(list.iter().map(|p| repo_info(s, p))).await {
+        r?;
+    }
+    Ok(())
+}
+
+/// Context the agent receives in a group session (repository info from the project cache).
+pub fn group_agent_context(db: &Connection, g: &ProjectGroup) -> ApiResult<String> {
+    Ok(context::group_context(g, &group_projects(db, g)?))
+}
+
+// ---------- new projects ----------
+
+/// Where to put a new project: the group folder (if set) or the projects folder.
+fn storage_dir(config: &Config, group: Option<&ProjectGroup>) -> PathBuf {
+    group.and_then(|g| g.folder.as_ref()).map(PathBuf::from).unwrap_or_else(|| config.projects_dir.clone())
+}
+
+/// Folder name from a project name: runs of anything but `[A-Za-z0-9_.-]` → `-`, no leading
+/// `-`/`.`, no trailing `-` (`replace(/[^\w.-]+/g, '-').replace(/^[-.]+|-+$/g, '')`).
+pub fn slug(name: &str) -> String {
+    let mut out = String::new();
+    let mut in_run = false;
+    for c in crate::git_providers::js_trim(name).chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+            out.push(c);
+            in_run = false;
+        } else if !in_run {
+            out.push('-');
+            in_run = true;
+        }
+    }
+    out.trim_start_matches(['-', '.']).trim_end_matches('-').to_string()
+}
+
+fn target_dir(config: &Config, name: &str, group: Option<&ProjectGroup>) -> ApiResult<(PathBuf, String)> {
+    let root = storage_dir(config, group);
+    let slug = slug(name);
+    if slug.is_empty() {
+        return Err(HttpError::bad_request("Name is required"));
+    }
+    let dir = root.join(&slug);
+    if dir.exists() {
+        return Err(HttpError::new(409, format!("A folder named “{slug}” already exists in {}", paths::to_string(&root))));
+    }
+    Ok((dir, slug))
+}
+
+/// A new empty project in storage (group or projects folder): folder + `git init`.
+pub async fn create_repo(s: &AppState, name: Option<&str>, group_id: Option<&str>) -> ApiResult<Project> {
+    let (dir, slug, group) = {
+        let db = s.db()?;
+        let group = match group_id.filter(|g| !g.is_empty()) {
+            Some(id) => Some(group_or_404(&db, id)?),
+            None => None,
+        };
+        let (dir, slug) = target_dir(&s.config, name.unwrap_or(""), group.as_ref())?;
+        (dir, slug, group)
+    };
+    fs::create_dir_all(&dir)?;
+    let out = tokio::process::Command::new("git")
+        .arg("init")
+        .arg("-q")
+        .arg(&dir)
+        .env_clear()
+        .envs(crate::config::child_env())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await?;
+    if !out.status.success() {
+        return Err(HttpError::new(
+            500,
+            format!("Command failed: git init -q {}\n{}", paths::to_string(&dir), String::from_utf8_lossy(&out.stderr)),
+        ));
+    }
+    let db = s.db()?;
+    let p = projects::create(&db, &slug, &paths::to_string(&dir), ProjectKind::Normal)?;
+    if let Some(g) = group {
+        // re-read: the members may have changed while git was running
+        if let Some(g) = groups::get(&db, &g.id)? {
+            add_to_group(&db, &g, std::slice::from_ref(&p.id))?;
+        }
+    }
+    projects::get(&db, &p.id)?.ok_or_else(|| HttpError::not_found("Project not found"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slug;
+
+    #[test]
+    fn slugs_like_the_ts_server() {
+        assert_eq!(slug("  My new repo!  "), "My-new-repo");
+        assert_eq!(slug("..hidden"), "hidden");
+        assert_eq!(slug("-a--b-"), "a--b");
+        assert_eq!(slug("проект x"), "x");
+        assert_eq!(slug("!!!"), "");
+    }
 }

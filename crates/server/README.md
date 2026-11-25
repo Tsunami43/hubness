@@ -29,8 +29,9 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Settings | `GET /settings`, `PUT /settings` | done |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (local symlink workspace) | done |
 | Manifest | `GET/POST /projects/:id/manifest`, manifest section of the agent context | done |
-| Projects | `GET /projects/:id` (repo info), `new-repo`, `clone`, `groups/:id/context` | todo |
-| Git logins | `/git-credentials` (needs the AES-256-GCM secrets format) | todo |
+| Projects | `GET /projects/:id` (repo info, provider links, languages), `POST /projects/new-repo`, `GET /groups/:id/context`, background repo-meta refresh on `GET /projects` | done |
+| Projects | `POST /projects/clone` (a terminal job) | todo |
+| Git logins | `GET /git-credentials`, `PUT/DELETE /git-credentials/:host` (same encrypted rows as TS), credential helper `hubness git-credential-helper` for fetch/pull/push | done |
 | Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
 | Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
 | Sandbox | bubblewrap wrap for project/group agent runs (same hidden paths as TS) | done |
@@ -42,7 +43,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |
-| Git | status, diff, log, branches, operations | todo |
+| Git | `/projects/:id/git/*`: status, diff, branches, log, show, stashes, every `POST /git/:op` operation | done |
 | Environment | runs, shells, jobs, preview proxy, secrets, sandbox | todo |
 | Kanban | cards CRUD, start an agent from a card, card → review after the turn | done |
 | Harness | agent install/accounts/models | todo |
@@ -50,5 +51,11 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 
 Known gaps in ported routes: the background refresh of repository metadata on
 `GET /projects` is not ported. Session events are passed through as JSON (`HubEvent` is
+Known gaps in ported routes: sessions of agents other than Claude Code get an error
+notice in the feed. Session events are passed through as JSON (`HubEvent` is
 not typed in Rust yet); `serde_json` keeps key order and exact floats so the output is
 byte-identical to the TS server.
+
+Repository languages use GitHub Linguist data generated from the `linguist-languages`
+npm package into `src/languages_data.rs`; regenerate it with
+`node crates/server/build/languages.mjs` after updating the package.

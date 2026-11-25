@@ -185,6 +185,28 @@ pub mod projects {
         db.execute("DELETE FROM projects WHERE id = ?", [id])?;
         Ok(())
     }
+
+    /// Cached repository info (does not touch `updated_at`).
+    pub fn set_repo_meta(
+        db: &Connection,
+        id: &str,
+        git_provider: Option<GitProviderId>,
+        repo_url: Option<&str>,
+        default_branch: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let provider = git_provider.map(|p| serde_json::to_value(p).ok().and_then(|v| v.as_str().map(String::from)));
+        db.execute(
+            "UPDATE projects SET git_provider = ?, repo_url = ?, default_branch = ? WHERE id = ?",
+            (provider.flatten(), repo_url, default_branch, id),
+        )?;
+        Ok(())
+    }
+
+    pub fn set_language(db: &Connection, id: &str, language: Option<&Language>) -> rusqlite::Result<()> {
+        let json = language.map(|l| serde_json::to_string(l).expect("language serializes"));
+        db.execute("UPDATE projects SET language = ? WHERE id = ?", (json, id))?;
+        Ok(())
+    }
 }
 
 // ---------- project groups ----------

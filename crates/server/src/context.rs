@@ -4,7 +4,7 @@
 //! session. A more specific level wins on conflict. AGENTS.md / CLAUDE.md in repositories
 //! are read by the agents themselves.
 
-use hubness_core::{GitProviderId, Project, ProjectGroup};
+use hubness_core::{Project, ProjectGroup};
 
 fn section(title: &str, body: &str) -> String {
     let body = body.trim();
@@ -34,22 +34,14 @@ pub fn project_context(p: &Project) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-fn provider_label(p: Option<GitProviderId>) -> &'static str {
-    match p {
-        Some(GitProviderId::Github) => "GitHub",
-        Some(GitProviderId::Gitlab) => "GitLab",
-        Some(GitProviderId::Bitbucket) => "Bitbucket",
-        _ => "Git",
-    }
-}
-
 fn repo_line(p: &Project) -> String {
     let mut bits = vec![format!("path: {}", p.path)];
     if let Some(b) = &p.default_branch {
         bits.push(format!("default branch: {b}"));
     }
-    if let Some(url) = &p.repo_url {
-        bits.push(format!("remote: {url} ({})", provider_label(p.git_provider)));
+    // the provider label comes from the cached URL, like `groupAgentContext` in catalog.ts
+    if let Some(prov) = crate::git_providers::resolve_provider(p.repo_url.as_deref()) {
+        bits.push(format!("remote: {} ({})", p.repo_url.as_deref().unwrap_or_default(), prov.label));
     }
     format!("- {} — {}", p.name, bits.join(", "))
 }

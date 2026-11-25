@@ -13,10 +13,15 @@ pub mod db;
 pub mod environments;
 pub mod error;
 pub mod files;
+pub mod git;
+pub mod git_auth;
+pub mod git_providers;
 pub mod home;
 pub mod http;
 pub mod inbox;
 pub mod kanban;
+pub mod languages;
+mod languages_data;
 pub mod manifest;
 pub mod mcp;
 pub mod paths;
@@ -47,6 +52,7 @@ pub struct AppState {
     watches: watch::Watches,
     /// The hub's own URL for agents' MCP servers (set once the listener is bound).
     self_url: Arc<std::sync::OnceLock<String>>,
+    meta: catalog::MetaRefresh,
 }
 
 impl AppState {
@@ -64,6 +70,7 @@ impl AppState {
             runtime: runtime::Runtime::default(),
             watches: watch::Watches::default(),
             self_url: Arc::default(),
+            meta: Default::default(),
         })
     }
 

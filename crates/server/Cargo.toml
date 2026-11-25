@@ -16,6 +16,7 @@ futures-util = "0.3.34"
 hubness-core = { version = "0.1.0", path = "../core" }
 libc = "0.2.191"
 notify = "9.0.0"
+percent-encoding = "2.3.2"
 regex = "1.13.2"
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }

@@ -334,6 +334,217 @@ pub struct SecretInfo {
     pub updated_at: String,
 }
 
+// ---------- project repository info (packages/shared/src/projects.ts) ----------
+
+/// A language of a repository by bytes (like the language bar on GitHub).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RepoLanguage {
+    pub name: String,
+    pub color: Option<String>,
+    #[serde(serialize_with = "js_number")]
+    pub percent: f64,
+}
+
+/// Provider web links of a repository.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoLinks {
+    pub repo: String,
+    pub branch: Option<String>,
+    pub new_pull_request: Option<String>,
+}
+
+/// Project repository info (read from git on request).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoInfo {
+    /// Languages by bytes (colors from GitHub Linguist).
+    pub languages: Vec<RepoLanguage>,
+    pub is_repo: bool,
+    pub provider: Option<GitProviderId>,
+    pub provider_label: Option<String>,
+    pub remote_url: Option<String>,
+    pub branch: Option<String>,
+    pub default_branch: Option<String>,
+    /// Provider web links (`None` for generic).
+    pub links: Option<RepoLinks>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupRef {
+    pub id: String,
+    pub name: String,
+}
+
+/// `GET /api/projects/:id`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectDetail {
+    #[serde(flatten)]
+    pub project: Project,
+    pub repo: RepoInfo,
+    pub groups: Vec<GroupRef>,
+    pub workspace: Workspace,
+}
+
+// ---------- git panel (packages/shared/src/git.ts) ----------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitFile {
+    pub path: String,
+    /// Index status letter (X from porcelain) or ' '.
+    pub index: String,
+    /// Working tree status letter (Y) or ' '.
+    pub worktree: String,
+    pub untracked: bool,
+    pub conflicted: bool,
+    /// For renames — the old path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+}
+
+/// An operation stopped half-way (conflicts or a paused rebase).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum GitRepoState {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+}
+
+impl GitRepoState {
+    /// The git command that continues or aborts this operation.
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Rebase => "rebase",
+            Self::CherryPick => "cherry-pick",
+            Self::Revert => "revert",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatus {
+    pub is_repo: bool,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: u64,
+    pub behind: u64,
+    pub detached: bool,
+    pub files: Vec<GitFile>,
+    pub state: Option<GitRepoState>,
+    /// Number of stash entries.
+    pub stashes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitStash {
+    /// `stash@{0}`
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub message: String,
+    pub date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+    pub name: String,
+    pub current: bool,
+    pub remote: bool,
+    pub upstream: Option<String>,
+    pub last_commit: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitCommit {
+    pub hash: String,
+    pub short: String,
+    /// Parent hashes (two or more — a merge).
+    pub parents: Vec<String>,
+    pub subject: String,
+    pub author: String,
+    pub date: String,
+    /// Decorations from `%D`: `HEAD -> main`, `origin/main`, `tag: v1`.
+    pub refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitLogResponse {
+    pub commits: Vec<GitCommit>,
+    /// More commits exist beyond the limit.
+    pub more: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitAuthProtocol {
+    Https,
+    Ssh,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitAuthReason {
+    /// No login stored for the host (https) or no key accepted (ssh).
+    Missing,
+    /// The stored login was refused.
+    Rejected,
+    /// The ssh host is not in known_hosts.
+    Hostkey,
+}
+
+/// Why the remote refused access.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitAuthProblem {
+    pub host: String,
+    pub protocol: GitAuthProtocol,
+    pub reason: GitAuthReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitOpResult {
+    pub ok: bool,
+    pub output: String,
+    /// Set when a network operation failed because the remote refused access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<GitAuthProblem>,
+}
+
+impl GitOpResult {
+    pub fn fail(output: impl Into<String>) -> Self {
+        Self { ok: false, output: output.into(), auth: None }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitCredentialKind {
+    Token,
+    Password,
+}
+
+impl GitCredentialKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Token => "token",
+            Self::Password => "password",
+        }
+    }
+}
+
+/// Stored git login for one host (the secret itself never leaves the server).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCredentialInfo {
+    pub host: String,
+    pub username: String,
+    pub kind: GitCredentialKind,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CardColumn {

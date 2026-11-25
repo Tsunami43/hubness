@@ -64,6 +64,12 @@ pub fn keys(data_dir: &Path) -> ApiResult<Vec<Key>> {
     Ok(materials.iter().map(|m| derive(m)).collect())
 }
 
+/// Keys from explicit key materials (tests: vectors produced with a fixed HUBNESS_SECRET_KEY).
+#[cfg(test)]
+pub fn keys_from(materials: &[&str]) -> Vec<Key> {
+    materials.iter().map(|m| derive(m)).collect()
+}
+
 fn aad(project_id: &str, name: &str) -> Vec<u8> {
     format!("{project_id}\0{name}").into_bytes()
 }

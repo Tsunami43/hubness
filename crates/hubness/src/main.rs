@@ -14,12 +14,24 @@ enum Command {
     Serve,
     /// The hub MCP server for agent sessions (stdio; started by the hub itself).
     Mcp,
+    /// git credential helper for the hub's own git runs (started by git, not by hand).
+    #[command(name = "git-credential-helper", hide = true)]
+    GitCredentialHelper {
+        /// get | store | erase
+        action: String,
+    },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Serve => hubness_server::serve(hubness_server::Config::from_env()?).await,
-        Command::Mcp => hubness_server::mcp::run_stdio().await,
+        // no runtime, no .env: it starts on every git request and only reads its environment
+        Command::GitCredentialHelper { action } => {
+            Ok(hubness_server::git_auth::credential_helper(&action, &mut std::io::stdin().lock(), &mut std::io::stdout().lock())?)
+        }
+        Command::Serve => tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(hubness_server::serve(hubness_server::Config::from_env()?)),
+        Command::Mcp => tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(hubness_server::mcp::run_stdio()),
     }
 }

@@ -1,7 +1,7 @@
 import { makeRepo, tmp } from './setup.ts';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -841,4 +841,298 @@ test('inbox chat → project: suggestion and conversion', async () => {
   assert.ok(!existsSync(chat.cwd), 'the inbox folder moved');
   assert.equal((await call('POST', `/sessions/${chat.id}/convert`, {})).status, 400, 'only inbox chats');
   assert.deepEqual((await call('GET', `/sessions/${chat.id}/project-suggestion`)).json.suggest, false);
+});
+
+// ---------- git ----------
+
+const gitIn = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+
+/** A repository with an author and one commit ("init" with a.txt and old.txt). */
+function repoWithCommit(path: string, remote?: string): string {
+  makeRepo(path, remote);
+  gitIn(path, 'config', 'user.email', 'test@example.com');
+  gitIn(path, 'config', 'user.name', 'Test');
+  writeFileSync(join(path, 'a.txt'), 'one\n');
+  writeFileSync(join(path, 'old.txt'), 'rename me\n');
+  gitIn(path, 'add', '-A');
+  gitIn(path, 'commit', '-q', '-m', 'init');
+  return path;
+}
+
+const byPath = (files: any[]) => [...files].sort((a, b) => (a.path < b.path ? -1 : 1));
+
+test('git: status, diff, stage, commit, log and show', async () => {
+  const repo = repoWithCommit(join(tmp, 'elsewhere', 'git-status'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const git = (path: string) => `/projects/${p.id}/git${path}`;
+
+  writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n');
+  gitIn(repo, 'mv', 'old.txt', 'new name.txt');
+  writeFileSync(join(repo, 'staged.txt'), 's\n');
+  gitIn(repo, 'add', 'staged.txt');
+  writeFileSync(join(repo, 'untracked file.txt'), 'u\n');
+
+  const st = (await call('GET', git('/status'))).json;
+  assert.deepEqual({ ...st, files: byPath(st.files) }, {
+    isRepo: true,
+    branch: 'main',
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    detached: false,
+    files: [
+      { path: 'a.txt', index: ' ', worktree: 'M', untracked: false, conflicted: false },
+      { path: 'new name.txt', index: 'R', worktree: ' ', untracked: false, conflicted: false, from: 'old.txt' },
+      { path: 'staged.txt', index: 'A', worktree: ' ', untracked: false, conflicted: false },
+      { path: 'untracked file.txt', index: ' ', worktree: '?', untracked: true, conflicted: false },
+    ],
+    state: null,
+    stashes: 0,
+  });
+  assert.equal((await call('GET', '/projects/missing/git/status')).status, 404);
+  const notRepo = (await call('GET', `/projects/${(await call('GET', '/projects')).json.find((x: any) => x.kind === 'system').id}/git/status`)).json;
+  assert.equal(notRepo.isRepo, false);
+
+  const unstaged = (await call('GET', git('/diff?path=a.txt'))).json.diff;
+  assert.match(unstaged, /^\+two$/m);
+  const staged = (await call('GET', git('/diff?staged=1'))).json.diff;
+  assert.match(staged, /^\+s$/m);
+  assert.doesNotMatch(staged, /\+two/);
+  const untracked = (await call('GET', git(`/diff?path=${encodeURIComponent('untracked file.txt')}&untracked=1`))).json.diff;
+  assert.match(untracked, /new file mode/);
+  assert.match(untracked, /^\+u$/m);
+
+  assert.equal((await call('POST', git('/stage'), {})).status, 400, 'paths are required');
+  assert.equal((await call('POST', git('/stage'), { paths: [] })).status, 400);
+  assert.equal((await call('POST', git('/stage'), { paths: 'a.txt' })).status, 400, 'a mistyped field');
+  assert.equal((await call('POST', git('/nope'), {})).status, 404, 'unknown operation');
+  assert.equal((await call('GET', git('/nope'))).status, 404);
+  assert.equal((await call('POST', '/projects/missing/git/commit', {})).status, 404);
+  assert.equal((await call('POST', git('/stage'), { paths: ['a.txt'] })).json.ok, true);
+  assert.equal(byPath((await call('GET', git('/status'))).json.files)[0].index, 'M');
+  assert.equal((await call('POST', git('/unstage'), { paths: ['a.txt'] })).json.ok, true);
+  assert.deepEqual(byPath((await call('GET', git('/status'))).json.files)[0], { path: 'a.txt', index: ' ', worktree: 'M', untracked: false, conflicted: false });
+
+  // no body / a broken body counts as {} for operations
+  assert.deepEqual((await call('POST', git('/commit'))).json, { ok: false, output: 'Empty commit message' });
+  assert.deepEqual((await call('POST', git('/continue'), '{oops')).json, { ok: false, output: 'Nothing in progress' });
+  const committed = await call('POST', git('/commit'), { message: 'second' });
+  assert.equal(committed.status, 200);
+  assert.equal(committed.json.ok, true);
+  assert.match(committed.json.output, /second/);
+  assert.deepEqual((await call('GET', git('/status'))).json.files, [], 'all: true by default');
+
+  const log = (await call('GET', git('/log'))).json;
+  assert.equal(log.more, false);
+  assert.deepEqual(log.commits.map((c: any) => c.subject), ['second', 'init']);
+  const [second, init] = log.commits;
+  assert.equal(second.parents[0], init.hash);
+  assert.deepEqual(init.parents, []);
+  assert.equal(second.short, second.hash.slice(0, second.short.length));
+  assert.equal(second.author, 'Test');
+  assert.deepEqual(second.refs, ['HEAD -> main']);
+  assert.deepEqual(init.refs, []);
+  const limited = (await call('GET', git('/log?limit=1'))).json;
+  assert.equal(limited.commits.length, 1);
+  assert.equal(limited.more, true);
+  assert.equal((await call('GET', git('/log?limit=abc'))).json.commits.length, 2);
+
+  assert.match((await call('GET', git(`/show?rev=${second.hash}`))).json.diff, /^\+two$/m);
+  assert.deepEqual((await call('GET', git('/show?rev=-p'))).json, { diff: '' }, 'options are not revisions');
+  assert.deepEqual((await call('POST', git('/reset'), { rev: 'HEAD', mode: 'bogus' })).status, 400);
+  assert.deepEqual((await call('POST', git('/reset'), { rev: '--hard' })).json, { ok: false, output: 'Invalid commit' });
+});
+
+test('git: branches, checkout, merge and a local remote', async () => {
+  const repo = repoWithCommit(join(tmp, 'elsewhere', 'git-branches'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const git = (path: string) => `/projects/${p.id}/git${path}`;
+  const init = gitIn(repo, 'rev-parse', 'HEAD');
+
+  assert.equal((await call('POST', git('/checkout'), { branch: '  ' })).status, 400, 'branch is required');
+  assert.equal((await call('POST', git('/checkout'), { branch: ' feature/x ', create: true })).json.ok, true);
+  assert.equal((await call('GET', git('/status'))).json.branch, 'feature/x');
+  writeFileSync(join(repo, 'feature.txt'), 'f\n');
+  assert.equal((await call('POST', git('/commit'), { message: 'feature work' })).json.ok, true);
+
+  const branches = (await call('GET', git('/branches'))).json;
+  assert.deepEqual(branches.map((b: any) => b.name).sort(), ['feature/x', 'main']);
+  const current = branches.find((b: any) => b.current);
+  assert.equal(current.name, 'feature/x');
+  assert.equal(current.remote, false);
+  assert.equal(current.upstream, null);
+  assert.equal(typeof current.lastCommit, 'string');
+
+  assert.equal((await call('POST', git('/checkout'), { branch: 'main' })).json.ok, true);
+  assert.equal((await call('POST', git('/checkout'), { branch: 'no-such-branch' })).json.ok, false);
+  assert.equal((await call('POST', git('/merge'), { branch: 'feature/x', noFf: true })).json.ok, true);
+  assert.equal((await call('GET', git('/log?all=0'))).json.commits[0].parents.length, 2, 'a merge commit');
+
+  assert.equal((await call('POST', git('/branch-at'), { branch: 'from-init', rev: init })).json.ok, true);
+  assert.equal((await call('GET', git('/status'))).json.branch, 'from-init');
+  assert.equal((await call('POST', git('/checkout'), { branch: 'main' })).json.ok, true);
+  assert.equal((await call('POST', git('/delete-branch'), { branch: 'from-init' })).json.ok, true);
+  assert.deepEqual((await call('POST', git('/delete-branch'), { branch: '-D' })).json, { ok: false, output: 'Invalid branch' });
+  assert.deepEqual((await call('POST', git('/branch-at'), { branch: 'x', rev: 'a..b' })).json, { ok: false, output: 'Invalid branch or commit' });
+
+  // a local bare repository as origin: push sets the upstream, fetch works
+  const bare = join(tmp, 'elsewhere', 'git-branches-origin.git');
+  execFileSync('git', ['init', '-q', '--bare', bare]);
+  gitIn(repo, 'remote', 'add', 'origin', bare);
+  const pushed = await call('POST', git('/push'));
+  assert.equal(pushed.json.ok, true, pushed.json.output);
+  assert.equal(pushed.json.auth, undefined);
+  assert.equal((await call('GET', git('/status'))).json.upstream, 'origin/main');
+  assert.equal((await call('POST', git('/fetch'))).json.ok, true);
+  assert.ok((await call('GET', git('/branches'))).json.some((b: any) => b.name === 'origin/main' && b.remote));
+});
+
+test('git: stash push, list, show, pop and discard', async () => {
+  const repo = repoWithCommit(join(tmp, 'elsewhere', 'git-stash'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const git = (path: string) => `/projects/${p.id}/git${path}`;
+  writeFileSync(join(repo, 'a.txt'), 'changed\n');
+  writeFileSync(join(repo, 'new.txt'), 'n\n');
+
+  assert.equal((await call('POST', git('/stash-push'), { message: ' wip ' })).json.ok, true);
+  const st = (await call('GET', git('/status'))).json;
+  assert.deepEqual(st.files, [], 'untracked files are stashed by default');
+  assert.equal(st.stashes, 1);
+  const list = (await call('GET', git('/stashes'))).json;
+  assert.equal(list.length, 1);
+  assert.equal(list[0].ref, 'stash@{0}');
+  assert.equal(list[0].message, 'wip');
+  assert.equal(typeof list[0].date, 'string');
+  assert.match((await call('GET', git(`/show?rev=${encodeURIComponent('stash@{0}')}`))).json.diff, /^\+changed$/m);
+
+  assert.equal((await call('POST', git('/stash'), { action: 'nope', rev: 'stash@{0}' })).status, 400);
+  assert.deepEqual((await call('POST', git('/stash'), { action: 'drop', rev: 'HEAD' })).json, { ok: false, output: 'Invalid stash' });
+  assert.equal((await call('POST', git('/stash'), { action: 'pop', rev: 'stash@{0}' })).json.ok, true);
+  const popped = (await call('GET', git('/status'))).json;
+  assert.equal(popped.stashes, 0);
+  assert.deepEqual(byPath(popped.files).map((f: any) => f.path), ['a.txt', 'new.txt']);
+
+  assert.equal((await call('POST', git('/discard'), { paths: ['a.txt', 'new.txt'] })).json.ok, true);
+  assert.deepEqual((await call('GET', git('/status'))).json.files, []);
+  assert.ok(!existsSync(join(repo, 'new.txt')), 'untracked files are deleted');
+});
+
+test('project detail: repository info, provider links and languages', async () => {
+  const repo = repoWithCommit(join(tmp, 'elsewhere', 'widget'), 'https://user:tok3n@github.com/acme/widget.git');
+  writeFileSync(join(repo, 'main.rs'), 'x'.repeat(300));
+  writeFileSync(join(repo, 'app.ts'), 'y'.repeat(100));
+  writeFileSync(join(repo, 'README.md'), '# prose is not counted\n');
+  writeFileSync(join(repo, 'data.csv'), 'a,b\n');
+  gitIn(repo, 'add', '-A');
+  gitIn(repo, 'commit', '-q', '-m', 'code');
+  gitIn(repo, 'checkout', '-q', '-b', 'feat/x');
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  assert.equal(p.gitProvider, null);
+
+  const res = await call('GET', `/projects/${p.id}`);
+  assert.equal(res.status, 200);
+  const d = res.json;
+  assert.ok(!JSON.stringify(d).includes('tok3n'), 'credentials are stripped from the remote URL');
+  const { languages, ...repoInfo } = d.repo;
+  assert.deepEqual(repoInfo, {
+    isRepo: true,
+    provider: 'github',
+    providerLabel: 'GitHub',
+    remoteUrl: 'https://github.com/acme/widget.git',
+    branch: 'feat/x',
+    defaultBranch: 'main',
+    links: {
+      repo: 'https://github.com/acme/widget',
+      branch: 'https://github.com/acme/widget/tree/feat/x',
+      newPullRequest: 'https://github.com/acme/widget/compare/main...feat/x?expand=1',
+    },
+  });
+  assert.deepEqual(languages.map((l: any) => [l.name, l.percent]), [['Rust', 75], ['TypeScript', 25]]);
+  assert.match(languages[0].color, /^#[0-9a-f]{6}$/i);
+  assert.equal(d.gitProvider, 'github', 'repository info is cached in the project');
+  assert.equal(d.repoUrl, 'https://github.com/acme/widget.git');
+  assert.equal(d.defaultBranch, 'main');
+  assert.deepEqual(d.language, { name: 'Rust', color: languages[0].color });
+  assert.deepEqual(d.groups, []);
+  assert.equal(d.workspace.scope, 'project');
+  assert.equal(d.workspace.path, repo);
+  assert.equal(d.missing, undefined);
+  assert.equal((await call('GET', '/projects')).json.find((x: any) => x.id === p.id).gitProvider, 'github');
+  assert.equal((await call('GET', '/projects/missing')).status, 404);
+
+  const g = (await call('POST', '/groups', { name: 'Widgets', projectIds: [p.id] })).json;
+  assert.deepEqual((await call('GET', `/projects/${p.id}`)).json.groups, [{ id: g.id, name: 'Widgets' }]);
+  await call('DELETE', `/groups/${g.id}`);
+});
+
+test('group context preview refreshes repository info', async () => {
+  const repo = repoWithCommit(join(tmp, 'elsewhere', 'ctx-repo'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  await call('PATCH', `/projects/${p.id}`, { description: 'Context service', instructions: 'Run tests' });
+  gitIn(repo, 'remote', 'add', 'origin', 'git@gitlab.com:acme/ctx-repo.git');
+  const g = (await call('POST', '/groups', { name: 'Ctx', description: 'One product', projectIds: [p.id] })).json;
+  const res = await call('GET', `/groups/${g.id}/context`);
+  assert.equal(res.status, 200);
+  const ctx: string = res.json.context;
+  assert.match(ctx, /^You are working on "Ctx" — a group of 1 repositories/);
+  assert.ok(ctx.includes('## Group\nOne product'));
+  assert.ok(ctx.includes(`- ctx-repo — path: ${repo}, default branch: main, remote: git@gitlab.com:acme/ctx-repo.git (GitLab)`), ctx);
+  assert.ok(ctx.includes('### ctx-repo\nContext service\nInstructions: Run tests'));
+  assert.equal((await call('GET', '/groups/missing/context')).status, 404);
+  await call('DELETE', `/groups/${g.id}`);
+});
+
+test('git logins per host: the secret never leaves the server', async () => {
+  assert.deepEqual((await call('GET', '/git-credentials')).json, []);
+  const body = { username: ' me ', kind: 'token', secret: 'glpat-s3cr3t' };
+  assert.equal((await call('PUT', '/git-credentials/bad_host', body)).status, 400);
+  assert.equal((await call('PUT', '/git-credentials/gitlab.example.com', { ...body, kind: 'ssh' })).status, 400);
+  assert.equal((await call('PUT', '/git-credentials/gitlab.example.com', { ...body, username: '  ' })).status, 400);
+  assert.equal((await call('PUT', '/git-credentials/gitlab.example.com', { ...body, secret: '' })).status, 400);
+  assert.equal((await call('PUT', '/git-credentials/gitlab.example.com', { ...body, secret: 'a\nb' })).status, 400);
+  assert.equal((await call('PUT', '/git-credentials/gitlab.example.com', { kind: 'token', secret: 'x' })).status, 400);
+
+  const saved = await call('PUT', '/git-credentials/GitLab.Example.com', body);
+  assert.equal(saved.status, 200);
+  assert.equal(saved.json.length, 1);
+  const [c] = saved.json;
+  assert.deepEqual({ ...c, updatedAt: undefined }, { host: 'gitlab.example.com', username: 'me', kind: 'token', updatedAt: undefined });
+  assert.match(c.updatedAt, /^\d{4}-\d\d-\d\dT/);
+  assert.ok(!JSON.stringify(saved.json).includes('s3cr3t'));
+  await call('PUT', '/git-credentials/codeberg.org', { username: 'u', kind: 'password', secret: 'pw' });
+  const listed = (await call('GET', '/git-credentials')).json;
+  assert.deepEqual(listed.map((x: any) => [x.host, x.kind]), [['codeberg.org', 'password'], ['gitlab.example.com', 'token']]);
+  assert.ok(!JSON.stringify(listed).includes('s3cr3t') && !JSON.stringify(listed).includes('"pw"'));
+
+  assert.deepEqual((await call('DELETE', '/git-credentials/gitlab.example.com')).json.map((x: any) => x.host), ['codeberg.org']);
+  assert.equal((await call('DELETE', '/git-credentials/bad_host')).status, 200, 'an invalid host deletes nothing');
+  assert.deepEqual((await call('DELETE', '/git-credentials/codeberg.org')).json, []);
+});
+
+test('new empty repository in the projects folder or a group folder', async () => {
+  const created = await call('POST', '/projects/new-repo', { name: '  My Repo!  ' });
+  assert.equal(created.status, 201);
+  assert.equal(created.json.name, 'My-Repo');
+  assert.equal(created.json.path, join(projectsRoot, 'My-Repo'));
+  assert.equal(created.json.kind, 'normal');
+  assert.ok(existsSync(join(projectsRoot, 'My-Repo', '.git')));
+  assert.equal((await call('POST', '/projects/new-repo', { name: 'My Repo' })).status, 409, 'the folder exists');
+  assert.equal((await call('POST', '/projects/new-repo', { name: '!!!' })).status, 400);
+  assert.equal((await call('POST', '/projects/new-repo', {})).status, 400);
+  assert.equal((await call('POST', '/projects/new-repo', { name: 5 })).status, 400);
+  assert.equal((await call('POST', '/projects/new-repo', { name: 'x', groupId: 'missing' })).status, 404);
+
+  const folder = join(tmp, 'group-store');
+  const g = (await call('POST', '/groups', { name: 'Store', folder })).json;
+  const inGroup = await call('POST', '/projects/new-repo', { name: 'svc', groupId: g.id });
+  assert.equal(inGroup.status, 201);
+  assert.equal(inGroup.json.path, join(folder, 'svc'));
+  assert.deepEqual(inGroup.json.groupIds, [g.id]);
+  assert.deepEqual((await call('GET', `/groups/${g.id}`)).json.projectIds, [inGroup.json.id]);
+  const detail = (await call('GET', `/projects/${inGroup.json.id}`)).json;
+  assert.equal(detail.repo.isRepo, true);
+  assert.deepEqual(detail.repo.languages, []);
+  assert.equal(detail.repo.provider, null);
+  assert.equal(detail.repo.links, null);
+  await call('DELETE', `/groups/${g.id}`);
 });
