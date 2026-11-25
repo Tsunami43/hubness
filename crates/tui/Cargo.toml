@@ -1,0 +1,23 @@
+[package]
+name = "hubness-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+edtui.workspace = true
+futures-util.workspace = true
+hubness-client.workspace = true
+hubness-core.workspace = true
+pulldown-cmark.workspace = true
+ratatui.workspace = true
+serde_json.workspace = true
+syntect.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tui-term.workspace = true
+vt100.workspace = true

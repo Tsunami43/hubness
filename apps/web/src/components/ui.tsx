@@ -215,6 +215,15 @@ export function Spinner({ className = '' }: { className?: string }) {
   return <Loader2 className={`size-5 animate-spin text-muted ${className}`} />;
 }
 
+/** Placeholder while a lazily loaded screen arrives. */
+export function PageSpinner() {
+  return (
+    <div className="flex flex-1 justify-center py-10">
+      <Spinner />
+    </div>
+  );
+}
+
 export function ErrorLine({ error }: { error: string | null | undefined }) {
   if (!error) return null;
   return <div className="border-l-2 border-danger bg-danger/5 px-3 py-1.5 text-sm text-danger">{error}</div>;

@@ -1,6 +1,7 @@
 import { shq } from '../../terminal.ts';
 import { action, cachedLatest, notFound, parseVersion, runCli, versionInfo } from '../kit.ts';
 import type { AgentModule } from '../types.ts';
+import { grokExtensions, grokMcp } from './extensions.ts';
 import { GROK_BIN, grokAdapter, grokDir, grokLoggedIn, grokModels, grokVersion } from './adapter.ts';
 
 const KIND = 'grok';
@@ -54,4 +55,6 @@ export const grokModule: AgentModule = {
     };
   },
   statePaths: () => [grokDir],
+  mcp: grokMcp,
+  extensions: grokExtensions,
 };

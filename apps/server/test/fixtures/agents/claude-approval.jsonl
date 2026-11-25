@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","cwd":"/work","session_id":"sess-claude-2","model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"ANTHROPIC_API_KEY"}
+{"type":"assistant","message":{"id":"msg_9","model":"claude-opus-5-5","role":"assistant","content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"rm -rf build"}}]}}
+{"type":"control_request","request_id":"req-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"rm -rf build"},"tool_use_id":"toolu_9"}}
+{"replay":"await"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"done","is_error":false}]}}
+{"type":"assistant","message":{"id":"msg_10","model":"claude-opus-5-5","role":"assistant","content":[{"type":"text","text":"Removed the build folder."}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":900,"result":"Removed the build folder.","session_id":"sess-claude-2","total_cost_usd":0.24259540000000002,"uuid":"res-9"}

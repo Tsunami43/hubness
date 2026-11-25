@@ -53,7 +53,9 @@ export const cards = {
         .get(cur.projectId, patch.column);
       position = Number(r?.m ?? 0) + 1;
     }
-    const next = { ...cur, ...patch, position: position ?? cur.position };
+    // fields not given (undefined) keep their current values
+    const given = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    const next = { ...cur, ...given, position: position ?? cur.position };
     db.prepare(
       `UPDATE cards SET title = ?, description = ?, col = ?, position = ?, session_id = ?, updated_at = ? WHERE id = ?`,
     ).run(next.title, next.description, next.column, next.position, next.sessionId, now(), id);

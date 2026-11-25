@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { Suspense, useState, type ReactNode } from 'react';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { t } from '../i18n';
-import { TopBar } from './ui';
+import { PageSpinner, TopBar } from './ui';
 
 export interface SubmenuItem {
   to: string;
@@ -13,6 +13,8 @@ export interface SubmenuItem {
   keywords?: string[];
   /** Right side of the menu item: status, badge. */
   trailing?: ReactNode;
+  /** A heading shown above the first item of a run of items with the same group. */
+  group?: string;
 }
 
 const isDesktop = () => window.matchMedia('(min-width: 1024px)').matches;
@@ -94,8 +96,11 @@ export function SubmenuLayout({
 
           {filtered.length ? (
             <ul className="space-y-1">
-              {filtered.map((item) => (
+              {filtered.map((item, i) => (
                 <li key={item.to}>
+                  {item.group && item.group !== filtered[i - 1]?.group ? (
+                    <div className={`px-3 pb-1 text-[11px] font-medium tracking-wide text-muted uppercase ${i ? 'pt-3' : ''}`}>{item.group}</div>
+                  ) : null}
                   <NavLink
                     data-jump
                     to={item.to}
@@ -118,7 +123,9 @@ export function SubmenuLayout({
         </nav>
 
         <div className={`${isIndex ? 'hidden' : 'block'} min-w-0 p-4 lg:block lg:p-0`}>
-          <Outlet context={outletContext} />
+          <Suspense fallback={<PageSpinner />}>
+            <Outlet context={outletContext} />
+          </Suspense>
         </div>
       </div>
     </div>

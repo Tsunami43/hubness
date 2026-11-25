@@ -5,7 +5,7 @@ import type { JobInfo } from '@hubness/shared';
 import { api } from '../lib/api';
 import { t } from '../i18n';
 import { FolderPicker } from './FolderPicker';
-import { TerminalSheet } from './Terminal';
+import { sheetTermSize, TerminalSheet } from './Terminal';
 import { useHubSettings } from '../lib/hubSettings';
 import { Button, ErrorLine, Field, inputCls, Sheet, Spinner } from './ui';
 
@@ -66,8 +66,7 @@ export function NewProject({
         const list = await api.importProjects({ paths: picked, groupId: group?.id });
         done(list.length === 1 ? list[0]!.id : undefined);
       } else {
-        const w = Math.min(window.innerWidth, 768) - 56;
-        setJob(await api.cloneRepo({ url: url.trim(), name: name.trim() || undefined, groupId: group?.id, cols: Math.max(40, Math.floor(w / 7.9)), rows: 20 }));
+        setJob(await api.cloneRepo({ url: url.trim(), name: name.trim() || undefined, groupId: group?.id, ...sheetTermSize(20) }));
       }
     } catch (e) {
       setError((e as Error).message);

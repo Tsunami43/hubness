@@ -1,13 +1,14 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import type { EnvironmentStatus, Project, ProjectGroup, ProjectRuntime } from '@hubness/shared';
 import { config, repoRoot } from './config.ts';
 import { groups, projectRuntime, projects } from './db/index.ts';
 import { HttpError } from './errors.ts';
 import { shq } from './terminal.ts';
 import { AGENTS } from './agents/registry.ts';
+import { sh } from './system/exec.ts';
 
 /**
  * Project execution environment — where and how Run, Shell and the agent run.
@@ -170,6 +171,8 @@ export function bwrapArgs(opts: { repos: string[]; cwd: string; interactive?: bo
   // interactive shell history is separate (the host one with typed commands is not visible)
   if (opts.interactive) {
     const hist = join(config.dataDir, 'shell-history');
+    // bound below as is (HISTFILE lives there): it must exist even without fish/zsh folders
+    mkdirSync(hist, { recursive: true });
     for (const [dir, target] of [
       [join(hist, 'fish'), join(HOME, '.local/share/fish')],
       [join(hist, 'zsh'), join(HOME, '.local/share/zsh')],
@@ -192,20 +195,26 @@ export function bwrapArgs(opts: { repos: string[]; cwd: string; interactive?: bo
 export const containerName = (projectId: string) => `hubness-p-${projectId.slice(0, 12)}`;
 const containerHome = (projectId: string) => join(config.dataDir, 'containers', projectId, 'home');
 
-export function containerState(projectId: string): { state: 'running' | 'stopped' | 'absent'; image: string | null } {
+export async function containerState(projectId: string): Promise<{ state: 'running' | 'stopped' | 'absent'; image: string | null }> {
   if (!dockerAvailable()) return { state: 'absent', image: null };
-  const r = spawnSync('docker', ['inspect', '--format', '{{.State.Running}} {{.Config.Image}}', containerName(projectId)], { encoding: 'utf8', timeout: 5000 });
-  if (r.status !== 0) return { state: 'absent', image: null };
-  const [running, image] = r.stdout.trim().split(' ');
+  const r = await sh('docker', ['inspect', '--format', '{{.State.Running}} {{.Config.Image}}', containerName(projectId)], 5000);
+  if (r.code !== 0) return { state: 'absent', image: null };
+  const [running, image] = r.out.trim().split(' ');
   return { state: running === 'true' ? 'running' : 'stopped', image: image ?? null };
 }
 
-export function containerIp(projectId: string): string | null {
-  const r = spawnSync('docker', ['inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', containerName(projectId)], {
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-  return r.status === 0 ? r.stdout.trim().split(/\s+/)[0] || null : null;
+/** Recent container IPs: the preview proxy asks on every request (a page load is hundreds). */
+const ipCache = new Map<string, { at: number; ip: Promise<string | null> }>();
+const IP_TTL_MS = 5000;
+
+export function containerIp(projectId: string): Promise<string | null> {
+  const hit = ipCache.get(projectId);
+  if (hit && Date.now() - hit.at < IP_TTL_MS) return hit.ip;
+  const ip = sh('docker', ['inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', containerName(projectId)], 5000).then((r) =>
+    r.code === 0 ? r.out.trim().split(/\s+/)[0] || null : null,
+  );
+  ipCache.set(projectId, { at: Date.now(), ip });
+  return ip;
 }
 
 /**
@@ -237,8 +246,9 @@ function ensureContainerScript(p: Project, rt: ProjectRuntime): string {
   ].join('\n');
 }
 
-export function stopContainer(projectId: string) {
-  if (dockerAvailable()) spawnSync('docker', ['rm', '-f', containerName(projectId)], { timeout: 30_000 });
+export async function stopContainer(projectId: string): Promise<void> {
+  ipCache.delete(projectId);
+  if (dockerAvailable()) await sh('docker', ['rm', '-f', containerName(projectId)], 30_000);
 }
 
 // ---------- commands for terminal tasks ----------
@@ -314,15 +324,13 @@ export function agentWrap(scope: Scope | null): ((cmd: string, args: string[]) =
   return (cmd, args) => ['bwrap', [...bwrapArgs({ repos, cwd }), '--', cmd, ...args]];
 }
 
-export function environmentStatus(p: Project): EnvironmentStatus {
+export async function environmentStatus(p: Project): Promise<EnvironmentStatus> {
   const rt = runtimeOf(p);
   return {
     runtime: rt,
     dockerAvailable: dockerAvailable(),
     sandboxAvailable: sandboxAvailable(),
-    container: rt.environment === 'docker' ? { name: containerName(p.id), ...containerState(p.id) } : null,
+    container: rt.environment === 'docker' ? { name: containerName(p.id), ...(await containerState(p.id)) } : null,
     devcontainerImage: devcontainerImage(p.path),
   };
 }
-
-export const resolvedHome = resolve(HOME);
