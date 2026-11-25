@@ -196,10 +196,7 @@ const previewKey = (projectId: string, runId: string) => `${projectId}:${runId}`
 
 function previewTarget(p: Project, port: number) {
   return () => {
-    if (runtimeOf(p).environment === 'docker') {
-      const ip = containerIp(p.id);
-      return ip ? { host: ip, port } : null;
-    }
+    if (runtimeOf(p).environment === 'docker') return containerIp(p.id).then((ip) => (ip ? { host: ip, port } : null));
     return { host: '127.0.0.1', port };
   };
 }

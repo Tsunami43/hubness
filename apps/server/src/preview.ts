@@ -18,7 +18,9 @@ import { config } from './config.ts';
  * across all ports of one host).
  */
 
-export type Target = () => { host: string; port: number } | null;
+type Upstream = { host: string; port: number } | null;
+/** Where the app listens now (a container IP may take a docker call to find). */
+export type Target = () => Upstream | Promise<Upstream>;
 
 const [FROM, TO] = (process.env.HUBNESS_PREVIEW_PORTS ?? '8790-8809').split('-').map(Number) as [number, number];
 
@@ -32,8 +34,8 @@ interface Preview {
 const previews = new Map<string, Preview>();
 
 function proxyServer(target: Target): Server {
-  const server = createServer((req, res) => {
-    const t = target();
+  const server = createServer(async (req, res) => {
+    const t = await target();
     if (!t) {
       res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('The app is not running. Start it in hubness (Run).');
@@ -51,21 +53,24 @@ function proxyServer(target: Target): Server {
     req.pipe(up);
   });
   // WebSocket (HMR etc.): raw passthrough after replacing Host
-  server.on('upgrade', (req, socket, head) => {
-    const t = target();
-    if (!t) return socket.destroy();
-    const up = connect(t.port, t.host, () => {
+  server.on('upgrade', async (req, socket, head) => {
+    // the client may drop while the target is looked up
+    let up: ReturnType<typeof connect> | null = null;
+    socket.on('error', () => up?.destroy());
+    const t = await target();
+    if (!t || socket.destroyed) return socket.destroy();
+    const conn = connect(t.port, t.host, () => {
       const lines = [`${req.method} ${req.url} HTTP/1.1`];
       for (let i = 0; i < req.rawHeaders.length; i += 2) {
         const name = req.rawHeaders[i]!;
         lines.push(`${name}: ${name.toLowerCase() === 'host' ? `localhost:${t.port}` : req.rawHeaders[i + 1]}`);
       }
-      up.write(lines.join('\r\n') + '\r\n\r\n');
-      if (head.length) up.write(head);
-      socket.pipe(up).pipe(socket);
+      conn.write(lines.join('\r\n') + '\r\n\r\n');
+      if (head.length) conn.write(head);
+      socket.pipe(conn).pipe(socket);
     });
-    up.on('error', () => socket.destroy());
-    socket.on('error', () => up.destroy());
+    up = conn;
+    conn.on('error', () => socket.destroy());
   });
   return server;
 }
