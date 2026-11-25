@@ -22,7 +22,7 @@ fn main() {
     if !dist.join("index.html").is_file() {
         panic!(
             "\n\nThe `embed-web` feature compiles the web app into the binary, but {} has no index.html.\n\
-             Build the web app first:  pnpm install && pnpm build   (without pnpm: npx -y pnpm@10.13.1 install && npx -y pnpm@10.13.1 --filter @hubness/web run build)\n\
+             Build the web app first:  pnpm install && pnpm build   (without pnpm: npx -y pnpm@11.29.0 install && npx -y pnpm@11.29.0 --filter @hubness/web run build)\n\
              or point HUBNESS_EMBED_WEB_DIST at a built web app, or build without `--features embed-web`.\n",
             dist.display()
         );
