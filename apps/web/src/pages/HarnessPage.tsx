@@ -9,6 +9,7 @@ import {
   LogIn,
   LogOut,
   Play,
+  Plug,
   Plus,
   RefreshCw,
   Repeat,
@@ -24,6 +25,7 @@ import { Button, ErrorLine, Spinner } from '../components/ui';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../components/SubmenuLayout';
 import { TerminalSheet } from '../components/Terminal';
 import { ModelPicker } from '../components/ModelPicker';
+import { ExtensionsCard } from '../components/HarnessExtensions';
 import { t, tOptional } from '../i18n';
 import type { MessageKey } from '../i18n/en';
 
@@ -40,8 +42,8 @@ const useHarness = () => useOutletContext<HarnessCtx>();
 /** Search words for every agent tab (the agent name and kind are added per item). */
 const KEYWORDS = [
   'version', 'update', 'install', 'login', 'sign in', 'logout', 'account', 'plan', 'subscription', 'limits', 'usage',
-  'providers', 'models', 'default model', 'stats', 'tokens', 'acp',
-  'версия', 'обновление', 'вход', 'аккаунт', 'подписка', 'лимиты', 'провайдеры', 'модели',
+  'providers', 'models', 'default model', 'stats', 'tokens', 'acp', 'skills', 'rules', 'agents', 'commands', 'plugins',
+  'версия', 'обновление', 'вход', 'аккаунт', 'подписка', 'лимиты', 'провайдеры', 'модели', 'навыки', 'правила', 'агенты', 'команды', 'плагины',
 ];
 
 /** Terminal size fitted to the screen width (in characters). */
@@ -79,15 +81,22 @@ export function HarnessLayout() {
     }
   };
 
-  // order is the server's (registry) order
-  const items: SubmenuItem[] = (agents ?? []).map((a) => ({
+  // MCP servers across the agents first, then the agents in the server's (registry) order
+  const mcpItem: SubmenuItem = {
+    to: 'mcp',
+    label: t('mcp.menu'),
+    hint: t('mcp.menuHint'),
+    icon: <Plug className="size-4" />,
+    keywords: ['mcp', 'servers', 'tools', 'серверы', 'инструменты'],
+  };
+  const items: SubmenuItem[] = [mcpItem, ...(agents ?? []).map((a) => ({
     to: a.kind,
     label: a.label,
     hint: a.version ? `v${a.version}` : undefined,
     icon: <AgentIcon kind={a.kind} />,
     trailing: <MenuMark a={a} />,
     keywords: [a.kind, ...KEYWORDS],
-  }));
+  }))];
 
   return (
     <>
@@ -164,6 +173,7 @@ function HarnessTab({ kind }: { kind: AgentKind }) {
         </Button>
       </div>
       <AgentCard info={info} />
+      <ExtensionsCard kind={kind} />
     </div>
   );
 }

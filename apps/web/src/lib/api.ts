@@ -23,8 +23,12 @@ import type {
   GitStash,
   GitStatus,
   GroupDetail,
+  HarnessExtensions,
   HarnessInfo,
   HarnessResponse,
+  McpResponse,
+  McpServerInput,
+  RulesFileContent,
   HubEvent,
   HubSettings,
   JobInfo,
@@ -130,6 +134,18 @@ export const api = {
   harnessAccount: (kind: AgentKind, provider: string, account: string, op: 'switch' | 'logout') =>
     req<{ ok: true; output: string }>('POST', `/harness/${kind}/accounts/${encodeURIComponent(provider)}/${encodeURIComponent(account)}/${op}`),
   harnessDefaultModel: (kind: AgentKind, model: string | null) => req<{ ok: true }>('PUT', `/harness/${kind}/default-model`, { model }),
+  /** MCP servers × agents, from the agents' own configs (with a project: its servers too). */
+  mcp: (project?: string) => req<McpResponse>('GET', `/harness/mcp${q({ project })}`),
+  mcpAdd: (input: McpServerInput, project?: string) => req<McpResponse>('POST', `/harness/mcp${q({ project })}`, input),
+  mcpConnect: (name: string, kind: AgentKind, project?: string) =>
+    req<McpResponse>('PUT', `/harness/mcp/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  mcpDisconnect: (name: string, kind: AgentKind, project?: string) =>
+    req<McpResponse>('DELETE', `/harness/mcp/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  mcpDelete: (name: string, project?: string) => req<McpResponse>('DELETE', `/harness/mcp/${encodeURIComponent(name)}${q({ project })}`),
+  harnessExtensions: (kind: AgentKind, project?: string) => req<HarnessExtensions>('GET', `/harness/${kind}/extensions${q({ project })}`),
+  rulesFile: (kind: AgentKind, path: string, project?: string) => req<RulesFileContent>('GET', `/harness/${kind}/rules${q({ path, project })}`),
+  saveRulesFile: (kind: AgentKind, path: string, content: string, project?: string) =>
+    req<RulesFileContent>('PUT', `/harness/${kind}/rules${q({ path, project })}`, { content }),
   jobInput: (id: string, data: string) => req<{ ok: true }>('POST', `/jobs/${id}/input`, { data }),
   jobKill: (id: string) => req<{ ok: boolean }>('POST', `/jobs/${id}/kill`),
   browse: (path?: string) => req<BrowseResponse>('GET', `/fs/browse${q({ path })}`),
