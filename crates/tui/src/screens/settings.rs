@@ -1,5 +1,5 @@
 //! Settings (the web app's Settings pages): Agent (default permission mode, session and
-//! project instructions), Git access (HTTPS logins per host), and what is specific to the
+//! project instructions), Git access (HTTPS logins per host), Users (hub accounts), and what is specific to the
 //! TUI — the connection to the hub and the keyboard reference (the web app's appearance and
 //! language settings belong to the browser).
 
@@ -22,6 +22,7 @@ pub fn screen(section: Option<&str>) -> Box<dyn Screen> {
     let tabs = vec![
         Tab::new("agent", "Agent", Box::new(AgentSettings::default())),
         Tab::new("git", "Git access", Box::new(GitAccess::default())),
+        Tab::new("users", "Users", Box::new(Users::default())),
         Tab::new("connection", "Connection", Box::new(Connection::default())),
         Tab::new("keyboard", "Keyboard", Box::new(Keyboard::default())),
     ];
@@ -476,6 +477,247 @@ impl Screen for GitAccess {
     }
 }
 
+// ---------- Users ----------
+
+/// A password change in progress: whose, and the current password when it is your own.
+#[derive(Clone)]
+struct PasswordChange {
+    id: String,
+    username: String,
+    current: Option<String>,
+}
+
+/// Hub accounts (Settings → Users): everyone has the same rights.
+#[derive(Default)]
+pub struct Users {
+    list: Option<Vec<Value>>,
+    error: Option<String>,
+    nav: Nav,
+    /// The signed-in user's id (`None` on a hub without accounts).
+    me: Option<String>,
+    /// The username of an account being added (the password is asked next).
+    adding: Option<String>,
+    change: Option<PasswordChange>,
+    /// The new password, until it is typed again.
+    new_password: Option<String>,
+}
+
+impl Users {
+    fn selected(&self) -> Option<Value> {
+        self.nav.selected().and_then(|i| self.list.as_ref()?.get(i).cloned())
+    }
+
+    fn reload(&self, ctx: &Ctx) {
+        ctx.get("list", "/users");
+        ctx.get("me", "/auth/status");
+    }
+
+    fn change_password(&mut self, u: &Value, ctx: &mut Ctx) {
+        let (id, username) = (s(&u["id"], "").to_string(), s(&u["username"], "").to_string());
+        let own = self.me.as_deref() == Some(id.as_str());
+        self.change = Some(PasswordChange { id, username: username.clone(), current: None });
+        if own {
+            ctx.prompt_secret("current", "Your current password");
+        } else {
+            ctx.prompt_secret("new-password", format!("New password for {username} (at least 8 characters)"));
+        }
+    }
+}
+
+impl Screen for Users {
+    fn title(&self) -> String {
+        "Users".into()
+    }
+
+    fn on_show(&mut self, ctx: &mut Ctx) {
+        self.reload(ctx);
+    }
+
+    fn actions(&self) -> Vec<Action> {
+        let mut a = vec![Action::new("a", "Add an account"), Action::new("r", "Reload")];
+        if self.selected().is_some() {
+            a.push(Action::new("p", "Change the password of the selected account"));
+            a.push(Action::new("x", "Delete the selected account"));
+        }
+        a
+    }
+
+    fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
+        match key {
+            "a" => ctx.prompt("username", "Username of the new account (letters, digits, . _ -)", ""),
+            "r" => self.reload(ctx),
+            "p" => {
+                if let Some(u) = self.selected() {
+                    self.change_password(&u, ctx);
+                }
+            }
+            "x" => {
+                if let Some(u) = self.selected() {
+                    let name = s(&u["username"], "");
+                    let own = self.me.as_deref() == u["id"].as_str();
+                    let msg = if own {
+                        format!("Delete your own account {name}? You will be signed out.")
+                    } else {
+                        format!("Delete the account {name}? Its sessions end right away.")
+                    };
+                    ctx.confirm(&format!("delete:{}", s(&u["id"], "")), "Delete the account", msg, true);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
+        let n = self.list.as_ref().map_or(0, |l| l.len());
+        if self.nav.key(&k, n) {
+            return Handled::Yes;
+        }
+        if k.code == KeyCode::Enter {
+            if let Some(u) = self.selected() {
+                self.change_password(&u, ctx);
+            }
+            return Handled::Yes;
+        }
+        Handled::No
+    }
+
+    fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
+        match key {
+            "list" => match result {
+                Ok(v) => {
+                    self.list = Some(v.as_array().cloned().unwrap_or_default());
+                    self.error = None;
+                }
+                Err(e) => self.error = Some(e.to_string()),
+            },
+            "me" => {
+                if let Ok(v) = result {
+                    self.me = v["user"]["id"].as_str().map(String::from);
+                }
+            }
+            "username" => {
+                if let Ok(Value::String(name)) = result
+                    && !name.trim().is_empty()
+                {
+                    let name = name.trim().to_string();
+                    ctx.prompt_secret("password", format!("Password for {name} (at least 8 characters)"));
+                    self.adding = Some(name);
+                }
+            }
+            "password" => {
+                if let (Ok(Value::String(password)), Some(name)) = (result, self.adding.take())
+                    && !password.is_empty()
+                {
+                    ctx.send("added", Method::POST, "/users", json!({ "username": name, "password": password }));
+                }
+            }
+            "added" => {
+                if let Some(u) = ctx.ok(result) {
+                    ctx.info(format!("added {}", s(&u["username"], "")));
+                    self.reload(ctx);
+                }
+            }
+            "current" => match (result, &mut self.change) {
+                (Ok(Value::String(current)), Some(c)) if !current.is_empty() => {
+                    c.current = Some(current);
+                    ctx.prompt_secret("new-password", "Your new password (at least 8 characters)");
+                }
+                _ => self.change = None,
+            },
+            "new-password" => match (result, &self.change) {
+                (Ok(Value::String(password)), Some(c)) if !password.is_empty() => {
+                    ctx.prompt_secret("repeat-password", format!("Repeat the new password for {}", c.username));
+                    self.new_password = Some(password);
+                }
+                _ => self.change = None,
+            },
+            "repeat-password" => {
+                let (change, first) = (self.change.take(), self.new_password.take());
+                if let (Ok(Value::String(again)), Some(c), Some(first)) = (result, change, first) {
+                    if again != first {
+                        ctx.error("the passwords don't match");
+                        return;
+                    }
+                    let mut body = json!({ "password": first });
+                    if let Some(cur) = c.current {
+                        body["currentPassword"] = json!(cur);
+                    }
+                    ctx.send(format!("changed:{}", c.username), Method::PUT, format!("/users/{}/password", enc(&c.id)), body);
+                }
+            }
+            k if k.starts_with("changed:") => {
+                if ctx.ok(result).is_some() {
+                    ctx.info(format!("password changed for {} (its other sessions ended)", &k[8..]));
+                }
+            }
+            k if k.starts_with("delete:") => {
+                if matches!(result, Ok(Value::Bool(true))) {
+                    ctx.send("deleted", Method::DELETE, format!("/users/{}", enc(&k[7..])), Value::Null);
+                }
+            }
+            "deleted" => {
+                // deleting your own account ends this session: the sign-in screen follows
+                let deleted = ctx.ok(result).is_some();
+                if deleted {
+                    ctx.info("account deleted");
+                    self.reload(ctx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
+        let t = Theme::get();
+        let [hint, body] = Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(area);
+        let open = self.list.as_ref().is_some_and(|l| l.is_empty());
+        let text = if open {
+            "No accounts yet: the hub is open to this machine only. The first account turns sign-in on — for the web app, this TUI and every other client."
+        } else {
+            "Everyone with an account has the same rights. A password change or a deleted account ends its sessions."
+        };
+        let mut lines: Vec<Line> = wrap_words(text, area.width.saturating_sub(2) as usize)
+            .into_iter()
+            .map(|l| Line::styled(format!(" {l}"), if open { Style::default().fg(t.warn) } else { t.muted_style() }))
+            .collect();
+        if let Some(e) = &self.error {
+            lines.push(Line::styled(format!(" {e}"), Style::default().fg(t.danger)));
+        }
+        f.render_widget(Paragraph::new(lines), hint);
+        let title = "accounts — a add · Enter/p password · x delete";
+        let Some(list) = &self.list else {
+            f.render_widget(Paragraph::new("Loading…").block(block(title, true)), body);
+            return;
+        };
+        if list.is_empty() {
+            f.render_widget(
+                Paragraph::new(Line::styled("No accounts — a adds the first one.", t.muted_style())).block(block(title, true)),
+                body,
+            );
+            return;
+        }
+        let items: Vec<ListItem> = list
+            .iter()
+            .map(|u| {
+                let me = self.me.as_deref() == u["id"].as_str();
+                let mut head = vec![
+                    Span::styled(format!(" {} ", crate::ui::theme::icon("\u{f0004}", "@")), t.accent_style()),
+                    Span::styled(s(&u["username"], "").to_string(), t.bold()),
+                ];
+                if me {
+                    head.push(Span::styled("  you", Style::default().fg(t.ok)));
+                }
+                ListItem::new(Text::from(vec![
+                    Line::from(head),
+                    Line::styled(format!("   created {}", since(s(&u["createdAt"], ""))), t.muted_style()),
+                ]))
+            })
+            .collect();
+        self.nav.clamp(list.len());
+        f.render_stateful_widget(List::new(items).block(block(title, true)).highlight_style(t.selected()), body, &mut self.nav.state);
+    }
+}
+
 // ---------- Connection ----------
 
 #[derive(Default)]
@@ -540,35 +782,31 @@ impl Screen for Connection {
             Some(Ok(ms)) => format!("reachable ({ms} ms)"),
             Some(Err(e)) => format!("not reachable: {e}"),
         };
-        let token = if self.auth.is_null() {
+        let sign_in = if self.auth.is_null() {
             "checking…".to_string()
         } else if let Some(e) = self.auth["error"].as_str() {
             e.to_string()
         } else if self.auth["required"] == true {
-            format!(
-                "required — {}",
-                if self.auth["authenticated"] == true {
-                    "this TUI is signed in (--token / HUBNESS_TOKEN)"
-                } else {
-                    "this TUI is NOT signed in"
-                }
-            )
+            match self.auth["user"]["username"].as_str() {
+                Some(u) => format!("required — signed in as {u} (Space L logs out)"),
+                None => "required — this TUI is NOT signed in".into(),
+            }
         } else {
-            "not required (the hub has no access token set)".into()
+            "not required (no accounts yet: open to the hub's machine only)".into()
         };
         let agents = ctx.shared.agents["agents"].as_array().map_or(0, |a| a.len());
         let lines = vec![
             Line::styled("Hub", t.accent_style()),
             row("URL", ctx.shared.base_url.clone(), W),
             row("Status", health, W),
-            row("Access token", token, W),
+            row("Sign-in", sign_in, W),
             row("Live sessions", ctx.shared.sessions.len().to_string(), W),
             row("Projects / groups", format!("{} / {}", ctx.shared.projects.len(), ctx.shared.groups.len()), W),
             row("Agents", agents.to_string(), W),
             Line::raw(""),
             Line::styled("This app", t.accent_style()),
             row("hubness TUI", format!("v{}", env!("CARGO_PKG_VERSION")), W),
-            row("Connect elsewhere", "hubtui --url http://host:8787 --token …", W),
+            row("Connect elsewhere", "hubtui --url http://host:8787 --user <name>", W),
             Line::raw(""),
             Line::styled(
                 "  The TUI is a client of the hub's API: every session, project and setting is shared with the web app.",
@@ -625,6 +863,7 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("t n/p/1…9", "+tabs: next / previous / a tab by name"),
             ("e", "toggle the sidebar"),
             ("r", "reload"),
+            ("L", "log out (a hub with accounts)"),
             ("q", "quit (also Ctrl+Q)"),
             ("Backspace", "up a menu (Esc closes)"),
         ],

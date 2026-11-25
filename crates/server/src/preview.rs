@@ -119,7 +119,7 @@ fn text(status: StatusCode, body: String) -> Response<Body> {
 }
 
 async fn proxy(mut req: Request<Incoming>, target: Target) -> Result<Response<Body>, std::convert::Infallible> {
-    // preview ports are as reachable as the hub: the same token (the browser's session cookie)
+    // preview ports are as reachable as the hub: the same sign-in (the browser's session cookie)
     if !crate::auth::authorized(req.headers()) {
         return Ok(text(StatusCode::UNAUTHORIZED, "Sign in to hubness first, then reload this preview.".into()));
     }

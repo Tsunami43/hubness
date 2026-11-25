@@ -5,7 +5,12 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use futures_util::StreamExt;
-use hubness_core::{AgentConfig, ApiError, GlobalStreamMsg, PermissionMode, Project, Session, SessionStreamMsg};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+
+use hubness_core::{
+    AgentConfig, ApiError, AuthStatus, GlobalStreamMsg, LoginResponse, PermissionMode, Project, Session, SessionStreamMsg, User,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -17,35 +22,70 @@ pub use reqwest::Method;
 pub struct Client {
     base: String,
     http: reqwest::Client,
+    /// The session token of a hub with accounts (sent as `Authorization: Bearer`).
+    token: Arc<RwLock<Option<String>>>,
+    /// Set when the hub answered 401: the session is gone, sign in again.
+    unauthorized: Arc<AtomicBool>,
 }
 
 impl Client {
-    /// `base` is the hub URL, e.g. `http://127.0.0.1:8787`; `token` — the hub's access token
-    /// when it requires one (sent as `Authorization: Bearer`).
+    /// `base` is the hub URL, e.g. `http://127.0.0.1:8787`; `token` — a session token from
+    /// `login` when the hub has accounts.
+    pub fn new(base: &str, token: Option<&str>) -> anyhow::Result<Self> {
+        let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).user_agent("hubness-tui").build()?;
+        Ok(Self {
+            base: base.trim_end_matches('/').to_string(),
+            http,
+            token: Arc::new(RwLock::new(token.filter(|t| !t.is_empty()).map(String::from))),
+            unauthorized: Arc::default(),
+        })
+    }
+
     pub fn base(&self) -> &str {
         &self.base
     }
 
-    pub fn new(base: &str, token: Option<&str>) -> anyhow::Result<Self> {
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(t) = token.filter(|t| !t.is_empty()) {
-            let mut v = reqwest::header::HeaderValue::from_str(&format!("Bearer {t}"))?;
-            v.set_sensitive(true);
-            headers.insert(reqwest::header::AUTHORIZATION, v);
-        }
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .user_agent("hubness-tui")
-            .default_headers(headers)
-            .build()?;
-        Ok(Self { base: base.trim_end_matches('/').to_string(), http })
+    /// Use another session token (`None` — signed out). Clones share it.
+    pub fn set_token(&self, token: Option<String>) {
+        *self.token.write().unwrap_or_else(|e| e.into_inner()) = token;
+        self.unauthorized.store(false, Ordering::SeqCst);
+    }
+
+    pub fn token(&self) -> Option<String> {
+        self.token.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Did a request get a 401 since the last call (the session expired or was revoked)?
+    pub fn take_unauthorized(&self) -> bool {
+        self.unauthorized.swap(false, Ordering::SeqCst)
     }
 
     fn url(&self, path: &str) -> String {
         format!("{}/api{path}", self.base)
     }
 
-    async fn decode<T: DeserializeOwned>(res: reqwest::Response) -> anyhow::Result<T> {
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let req = self.http.request(method, self.url(path));
+        match self.token() {
+            Some(t) => match reqwest::header::HeaderValue::from_str(&format!("Bearer {t}")) {
+                Ok(mut v) => {
+                    v.set_sensitive(true);
+                    req.header(reqwest::header::AUTHORIZATION, v)
+                }
+                Err(_) => req,
+            },
+            None => req,
+        }
+    }
+
+    async fn decode<T: DeserializeOwned>(&self, res: reqwest::Response) -> anyhow::Result<T> {
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.unauthorized.store(true, Ordering::SeqCst);
+        }
+        Self::decode_plain(res).await
+    }
+
+    async fn decode_plain<T: DeserializeOwned>(res: reqwest::Response) -> anyhow::Result<T> {
         let status = res.status();
         let text = res.text().await?;
         if !status.is_success() {
@@ -56,16 +96,40 @@ impl Client {
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        Self::decode(self.http.get(self.url(path)).send().await?).await
+        self.decode(self.request(reqwest::Method::GET, path).send().await?).await
     }
 
     /// A mutating request: always JSON, which also satisfies the hub's CSRF guard.
     pub async fn send<T: DeserializeOwned, B: Serialize>(&self, method: reqwest::Method, path: &str, body: &B) -> anyhow::Result<T> {
-        Self::decode(self.http.request(method, self.url(path)).json(body).send().await?).await
+        self.decode(self.request(method, path).json(body).send().await?).await
     }
 
     pub async fn health(&self) -> anyhow::Result<()> {
         self.get::<Value>("/health").await.map(|_| ())
+    }
+
+    /// Does the hub ask for a sign-in, and who is signed in with the current token?
+    pub async fn auth_status(&self) -> anyhow::Result<AuthStatus> {
+        Self::decode_plain(self.request(reqwest::Method::GET, "/auth/status").send().await?).await
+    }
+
+    /// Sign in; on success the client uses the new session token (also returned).
+    pub async fn login(&self, username: &str, password: &str) -> anyhow::Result<LoginResponse> {
+        let body = json!({ "username": username, "password": password });
+        let res: LoginResponse = Self::decode_plain(self.http.post(self.url("/auth/login")).json(&body).send().await?).await?;
+        self.set_token(Some(res.token.clone()));
+        Ok(res)
+    }
+
+    /// End the session on the hub and forget the token.
+    pub async fn logout(&self) -> anyhow::Result<()> {
+        let r = self.send::<Value, _>(reqwest::Method::POST, "/auth/logout", &json!({})).await.map(|_| ());
+        self.set_token(None);
+        r
+    }
+
+    pub async fn users(&self) -> anyhow::Result<Vec<User>> {
+        self.get("/users").await
     }
 
     pub async fn projects(&self) -> anyhow::Result<Vec<Project>> {
@@ -115,15 +179,14 @@ impl Client {
             .map(|b| if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
             .collect();
         let res = self
-            .http
-            .post(self.url(&format!("/sessions/{session_id}/attachments")))
+            .request(reqwest::Method::POST, &format!("/sessions/{session_id}/attachments"))
             .header("X-Hubness-Request", "1")
             .header("Content-Type", mime)
             .header("X-Filename", encoded)
             .body(bytes)
             .send()
             .await?;
-        Self::decode(res).await
+        self.decode(res).await
     }
 
     pub async fn archive(&self, session_id: &str) -> anyhow::Result<Session> {
@@ -134,11 +197,15 @@ impl Client {
     /// ends or the receiver is dropped.
     pub fn stream<T: DeserializeOwned + Send + 'static>(&self, path: &str) -> mpsc::UnboundedReceiver<anyhow::Result<T>> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let req = self.http.get(self.url(path));
+        let req = self.request(reqwest::Method::GET, path);
+        let unauthorized = self.unauthorized.clone();
         tokio::spawn(async move {
             let res = match req.send().await {
                 Ok(r) if r.status().is_success() => r,
                 Ok(r) => {
+                    if r.status() == reqwest::StatusCode::UNAUTHORIZED {
+                        unauthorized.store(true, Ordering::SeqCst);
+                    }
                     let _ = tx.send(Err(anyhow::anyhow!("stream answered {}", r.status())));
                     return;
                 }

@@ -13,6 +13,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::core::{Action, AppEvent, Ctx, Handled, Hit, Modal, Request, Route, Screen, ScreenId, Section, Shared, next_screen_id};
+use crate::login::{LoginEvent, LoginForm};
 use crate::screens;
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::theme::icon;
@@ -74,6 +75,10 @@ pub struct App {
     count: Option<usize>,
     modal: Option<(ScreenId, Modal, TextInput)>,
     sidebar: bool,
+    /// The sign-in screen of a hub with accounts (takes over the whole terminal).
+    login: Option<LoginForm>,
+    /// Who is signed in (`None` on a hub without accounts).
+    user: Option<String>,
     pub quit: bool,
 }
 
@@ -81,7 +86,12 @@ const CACHE: usize = 12;
 const APP: ScreenId = 0;
 
 impl App {
-    pub fn new(client: hubness_client::Client, tx: mpsc::UnboundedSender<AppEvent>) -> Self {
+    pub fn new(
+        client: hubness_client::Client,
+        tx: mpsc::UnboundedSender<AppEvent>,
+        login: Option<LoginForm>,
+        user: Option<String>,
+    ) -> Self {
         let base_url = client.base().to_string();
         let ctx = Ctx {
             client,
@@ -106,12 +116,72 @@ impl App {
             count: None,
             modal: None,
             sidebar: true,
+            login,
+            user,
             quit: false,
         };
-        app.refresh_shared();
-        app.ctx.stream("global", "/stream");
-        app.show(Route::Home);
+        if app.login.is_none() {
+            app.start();
+        }
         app
+    }
+
+    /// Load the shared data, open the global stream and show the screen (again after a sign-in).
+    fn start(&mut self) {
+        self.refresh_shared();
+        self.ctx.screen = APP;
+        self.ctx.stream("global", "/stream");
+        if self.screens.contains_key(&self.route) {
+            self.with_screen(|s, ctx| s.on_show(ctx));
+        } else {
+            self.show(self.route.clone());
+        }
+    }
+
+    /// The session is gone (401) or the user signed out: back to the sign-in screen.
+    fn sign_out(&mut self, message: Option<String>) {
+        let url = self.ctx.client.base().to_string();
+        crate::login::remember(&url, None, None);
+        self.ctx.client.set_token(None);
+        self.ctx.screen = APP;
+        self.ctx.close_stream("global");
+        self.modal = None;
+        self.overlay = Overlay::None;
+        let user = self.user.take().or_else(|| crate::login::stored(&url).1);
+        self.login = Some(LoginForm::new(user.as_deref(), message));
+    }
+
+    fn on_login_key(&mut self, k: KeyEvent) {
+        let Some(form) = &mut self.login else { return };
+        match form.on_key(k) {
+            LoginEvent::Quit => self.quit = true,
+            LoginEvent::Submit { username, password } => {
+                let c = self.ctx.client.clone();
+                self.ctx.screen = APP;
+                self.ctx.task("login", async move { Ok(serde_json::to_value(c.login(&username, &password).await?)?) });
+            }
+            LoginEvent::None => {}
+        }
+    }
+
+    fn on_login_result(&mut self, result: anyhow::Result<Value>) {
+        let Some(form) = &mut self.login else { return };
+        match result {
+            Ok(v) => {
+                let user = v["user"]["username"].as_str().map(String::from).unwrap_or_else(|| form.username());
+                crate::login::remember(self.ctx.client.base(), v["token"].as_str(), Some(&user));
+                self.user = Some(user);
+                self.login = None;
+                self.ctx.status = None;
+                self.start();
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                // "401: Wrong username or password" → the message
+                let msg = msg.split_once(": ").filter(|(code, _)| code.parse::<u16>().is_ok()).map_or(msg.clone(), |(_, m)| m.to_string());
+                form.failed(msg);
+            }
+        }
     }
 
     /// Hub-wide data shared by the screens.
@@ -240,7 +310,36 @@ impl App {
     }
 
     pub fn handle(&mut self, ev: AppEvent) {
+        if self.login.is_some() {
+            match ev {
+                AppEvent::Input(Event::Key(k)) if k.kind != KeyEventKind::Release => self.on_login_key(k),
+                AppEvent::Input(Event::Paste(text)) => {
+                    if let Some(form) = &mut self.login {
+                        form.paste(&text);
+                    }
+                }
+                AppEvent::Task { screen: APP, key, result } if key == "login" => self.on_login_result(result),
+                // answers to requests made before the session ended
+                _ => {}
+            }
+            self.ctx.client.take_unauthorized();
+            return;
+        }
+        self.handle_app(ev);
+        if self.login.is_none() && self.ctx.client.take_unauthorized() {
+            // no user: accounts were turned on while the TUI ran (the first one was just added)
+            let msg =
+                if self.user.is_some() { "Your session has ended: sign in again" } else { "The hub asks for an account now: sign in" };
+            self.sign_out(Some(msg.into()));
+        }
+    }
+
+    fn handle_app(&mut self, ev: AppEvent) {
         match ev {
+            AppEvent::Task { screen: APP, key, result } if key == "logout" => {
+                let _ = result;
+                self.sign_out(Some("Signed out".into()));
+            }
             AppEvent::Input(Event::Key(k)) if k.kind != KeyEventKind::Release => self.on_key(k),
             AppEvent::Input(Event::Paste(text)) => {
                 if let Some((_, Modal::Input { .. }, input)) = &mut self.modal {
@@ -515,6 +614,7 @@ impl App {
                 Entry::group("t", "tabs"),
                 Entry::cmd("e", "Sidebar"),
                 Entry::cmd("r", "Reload"),
+                Entry::cmd("L", "Log out"),
                 Entry::cmd("q", "Quit"),
             ],
             Menu::Windows => vec![
@@ -557,6 +657,7 @@ impl App {
                     self.refresh_shared();
                     self.with_screen(|s, ctx| s.on_show(ctx));
                 }
+                "L" => self.log_out(),
                 "q" => self.quit = true,
                 _ => {}
             },
@@ -574,6 +675,17 @@ impl App {
             Menu::Actions => self.run_action(&key),
         }
         self.apply_requests();
+    }
+
+    /// End the session on the hub, then show the sign-in screen.
+    fn log_out(&mut self) {
+        if self.user.is_none() {
+            self.ctx.info("This hub has no accounts: there is nothing to log out of");
+            return;
+        }
+        let c = self.ctx.client.clone();
+        self.ctx.screen = APP;
+        self.ctx.task("logout", async move { c.logout().await.map(|_| Value::Null) });
     }
 
     /// Run a screen action by its key.
@@ -612,6 +724,7 @@ impl App {
             ("cmd:sidebar", "Toggle sidebar"),
             ("cmd:reload", "Reload"),
             ("cmd:back", "Back"),
+            ("cmd:logout", "Log out"),
             ("cmd:quit", "Quit  (:q)"),
         ] {
             items.push((id.into(), label.into()));
@@ -637,6 +750,7 @@ impl App {
                 self.with_screen(|s, ctx| s.on_show(ctx));
             }
             "cmd:back" => self.ctx.back(),
+            "cmd:logout" => self.log_out(),
             "cmd:quit" => self.quit = true,
             other => {
                 if let Some(key) = other.strip_prefix("action:")
@@ -736,6 +850,10 @@ impl App {
         let t = Theme::get();
         self.ctx.hits.borrow_mut().clear();
         self.ctx.draw_prefix.borrow_mut().clear();
+        if let Some(form) = &self.login {
+            form.draw(f, self.ctx.client.base());
+            return;
+        }
         // the theme's background and text everywhere
         f.render_widget(Block::default().style(t.base()), f.area());
         let [main, status] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(f.area());
@@ -845,6 +963,10 @@ impl App {
             right.push(Span::styled(format!(" ? {waiting} "), Style::default().fg(t.warn).add_modifier(Modifier::BOLD)));
         }
         right.push(Span::styled(icon("\u{e0b6}", ""), Style::default().fg(t.bg_dark).bg(t.bg)));
+        let host = match &self.user {
+            Some(u) => format!("{u}@{host}"),
+            None => host,
+        };
         right.push(Span::styled(format!(" {} {host} ", icon("󰒋", "hub")), Style::default().fg(t.dim).bg(t.bg_dark)));
         right
             .push(Span::styled(format!(" {} ", icon("󰣇", "hubness")), Style::default().fg(t.bg).bg(t.accent).add_modifier(Modifier::BOLD)));

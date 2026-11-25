@@ -7,3 +7,10 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
+
+# password hashing is far too slow unoptimized (sign-in in debug builds and tests)
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

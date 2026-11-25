@@ -22,14 +22,31 @@ by default so `cargo build` and `cargo test` need no web build; `install.sh full
 
 ## Remote access
 
-By default the hub listens on 127.0.0.1 and asks for nothing. To reach it from another
-machine, set `HUBNESS_TOKEN` (generate one with `hubcli token`) and `HUBNESS_HOST`; the
-hub refuses a non-loopback address without a token. Every `/api` request and every preview
-port then needs the token: `Authorization: Bearer <token>` for API clients
-(`hubtui --url http://host:8787 --token …`), a one-time sign-in for the browser (an
-HttpOnly cookie with a hash of the token). The hub speaks plain HTTP — across untrusted
-networks put it behind an HTTPS reverse proxy (Caddy, nginx) or a VPN (Tailscale,
-WireGuard). The TypeScript server has no access token and stays loopback-only.
+Sign-in uses user accounts (username + password, argon2id; all accounts have the same
+rights). Without accounts the hub listens on 127.0.0.1 and asks for nothing; the web app
+offers to create the first account, which is accepted only from the hub's own machine.
+To reach the hub from another machine:
+
+```sh
+hubcli user add alice          # password from a hidden prompt (or stdin when not a TTY)
+HUBNESS_HOST=0.0.0.0 hubcli serve
+```
+
+The hub refuses a non-loopback `HUBNESS_HOST` while it has no accounts. Once an account
+exists every `/api` request and every preview port needs a session: `POST /api/auth/login`
+`{username, password}` returns `{token, user}` for API clients (`Authorization: Bearer`;
+the TUI asks on start and keeps the token per hub URL in `~/.config/hubness/tui.json`,
+mode 0600) and sets an HttpOnly `SameSite=Lax` cookie for browsers. Failed sign-ins back
+off per username and address. Accounts are managed in Settings → Users (web and TUI),
+through `/api/users`, or with `hubcli user add|passwd|rm|list` on the data folder
+(`HUBNESS_DATA_DIR`, also while the hub runs). A password change or a deleted account ends
+its sessions; the last account can't be deleted. The hub's own children (the MCP server)
+call it back with a random per-process service token from their environment.
+
+The hub speaks plain HTTP — across untrusted networks put it behind an HTTPS reverse proxy
+(Caddy, nginx) or a VPN (Tailscale, WireGuard). The TypeScript server has no sign-in and
+stays loopback-only (it only shares the `users` / `auth_sessions` tables through migration
+v4).
 
 ## Rules while both servers exist
 
@@ -45,8 +62,8 @@ WireGuard). The TypeScript server has no access token and stays loopback-only.
 | Area | Routes | State |
 | --- | --- | --- |
 | Core | `GET /health`, CSRF guard, `{error}` responses, web app + SPA fallback | done |
-| Auth | access token (`HUBNESS_TOKEN`), `/auth/status`, `/auth/login`, `/auth/logout` — Rust only | done |
-| Database | open, WAL, migrations v1–v3 | done |
+| Auth | accounts: `/auth/status`, `/auth/login`, `/auth/setup`, `/auth/logout`, `GET/POST /users`, `DELETE /users/:id`, `PUT /users/:id/password`; `hubcli user …` — Rust only | done |
+| Database | open, WAL, migrations v1–v4 | done |
 | Projects | `GET /projects`, `GET /projects/discover`, `POST /projects/import`, `PATCH /projects/:id`, `DELETE /projects/:id` | done (incl. `?files=1&confirm=` with the TS safety checks) |
 | Settings | `GET /settings`, `PUT /settings` | done |
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (local symlink workspace) | done |

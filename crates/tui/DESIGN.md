@@ -48,6 +48,7 @@ Every other letter is a screen action, listed by `?` and in the palette. Screens
 | `Space t` | +tabs: `n` / `p` next / previous, `1…9` a tab by its name |
 | `Space e` | toggle the sidebar |
 | `Space r` | reload |
+| `Space L` | log out (a hub with accounts; also `:` → Log out) |
 | `Space q` | quit |
 
 `Backspace` goes up a menu, `Esc` closes it. `Ctrl+g` opens the leader everywhere (also in
@@ -85,3 +86,10 @@ in the status line). `i` / `a` / `o` type, `Esc` stops typing, `:w` / `Ctrl+S` s
 - Rounded borders; the focused pane uses the theme's active border color, others are muted.
 - A status line at the bottom: the mode, where you are, messages, running agents, the hub.
 - Nerd Font icons (Omarchy ships Nerd Fonts); `HUBNESS_TUI_ICONS=0` turns them off.
+
+## Signing in
+
+A hub with accounts shows a sign-in screen (username, masked password) before anything
+else. The session token is kept per hub URL in `~/.config/hubness/tui.json` (mode 0600);
+when the hub answers 401 the token is dropped and the screen comes back. `--user <name>`
+prefills the username. Settings → Users adds and deletes accounts and changes passwords.
