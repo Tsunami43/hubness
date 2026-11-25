@@ -3,14 +3,18 @@
 //!
 //! The port is incremental: routes not ported yet answer 404, as unknown routes do.
 
+pub mod agents;
+pub mod bus;
 pub mod catalog;
 pub mod config;
 pub mod db;
 pub mod error;
 pub mod home;
 pub mod http;
+pub mod inbox;
 pub mod paths;
 pub mod routes;
+pub mod sessions;
 pub mod workspaces;
 
 use std::sync::{Arc, Mutex};
@@ -27,6 +31,7 @@ use error::{ApiResult, HttpError};
 pub struct AppState {
     db: Arc<Mutex<Connection>>,
     config: Arc<Config>,
+    bus: bus::Bus,
 }
 
 impl AppState {
@@ -35,16 +40,23 @@ impl AppState {
         config.ensure_dirs()?;
         let db = db::open(&config.db_path)?;
         home::ensure_home_project(&db, &config)?;
-        Ok(Self { db: Arc::new(Mutex::new(db)), config: Arc::new(config) })
+        // no agent survives a restart
+        db::sessions::recover_interrupted(&db)?;
+        Ok(Self { db: Arc::new(Mutex::new(db)), config: Arc::new(config), bus: bus::Bus::default() })
     }
 
     pub fn config(&self) -> &Config {
         &self.config
     }
 
+    /// The database connection (held until the guard is dropped).
+    fn db(&self) -> ApiResult<std::sync::MutexGuard<'_, Connection>> {
+        self.db.lock().map_err(|_| HttpError::new(500, "Database lock poisoned"))
+    }
+
     /// Run synchronous data access with the connection held.
     fn with<T>(&self, f: impl FnOnce(&Connection, &Config) -> ApiResult<T>) -> ApiResult<axum::Json<T>> {
-        let db = self.db.lock().map_err(|_| HttpError::new(500, "Database lock poisoned"))?;
+        let db = self.db()?;
         f(&db, &self.config).map(axum::Json)
     }
 }

@@ -2,6 +2,7 @@
 //! and JSON stored in columns match the TypeScript server, so both can use one file.
 
 pub mod migrations;
+pub mod sessions;
 
 use std::path::Path;
 

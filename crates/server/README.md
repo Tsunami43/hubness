@@ -29,7 +29,8 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Groups | `GET/POST /groups`, `GET/PATCH/DELETE /groups/:id` (local symlink workspace) | done |
 | Projects | `GET /projects/:id` (repo info), `new-repo`, `clone`, manifest, `groups/:id/context` | todo |
 | Git logins | `/git-credentials` (needs the AES-256-GCM secrets format) | todo |
-| Sessions | list, detail, events, SSE streams, messages, approvals, archive | todo |
+| Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
+| Sessions | messages, prompt on create, approvals, attachments, convert to project, pane file/diff | todo (needs the runtime) |
 | Agents | Claude Code, Codex (ACP), OpenCode, Grok adapters and normalizers | todo |
 | Files | tree, read/write, search, watch | todo |
 | Git | status, diff, log, branches, operations | todo |
@@ -38,6 +39,8 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Harness | agent install/accounts/models | todo |
 | System | containers, units, packages, overview, ask | todo |
 
-Known gaps in ported routes: deleting a project or group does not yet refuse while an
-agent is working in it (there is no runtime yet), and the background refresh of repository
-metadata on `GET /projects` is not ported.
+Known gaps in ported routes: deleting or archiving does not yet refuse while an agent is
+working (there is no runtime yet), and the background refresh of repository metadata on
+`GET /projects` is not ported. Session events are passed through as JSON (`HubEvent` is
+not typed in Rust yet); `serde_json` keeps key order and exact floats so the output is
+byte-identical to the TS server.

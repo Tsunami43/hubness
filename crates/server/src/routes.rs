@@ -27,6 +27,7 @@ pub fn api() -> Router<AppState> {
         .route("/settings", get(get_settings).put(put_settings))
         .route("/groups", get(list_groups).post(create_group))
         .route("/groups/{id}", get(group_detail).patch(update_group).delete(delete_group))
+        .merge(crate::sessions::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 

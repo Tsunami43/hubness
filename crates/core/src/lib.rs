@@ -219,6 +219,109 @@ pub struct DiscoverResult {
     pub repos: Vec<DiscoveredRepo>,
 }
 
+// ---------- sessions ----------
+
+/// Agent of a session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentConfig {
+    pub kind: String,
+    /// Model id in the agent's own format. Absent — the agent's default model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<PermissionMode>,
+    /// Legacy Claude Code profile of old sessions. Absent — the default account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStatus {
+    Idle,
+    Running,
+    Waiting,
+    Error,
+}
+
+impl SessionStatus {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "running" => Self::Running,
+            "waiting" => Self::Waiting,
+            "error" => Self::Error,
+            _ => Self::Idle,
+        }
+    }
+}
+
+/// A session has exactly one scope: a project, a group, or a plain chat (both `None`,
+/// an Inbox folder as `cwd`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub id: String,
+    pub project_id: Option<String>,
+    pub group_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub card_id: Option<String>,
+    pub title: String,
+    pub agent: AgentConfig,
+    pub agent_session_id: Option<String>,
+    pub cwd: Option<String>,
+    pub status: SessionStatus,
+    pub archived_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// An event of the session feed. Kept as raw JSON (`{uid, seq, ts, kind, ...}`, see
+/// `HubEvent` in packages/shared) until the agent runtime is ported.
+pub type HubEvent = serde_json::Value;
+
+/// What the agent showed next to the chat (the `open_pane` MCP tool).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Pane {
+    pub kind: PaneKind,
+    pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub at: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PaneKind {
+    Url,
+    File,
+    Diff,
+}
+
+/// Messages of `GET /api/sessions/:id/stream`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+// short-lived messages: boxing the session would only add allocations
+#[allow(clippy::large_enum_variant)]
+pub enum SessionStreamMsg {
+    Snapshot { session: Session, events: Vec<HubEvent>, pane: Option<Pane> },
+    Pane { pane: Option<Pane> },
+    Event { event: HubEvent },
+    Session { session: Session },
+}
+
+/// Messages of `GET /api/stream` (for lists).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+// short-lived messages: boxing the session would only add allocations
+#[allow(clippy::large_enum_variant)]
+pub enum GlobalStreamMsg {
+    #[serde(rename = "session")]
+    Session { session: Session },
+    #[serde(rename = "session-deleted")]
+    SessionDeleted { id: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +349,20 @@ mod tests {
         assert_eq!(v["groupIds"], serde_json::json!([]));
         assert!(v.get("missing").is_none(), "missing is omitted unless set");
         assert_eq!(v["repoUrl"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn stream_messages_are_tagged_like_the_typescript_unions() {
+        let v = serde_json::to_value(GlobalStreamMsg::SessionDeleted { id: "x".into() }).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "session-deleted", "id": "x" }));
+        let v = serde_json::to_value(SessionStreamMsg::Pane { pane: None }).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "pane", "pane": null }));
+    }
+
+    #[test]
+    fn agent_config_omits_absent_fields() {
+        let a: AgentConfig = serde_json::from_str(r#"{"kind":"codex","permissionMode":"plan"}"#).unwrap();
+        assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"kind":"codex","permissionMode":"plan"}"#);
     }
 
     #[test]
