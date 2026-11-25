@@ -170,6 +170,8 @@ export function bwrapArgs(opts: { repos: string[]; cwd: string; interactive?: bo
   // interactive shell history is separate (the host one with typed commands is not visible)
   if (opts.interactive) {
     const hist = join(config.dataDir, 'shell-history');
+    // bound below as is (HISTFILE lives there): it must exist even without fish/zsh folders
+    mkdirSync(hist, { recursive: true });
     for (const [dir, target] of [
       [join(hist, 'fish'), join(HOME, '.local/share/fish')],
       [join(hist, 'zsh'), join(HOME, '.local/share/zsh')],
