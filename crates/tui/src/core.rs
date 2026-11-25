@@ -181,6 +181,8 @@ pub enum Request {
     Modal(Modal),
     /// Open a URL in the local browser (preview, provider links).
     OpenUrl(String),
+    /// Leave this hub for a saved one (`None` — the connect screen, to add one).
+    SwitchHub(Option<String>),
 }
 
 /// What a screen acts through.
@@ -353,6 +355,11 @@ impl Ctx {
             let r = Rect { x: inner.x, y: inner.y + row as u16, width: inner.width, height: 1 };
             self.click(r, Hit::Click(format!("{id}:{}", offset + row)));
         }
+    }
+
+    /// Leave this hub for a saved one (`None` — the connect screen, to add one).
+    pub fn switch_hub(&mut self, url: Option<String>) {
+        self.requests.push(Request::SwitchHub(url));
     }
 
     pub fn open_url(&mut self, url: impl Into<String>) {
