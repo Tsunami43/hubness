@@ -20,6 +20,7 @@ import { LanguagePage } from './pages/settings/LanguagePage';
 import { AgentPage } from './pages/settings/AgentPage';
 import { KeyboardPage } from './pages/settings/KeyboardPage';
 import { GitAccessPage } from './pages/settings/GitAccessPage';
+import { UsersPage } from './pages/settings/UsersPage';
 import { HarnessDetail, HarnessIndex, HarnessLayout } from './pages/HarnessPage';
 import { HomePage } from './pages/HomePage';
 import { SystemIndex, SystemLayout, SystemSection } from './pages/SystemPage';
@@ -53,6 +54,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="appearance" element={<AppearancePage />} />
               <Route path="agent" element={<AgentPage />} />
               <Route path="git" element={<GitAccessPage />} />
+              <Route path="users" element={<UsersPage />} />
               <Route path="keyboard" element={<KeyboardPage />} />
               <Route path="language" element={<LanguagePage />} />
               <Route path="harness" element={<Navigate to="/harness" replace />} />

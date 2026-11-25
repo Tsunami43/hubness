@@ -46,6 +46,7 @@ import type {
   SystemOverview,
   SystemPlatform,
   UnitInfo,
+  User,
 } from '@hubness/shared';
 
 import { t } from '../i18n';
@@ -68,7 +69,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  // the hub requires its access token (HUBNESS_TOKEN): show the sign-in screen
+  // the session is gone (or the hub just got its first account): show the sign-in screen
   if (res.status === 401) window.dispatchEvent(new Event('hubness:unauthorized'));
   if (!res.ok) throw new ApiError(res.status, data?.error ?? t('api.error', { status: res.status }));
   return data as T;
@@ -233,4 +234,10 @@ export const api = {
   setGitCredential: (host: string, body: { username: string; kind: GitCredentialKind; secret: string }) =>
     req<GitCredentialInfo[]>('PUT', `/git-credentials/${encodeURIComponent(host)}`, body),
   deleteGitCredential: (host: string) => req<GitCredentialInfo[]>('DELETE', `/git-credentials/${encodeURIComponent(host)}`),
+  users: () => req<User[]>('GET', '/users'),
+  createUser: (body: { username: string; password: string }) => req<User>('POST', '/users', body),
+  deleteUser: (id: string) => req<{ ok: true }>('DELETE', `/users/${encodeURIComponent(id)}`),
+  /** Your own password needs `currentPassword`; ends the account's other sessions. */
+  setUserPassword: (id: string, body: { password: string; currentPassword?: string }) =>
+    req<{ ok: true }>('PUT', `/users/${encodeURIComponent(id)}/password`, body),
 };
