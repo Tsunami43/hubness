@@ -850,11 +850,11 @@ pub fn start(spec: &'static Spec, turn: Arc<Turn>) -> Result<Started, String> {
 // ---------- agent specs ----------
 
 fn opencode_bin() -> String {
-    std::env::var("HUBNESS_OPENCODE_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "opencode".into())
+    super::agent_bin("HUBNESS_OPENCODE_BIN", "opencode")
 }
 
 fn grok_bin() -> String {
-    std::env::var("HUBNESS_GROK_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "grok".into())
+    super::agent_bin("HUBNESS_GROK_BIN", "grok")
 }
 
 /// Codex ACP adapter command (`HUBNESS_CODEX_ACP` overrides the global `codex-acp`).
@@ -865,7 +865,7 @@ fn codex_command() -> Vec<String> {
         .filter(|v| !v.is_empty())
     {
         Some(v) => v,
-        None => vec!["codex-acp".into()],
+        None => vec![super::resolve("codex-acp")],
     }
 }
 

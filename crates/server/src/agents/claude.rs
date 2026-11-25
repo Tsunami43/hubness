@@ -25,7 +25,7 @@ const OUTPUT_LIMIT: usize = 20_000;
 
 /// Claude Code CLI binary.
 pub fn claude_bin() -> String {
-    std::env::var("HUBNESS_CLAUDE_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "claude".into())
+    super::agent_bin("HUBNESS_CLAUDE_BIN", "claude")
 }
 
 /// A legacy CLAUDE_CONFIG_DIR profile (kept only so old sessions resume where their transcript lives).

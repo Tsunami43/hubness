@@ -40,6 +40,10 @@ pub fn shq(s: &str) -> String {
 
 /// Run a CLI with stdin closed; stdout on success, `None` on failure or timeout.
 pub async fn run_cli(cmd: &str, args: &[&str], timeout: Duration, env: &[(String, String)]) -> Option<String> {
+    // a lazy mise wrapper would download the tool just to answer a status check: not installed
+    if !cmd.contains('/') && agents::find_on_path(cmd).is_some_and(|r| r.is_err()) {
+        return None;
+    }
     let mut c = tokio::process::Command::new(cmd);
     c.args(args).envs(env.iter().cloned()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
     let out = tokio::time::timeout(timeout, c.output()).await.ok()?.ok()?;
@@ -157,13 +161,10 @@ async fn npm_latest(pkg: &str) -> Option<String> {
     parse_version(v["version"].as_str())
 }
 
-/// Full path of a binary found on PATH, with symlinks resolved.
+/// Full path of a binary found on PATH (a real install, never a lazy mise wrapper), with
+/// symlinks resolved.
 fn resolve_bin(bin: &str) -> Option<PathBuf> {
-    let found = if bin.contains('/') {
-        Some(PathBuf::from(bin)).filter(|p| p.is_file())
-    } else {
-        std::env::var("PATH").ok()?.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(bin)).find(|p| p.is_file())
-    }?;
+    let found = if bin.contains('/') { Some(PathBuf::from(bin)).filter(|p| p.is_file()) } else { agents::find_on_path(bin)?.ok() }?;
     Some(std::fs::canonicalize(&found).unwrap_or(found))
 }
 
@@ -629,7 +630,7 @@ async fn codex_harness(s: &AppState) -> Value {
 const OPENCODE: &str = "opencode";
 
 fn opencode_bin() -> String {
-    std::env::var("HUBNESS_OPENCODE_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "opencode".into())
+    agents::agent_bin("HUBNESS_OPENCODE_BIN", "opencode")
 }
 
 fn oc_config_dir() -> PathBuf {
@@ -878,7 +879,7 @@ async fn opencode_harness() -> Value {
 const GROK: &str = "grok";
 
 fn grok_bin() -> String {
-    std::env::var("HUBNESS_GROK_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "grok".into())
+    agents::agent_bin("HUBNESS_GROK_BIN", "grok")
 }
 
 async fn grok_version() -> Option<String> {
