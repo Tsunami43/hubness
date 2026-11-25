@@ -16,6 +16,10 @@ Corepack is not required.
 - JavaScript dependencies are pinned to exact versions (`saveExact` in
   `pnpm-workspace.yaml`, `save-exact` in `.npmrc`); versions published less than a day ago
   are not resolved (`minimumReleaseAge`). Check with `pnpm outdated -r` and `pnpm audit`.
+- Rust dependencies are declared once in `[workspace.dependencies]` of the root
+  `Cargo.toml` with exact versions (`=x.y.z`) and referenced with `.workspace = true`;
+  `Cargo.lock` is committed, builds and installs use `--locked`. The MSRV is the
+  workspace `rust-version`. Check with `cargo audit` and `cargo tree -d`.
 
 ## Branches (Git Flow)
 
