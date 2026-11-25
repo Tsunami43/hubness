@@ -1,5 +1,5 @@
 import { liveStream } from './stream';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { qk, useApi } from './query';
 import type { GlobalStreamMsg, HubEvent, Pane, Session, SessionStreamMsg } from '@hubness/shared';
@@ -38,7 +38,8 @@ export function useSessionStream(sessionId: string | undefined) {
     );
   }, [sessionId]);
 
-  const list = [...events.values()].sort((a, b) => a.seq - b.seq);
+  // sorted once per change of the map, not on every render of the view
+  const list = useMemo(() => [...events.values()].sort((a, b) => a.seq - b.seq), [events]);
   return { session, setSession, events: list, connected, pane, setPane };
 }
 

@@ -7,6 +7,11 @@ import { agentOr404 } from '../agents/registry.ts';
 import { z } from 'zod';
 import { getJob, killJob, startJob, subscribeJob, writeJob } from '../terminal.ts';
 import { parseBody, pumpSSE, TermSizeSchema } from './http.ts';
+import { extensionsOf, projectDirOf, readListedFile, readRules, saveRules } from '../extensions.ts';
+import { mcpAdd, mcpConnect, mcpDelete, mcpDisconnect, mcpMatrix } from '../mcp-servers.ts';
+import { mcpCatalog } from '../mcp-catalog.ts';
+import { AGENTS } from '../agents/registry.ts';
+import { skillConnect, skillContent, skillCreate, skillDelete, skillDisconnect, skillImport, skillImportPreview, skillsMatrix } from '../skills.ts';
 
 /**
  * /api/harness: harness info and actions; /api/jobs: terminal
@@ -18,8 +23,83 @@ export const jobs = new Hono();
 const DefaultModel = z.object({ model: z.string().max(200).nullish() });
 const JobInput = z.object({ data: z.string().max(4096, 'data: at most 4096 characters') });
 
+const McpBody = z.object({
+  name: z.string().max(64),
+  transport: z.enum(['stdio', 'http', 'sse']),
+  command: z.string().max(1000).nullish(),
+  args: z.array(z.string().max(2000)).max(100).nullish(),
+  env: z.record(z.string(), z.string()).nullish(),
+  url: z.string().max(2000).nullish(),
+  headers: z.record(z.string(), z.string()).nullish(),
+  agents: z.array(z.string().max(64)).max(20),
+});
+const RulesBody = z.object({ content: z.string() });
+const Agents = z.array(z.string().max(64)).max(20);
+const SkillBody = z.object({
+  name: z.string().max(64),
+  description: z.string().max(4000),
+  body: z.string(),
+  agents: Agents,
+  replace: z.boolean().nullish(),
+});
+const ImportPreviewBody = z.object({ url: z.string().max(2000) });
+const ImportBody = z.object({ id: z.string().max(64), skills: z.array(z.string().max(64)).max(200), agents: Agents, replace: z.boolean().nullish() });
+
 harness.get('/', async (c) => c.json(await harnessAll(c.req.query('refresh') === '1')));
 harness.get('/agents', async (c) => c.json(await agentsList()));
+
+// ---------- MCP servers in the agents' own configs (before /:kind) ----------
+
+const project = (c: { req: { query(k: string): string | undefined } }) => projectDirOf(c.req.query('project'));
+
+harness.get('/mcp', (c) => c.json(mcpMatrix(project(c))));
+harness.get('/mcp/catalog', async (c) => c.json(await mcpCatalog(c.req.query('q'), c.req.query('cursor'))));
+harness.post('/mcp', async (c) => {
+  const b = await parseBody(c, McpBody);
+  const dir = project(c);
+  return c.json(
+    mcpAdd(
+      { name: b.name, transport: b.transport, command: b.command ?? undefined, args: b.args ?? undefined, env: b.env ?? undefined, url: b.url ?? undefined, headers: b.headers ?? undefined, agents: b.agents },
+      dir,
+    ),
+  );
+});
+harness.put('/mcp/:name/agents/:kind', (c) => c.json(mcpConnect(c.req.param('name'), c.req.param('kind'), project(c))));
+harness.delete('/mcp/:name/agents/:kind', (c) => c.json(mcpDisconnect(c.req.param('name'), c.req.param('kind'), project(c))));
+harness.delete('/mcp/:name', (c) => c.json(mcpDelete(c.req.param('name'), project(c))));
+
+// ---------- skills across the agents (before /:kind) ----------
+
+harness.get('/skills', (c) => c.json(skillsMatrix(project(c))));
+harness.post('/skills', async (c) => {
+  const b = await parseBody(c, SkillBody);
+  return c.json(skillCreate({ ...b, replace: b.replace ?? undefined }, project(c)));
+});
+harness.post('/skills/import/preview', async (c) => c.json(await skillImportPreview((await parseBody(c, ImportPreviewBody)).url)));
+harness.post('/skills/import', async (c) => {
+  const b = await parseBody(c, ImportBody);
+  return c.json(skillImport({ ...b, replace: b.replace ?? undefined }, project(c)));
+});
+harness.get('/skills/:name', (c) => c.json(skillContent(c.req.param('name'), c.req.query('agent') || undefined, project(c))));
+harness.delete('/skills/:name', (c) => c.json(skillDelete(c.req.param('name'), project(c))));
+harness.put('/skills/:name/agents/:kind', (c) => c.json(skillConnect(c.req.param('name'), c.req.param('kind'), project(c))));
+harness.delete('/skills/:name/agents/:kind', (c) => c.json(skillDisconnect(c.req.param('name'), c.req.param('kind'), project(c))));
+
+// ---------- skills, rules, subagents, commands ----------
+
+/** Every agent's extensions at once (the cross-agent Rules / Subagents / Commands / Plugins pages). */
+harness.get('/extensions', (c) => {
+  const dir = project(c);
+  return c.json({ agents: AGENTS.map((a) => extensionsOf(a.kind, dir)) });
+});
+harness.get('/:kind/extensions', (c) => c.json(extensionsOf(agentOr404(c.req.param('kind')).kind, project(c))));
+harness.get('/:kind/file', (c) => c.json(readListedFile(agentOr404(c.req.param('kind')).kind, project(c), c.req.query('path'))));
+harness.get('/:kind/rules', (c) => c.json(readRules(agentOr404(c.req.param('kind')).kind, project(c), c.req.query('path'))));
+harness.put('/:kind/rules', async (c) => {
+  const kind = agentOr404(c.req.param('kind')).kind;
+  const b = await parseBody(c, RulesBody);
+  return c.json(saveRules(kind, project(c), c.req.query('path'), b.content));
+});
 /** One harness (a tab of the Harness page); ?refresh=1 re-checks versions online. */
 harness.get('/:kind', async (c) => c.json(await harnessOne(c.req.param('kind'), c.req.query('refresh') === '1')));
 

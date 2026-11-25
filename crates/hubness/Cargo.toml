@@ -1,0 +1,28 @@
+[package]
+name = "hubness"
+description = "hubness, a self-hosted hub for coding agents: the server, its management commands, the TUI and self-update"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# The full build: the hub server (`serve`, `server …`, `user …` and the helpers the server
+# starts for agents). `--no-default-features` builds the client: tui, webapp, update.
+default = ["server"]
+server = ["dep:hubness-server"]
+# Compile the built web app (apps/web/dist, `pnpm build`) into the binary. Off by default so
+# `cargo build`/`cargo test` work without a web build; release builds and install.sh --from-source turn it on.
+embed-web = ["server", "hubness-server?/embed-web"]
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+flate2.workspace = true
+hubness-server = { workspace = true, optional = true }
+hubness-tui.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tokio = { workspace = true, features = ["full"] }

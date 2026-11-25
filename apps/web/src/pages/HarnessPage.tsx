@@ -22,8 +22,9 @@ import { useApi, queryClient } from '../lib/query';
 import { AgentIcon, ProviderIcon } from '../components/AgentIcon';
 import { Button, ErrorLine, Spinner } from '../components/ui';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../components/SubmenuLayout';
-import { TerminalSheet } from '../components/Terminal';
+import { sheetTermSize, TerminalSheet } from '../components/Terminal';
 import { ModelPicker } from '../components/ModelPicker';
+import { EXTENSION_PAGES, ExtensionsSummary } from '../components/HarnessExtensions';
 import { t, tOptional } from '../i18n';
 import type { MessageKey } from '../i18n/en';
 
@@ -40,15 +41,18 @@ const useHarness = () => useOutletContext<HarnessCtx>();
 /** Search words for every agent tab (the agent name and kind are added per item). */
 const KEYWORDS = [
   'version', 'update', 'install', 'login', 'sign in', 'logout', 'account', 'plan', 'subscription', 'limits', 'usage',
-  'providers', 'models', 'default model', 'stats', 'tokens', 'acp',
-  'версия', 'обновление', 'вход', 'аккаунт', 'подписка', 'лимиты', 'провайдеры', 'модели',
+  'providers', 'models', 'default model', 'stats', 'tokens', 'acp', 'skills', 'rules', 'agents', 'commands', 'plugins',
+  'версия', 'обновление', 'вход', 'аккаунт', 'подписка', 'лимиты', 'провайдеры', 'модели', 'навыки', 'правила', 'агенты', 'команды', 'плагины',
 ];
 
-/** Terminal size fitted to the screen width (in characters). */
-function termSize() {
-  const w = Math.min(window.innerWidth, 768) - 56;
-  return { cols: Math.max(40, Math.floor(w / 7.9)), rows: 24 };
-}
+const EXT_KEYWORDS: Record<(typeof EXTENSION_PAGES)[number]['to'], string[]> = {
+  mcp: ['mcp', 'servers', 'tools', 'catalog', 'registry', 'серверы', 'инструменты', 'каталог'],
+  skills: ['skills', 'skill.md', 'import', 'навыки', 'скиллы', 'импорт'],
+  rules: ['rules', 'claude.md', 'agents.md', 'memory', 'правила', 'память'],
+  subagents: ['subagents', 'agents', 'субагенты', 'агенты'],
+  commands: ['commands', 'slash', 'prompts', 'команды', 'слеш'],
+  plugins: ['plugins', 'marketplace', 'плагины'],
+};
 
 /**
  * Harness: agent submenu with search. Like System, nothing heavy is read up front: the menu
@@ -66,7 +70,7 @@ export function HarnessLayout() {
   const run: Run = async (kind, action) => {
     setNotice(null);
     try {
-      const r = await api.harnessAction(kind, action, termSize());
+      const r = await api.harnessAction(kind, action, sheetTermSize(24));
       if ('id' in r) {
         setJob(r);
         jobAction.current = action;
@@ -79,15 +83,24 @@ export function HarnessLayout() {
     }
   };
 
-  // order is the server's (registry) order
-  const items: SubmenuItem[] = (agents ?? []).map((a) => ({
+  // the cross-agent Extensions pages first, then the agents in the server's (registry) order
+  const extItems: SubmenuItem[] = EXTENSION_PAGES.map(({ to, icon: Icon, label, hint }) => ({
+    to,
+    label: t(label),
+    hint: t(hint),
+    icon: <Icon className="size-4" />,
+    group: t('ext.group'),
+    keywords: EXT_KEYWORDS[to],
+  }));
+  const items: SubmenuItem[] = [...extItems, ...(agents ?? []).map((a) => ({
+    group: t('harness.agentsGroup'),
     to: a.kind,
     label: a.label,
     hint: a.version ? `v${a.version}` : undefined,
     icon: <AgentIcon kind={a.kind} />,
     trailing: <MenuMark a={a} />,
     keywords: [a.kind, ...KEYWORDS],
-  }));
+  }))];
 
   return (
     <>
@@ -164,6 +177,7 @@ function HarnessTab({ kind }: { kind: AgentKind }) {
         </Button>
       </div>
       <AgentCard info={info} />
+      <ExtensionsSummary kind={kind} />
     </div>
   );
 }

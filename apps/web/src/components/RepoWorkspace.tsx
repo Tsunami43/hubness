@@ -22,7 +22,7 @@ import { JumpLabel } from './LeaderOverlay';
 import { useKeyActions, type KeyAction } from '../lib/keys';
 import { useDragging } from '../lib/dnd';
 import { NewSessionView, SessionView } from './SessionView';
-import { ptySize, ShellTab } from './ProjectTools';
+import { ptySize, ShellTab } from './project/shell';
 import { StatusDot } from './ui';
 import { ActivityButton, Title, ToolBadge, ToolBar, ToolLauncher } from './workspace/chrome';
 import { GitTool, Readme } from './workspace/git';

@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: TypeScript (check, test, build, audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # the pnpm version comes from packageManager in package.json
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run check
+      - run: pnpm --filter @hubness/server run test
+      - run: pnpm --filter @hubness/web run build
+      - run: pnpm audit --audit-level high
+
+  rust:
+    name: Rust (fmt, clippy, test, contract, client build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo clippy -p hubness --no-default-features --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked
+      - name: Contract tests against the Rust server
+        run: node --disable-warning=ExperimentalWarning --test apps/server/test/contract.test.ts
+        env:
+          HUBNESS_CONTRACT_SERVER: rust
+      - name: Client build has no server code
+        run: |
+          cargo build --locked -p hubness --no-default-features
+          if cargo tree --locked -p hubness --no-default-features | grep -E 'rusqlite|axum|hubness-server'; then
+            echo "the client build pulls in server crates" >&2
+            exit 1
+          fi
+
+  audit:
+    name: Rust dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  installer:
+    name: Installer (sh -n, shellcheck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh -n install.sh
+      # shellcheck is preinstalled on the ubuntu runners
+      - run: shellcheck install.sh

@@ -190,10 +190,34 @@ export function pruneAutoImported(db: DatabaseSync) {
       AND id NOT IN (SELECT project_id FROM sessions WHERE project_id IS NOT NULL)`);
 }
 
+/**
+ * v4 — user accounts (username + argon2id password hash) and their sign-in sessions (only a
+ * SHA-256 of the session token is stored). Sign-in itself is implemented by the Rust server.
+ */
+export function userAccounts(db: DatabaseSync) {
+  db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  last_seen TEXT NOT NULL,
+  expires TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions(user_id);
+`);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'baseline schema', up: baseline },
   { version: 2, name: 'legacy groups (projects.kind = group) → project_groups', up: migrateLegacyGroups },
   { version: 3, name: 'drop auto-imported projects', up: pruneAutoImported },
+  { version: 4, name: 'user accounts and their sign-in sessions', up: userAccounts },
 ];
 
 export const schemaVersion = (db: DatabaseSync) => Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);

@@ -22,8 +22,8 @@ const rootPath = (c: { req: { param(k: string): string } }): string => projectOr
 
 fileRoutes.get('/fs/browse', (c) => c.json(browse(c.req.query('path'))));
 
-fileRoutes.get('/projects/:id/tree', (c) => c.json(listTree(rootPath(c), c.req.query('path') ?? '')));
-fileRoutes.get('/projects/:id/files', (c) => c.json({ files: listFiles(rootPath(c)) }));
+fileRoutes.get('/projects/:id/tree', async (c) => c.json(await listTree(rootPath(c), c.req.query('path') ?? '')));
+fileRoutes.get('/projects/:id/files', async (c) => c.json({ files: await listFiles(rootPath(c)) }));
 
 fileRoutes.get('/projects/:id/file', (c) => {
   const rel = c.req.query('path');

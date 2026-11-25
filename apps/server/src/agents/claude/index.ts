@@ -6,6 +6,7 @@ import { notFound, parseVersion } from '../kit.ts';
 import type { AgentModule } from '../types.ts';
 import { CLAUDE_BIN, claudeProfile, profileConfigDir } from './accounts.ts';
 import { claudeAdapter, claudeVersion } from './adapter.ts';
+import { claudeExtensions, claudeMcp } from './extensions.ts';
 import { claudeHarness, claudeSignedIn, KIND, setClaudeDefaultModel } from './harness.ts';
 import { claudeModelList } from './models.ts';
 
@@ -34,6 +35,8 @@ export const claudeModule: AgentModule = {
     // legacy CLAUDE_CONFIG_DIR profiles live in the hub data
     join(config.dataDir, 'claude-profiles'),
   ],
+  mcp: claudeMcp,
+  extensions: claudeExtensions,
   // Claude Code reads CLAUDE.md, not AGENTS.md
   contextFiles: { 'CLAUDE.md': '@AGENTS.md\n' },
   relocate(s, from, to) {

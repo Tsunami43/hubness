@@ -25,6 +25,7 @@ type stripping — there is no server build step).
 apps/server     Hono HTTP + SSE API, agent runtime, SQLite storage
 apps/web        React 19 + Vite + Tailwind 4 single-page app
 packages/shared Types shared by server and web (@hubness/shared)
+crates/         Rust server, API client and terminal UI (Cargo workspace)
 ```
 
 ### Server (`apps/server/src`)
@@ -52,6 +53,9 @@ packages/shared Types shared by server and web (@hubness/shared)
 - `manifest.ts` — project manifest `.hub/hub.yaml` (links, hosts, containers, units),
   shown in the UI and passed to the agent as context.
 - `mcp/hub-mcp.ts` — stdio MCP server attached to agent sessions (`open_pane` tool).
+- `mcp-servers.ts`, `extensions.ts` — Harness → MCP (servers × agents, written to each agent's
+  own config through `agents/mcp-config.ts`) and each agent's skills / rules / subagents /
+  commands; every agent module declares its own paths (`agents/<kind>/extensions.ts`).
 - `system/` — host monitoring and the "ask about this" flow for containers, units, packages.
 - `csrf.ts` — mutating `/api` requests require JSON or the `X-Hubness-Request` header.
 
@@ -64,6 +68,40 @@ packages/shared Types shared by server and web (@hubness/shared)
   added to both files.
 - Vite proxies `/api` to the server in dev; in production the server serves `apps/web/dist`.
 
+### Rust (`crates/`)
+
+The Rust server implements the whole `/api` of the TypeScript server. Both use the same
+`HUBNESS_*` settings and the same SQLite file, so they can be switched on one data folder
+(not run at the same time). Until the TypeScript server is retired, an API change goes into
+both servers, backed by a contract test.
+
+- `core` — API types (`hubness-core`), JSON shape identical to `packages/shared`.
+- `server` — axum + rusqlite. `db/migrations.rs` must mirror `db/migrations.ts` exactly:
+  a new migration is added to both servers. `README.md` lists the domains and deviations.
+  `web.rs` serves the web app: `HUBNESS_WEB_DIST` when set, else the copy compiled in with
+  the `embed-web` feature (`build.rs`, off by default, needs `pnpm build`), else `apps/web/dist`.
+- `client` — HTTP + SSE client of the API (`hubness-client`).
+- `tui` — ratatui terminal UI on top of the client (`hubness-tui`).
+- `hubness` — the one installed command: `serve` (foreground), `server start|stop|restart|
+  status|logs|config|uninstall` (systemd user service, `src/service.rs`; unit and `hub.env`
+  under `$XDG_CONFIG_HOME` (`src/hubenv.rs`), data under `$XDG_DATA_HOME/hubness`;
+  `HUBNESS_SYSTEMCTL`/`_JOURNALCTL`/`_LOGINCTL` swap the tools for tests), `user`, `tui`,
+  `webapp` (opens the web app; `HUBNESS_OPENER` swaps the opener), `update` (self-update from
+  GitHub Releases, `src/update.rs`; `HUBNESS_RELEASE_URL` points it at another release
+  folder, also `file://`), plus hidden `mcp` and `git-credential-helper` that the server
+  starts from its own executable (`current_exe`). Two flavors of the same binary: the
+  default feature `server` is the full build (feature `embed-web` compiles the web app in),
+  `--no-default-features` the client build (tui, webapp, update; no server code — keep
+  `cargo tree -p hubness --no-default-features` free of `hubness-server`). TUI flags live in
+  `hubness_tui::cli::Args`; saved hubs in `tui/src/hubs.rs`.
+- `install.sh` (repo root) — POSIX `curl … | sh` installer of the GitHub Release archives
+  (`--tui-only` for the client build, `--from-source`, `--version`, `--uninstall`;
+  `HUBNESS_RELEASE_URL` points it at another release folder for tests).
+  `.github/workflows/release.yml` builds them on a `v*.*.*` tag (see `RELEASING.md`);
+  `ci.yml` runs the checks below.
+- `apps/server/test/contract.test.ts` — black-box HTTP tests every server must pass; they
+  run against TS in `pnpm test` and against Rust with `pnpm test:contract:rust`.
+
 ## Commands
 
 ```sh
@@ -73,11 +111,18 @@ pnpm check    # tsc --noEmit for every package (server checks src and test)
 pnpm test     # server tests (node:test)
 pnpm build    # typecheck and build the web app
 pnpm start    # production server, serves the built web app
+
+cargo run -p hubness -- serve   # the Rust server (same port and data folder)
+cargo run -p hubness -- tui     # terminal UI (asks for a hub; --url, HUBNESS_URL)
+cargo build -p hubness --no-default-features   # the client build (no server code)
+pnpm check:rust                 # cargo fmt --check, clippy -D warnings, cargo test
+pnpm test:contract:rust         # contract tests against the Rust server
 ```
 
 Run a single test file: `cd apps/server && node --test test/git.test.ts`.
 
-Always run `pnpm check` and `pnpm test` before considering a change done.
+Always run `pnpm check` and `pnpm test` before considering a change done; for changes in
+`crates/` also `pnpm check:rust` and `pnpm test:contract:rust`.
 
 ## Conventions
 

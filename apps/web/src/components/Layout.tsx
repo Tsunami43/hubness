@@ -1,13 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createContext, Suspense, useCallback, useContext, useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, House, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
+import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, House, LogOut, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
+import { useAuth } from './AuthGate';
 import type { Session } from '@hubness/shared';
 import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
 import { useArchivedSessions, useLocalStorage, useRecentSessions, useSessionSync } from '../lib/hooks';
 import { useAgents } from '../lib/agents';
 import { t } from '../i18n';
-import { Button, ErrorLine, StatusDot } from './ui';
+import { Button, ErrorLine, PageSpinner, StatusDot } from './ui';
 import { confirmDialog } from './Confirm';
 import { matchesQuery, SessionSearch } from './SessionSearch';
 import { AgentIcon } from './AgentIcon';
@@ -284,6 +285,7 @@ export function Layout() {
 
   useEffect(() => setDrawer(false), [pathname]);
   const nav = useNavigate();
+  const auth = useAuth();
   useKeyActions('nav', [
     ...NAV.map((n) => ({ key: n.key, label: t(n.label), section: t('keys.navigate'), run: () => nav(n.to) })),
     { key: 'H', label: t('history.title'), section: t('keys.navigate'), run: toggleHistory },
@@ -355,11 +357,24 @@ export function Layout() {
               </NavLink>
             ))}
           </div>
+          {auth.user ? (
+            <button
+              type="button"
+              onClick={() => void auth.logout()}
+              title={expanded ? undefined : `${t('auth.logout')} (${auth.user.username})`}
+              className={`mt-auto flex items-center gap-3 border-t border-line py-2.5 text-muted hover:bg-sunken hover:text-fg ${expanded ? 'px-3' : 'justify-center'}`}
+            >
+              <LogOut className="size-4 shrink-0" />
+              {expanded ? <span className="min-w-0 truncate text-sm">{t('auth.logout')} · {auth.user.username}</span> : null}
+            </button>
+          ) : null}
         </nav>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <main className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
-            <Outlet />
+            <Suspense fallback={<PageSpinner />}>
+              <Outlet />
+            </Suspense>
           </main>
           {/* Phone: bottom navigation */}
           {!full ? (

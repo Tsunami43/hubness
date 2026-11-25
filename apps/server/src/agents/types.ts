@@ -1,4 +1,5 @@
-import type { AgentModelsResponse, ApprovalDecision, Attachment, HarnessInfo, HubEvent, ModelStyle, Session, SessionStatus } from '@hubness/shared';
+import type { AgentModelsResponse, ApprovalDecision, Attachment, ExtensionScope, HarnessInfo, HubEvent, ModelStyle, PluginInfo, Session, SessionStatus, SubagentInfo } from '@hubness/shared';
+import type { McpStore } from './mcp-config.ts';
 
 /** Event body without service fields: the runtime fills those in. */
 export type EventBody = HubEvent extends infer E
@@ -100,4 +101,31 @@ export interface AgentModule {
    * true — the agent continues the same session; false — the hub sends a summary instead.
    */
   relocate?(session: Session, from: string, to: string): boolean;
+  /** The agent's own MCP config (Harness → MCP); absent — the hub can't manage its servers. */
+  mcp?: McpStore;
+  /** Where the agent keeps skills, rules, subagents and commands (Harness → extensions). */
+  extensions?(projectDir: string | null): ExtensionLayout;
+}
+
+/** A folder of extensions: skills (`<name>/SKILL.md`), subagents or commands (`*.md`). */
+export interface ExtensionDir {
+  dir: string;
+  scope: ExtensionScope;
+}
+
+/** A rules file the agent reads; `ifExists` — listed only when present. */
+export interface RulesSpec {
+  label: string;
+  path: string;
+  scope: ExtensionScope;
+  ifExists?: boolean;
+}
+
+export interface ExtensionLayout {
+  skills: ExtensionDir[];
+  rules: RulesSpec[];
+  agents: ExtensionDir[];
+  commands: ExtensionDir[];
+  /** What the agent's config lists itself (plugins, plugin skills, agents in its JSON). */
+  more?(): { skills?: ExtensionDir[]; agents?: SubagentInfo[]; plugins?: PluginInfo[] };
 }

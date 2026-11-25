@@ -1,0 +1,142 @@
+name: Release
+
+# A tag v<version> (the workspace version in Cargo.toml) builds hubness for Linux and macOS
+# in two flavors and publishes them as a GitHub Release, which install.sh and
+# `hubness update` download:
+#   hubness-<version>-<target>-full.tar.gz    the hub with the web app inside (+ .sha256)
+#   hubness-<version>-<target>-client.tar.gz  the client build: tui, webapp, update (+ .sha256)
+#   SHA256SUMS, VERSION
+# See RELEASING.md.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Tag matches Cargo.toml
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          if [ "$tag" != "$crate" ]; then
+            echo "tag $GITHUB_REF_NAME doesn't match the workspace version $crate in Cargo.toml" >&2
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  web:
+    name: Web app
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @hubness/web run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+          if-no-files-found: error
+
+  build:
+    name: ${{ matrix.target }}
+    needs: [version, web]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 runners: the binaries need glibc 2.35, not the newest one
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      # no AppleDouble ._ files in the macOS archives
+      COPYFILE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build the full flavor
+        run: |
+          cargo build --release --locked --target "$TARGET" -p hubness --features embed-web
+          mkdir -p out/full
+          cp "target/$TARGET/release/hubness" out/full/
+      - name: Build the client flavor
+        run: |
+          cargo build --release --locked --target "$TARGET" -p hubness --no-default-features
+          mkdir -p out/client
+          cp "target/$TARGET/release/hubness" out/client/
+      - name: Package
+        shell: bash
+        run: |
+          for flavor in full client; do
+            name="hubness-$VERSION-$TARGET-$flavor"
+            mkdir "$name"
+            cp "out/$flavor/hubness" README.md LICENSE "$name/"
+            "$name/hubness" --version | grep -F "hubness $VERSION ($flavor) $TARGET"
+            tar -czf "$name.tar.gz" "$name"
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+            cat "$name.tar.gz.sha256"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: hubness-*.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums and version
+        run: |
+          cd dist
+          cat ./*.sha256 > SHA256SUMS
+          echo "${{ needs.version.outputs.version }}" > VERSION
+          ls -l
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "hubness ${GITHUB_REF_NAME#v}" --generate-notes $flags

@@ -1,4 +1,11 @@
 import type {
+  HarnessExtensionsAll,
+  McpCatalogResponse,
+  SkillContent,
+  SkillCreateInput,
+  SkillImportInput,
+  SkillImportPreview,
+  SkillsResponse,
   AgentConfig,
   AgentKind,
   AgentModelsResponse,
@@ -6,8 +13,6 @@ import type {
   ApprovalDecision,
   Attachment,
   BrowseResponse,
-  Card,
-  CardColumn,
   ContainerInfo,
   DockerNetwork,
   DockerVolume,
@@ -23,12 +28,13 @@ import type {
   GitStash,
   GitStatus,
   GroupDetail,
+  HarnessExtensions,
   HarnessInfo,
-  HarnessResponse,
-  HubEvent,
+  McpResponse,
+  McpServerInput,
+  RulesFileContent,
   HubSettings,
   JobInfo,
-  ManifestResponse,
   PackageManagerInfo,
   PackagesResponse,
   PermissionMode,
@@ -46,6 +52,7 @@ import type {
   SystemOverview,
   SystemPlatform,
   UnitInfo,
+  User,
 } from '@hubness/shared';
 
 import { t } from '../i18n';
@@ -68,6 +75,8 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
+  // the session is gone (or the hub just got its first account): show the sign-in screen
+  if (res.status === 401) window.dispatchEvent(new Event('hubness:unauthorized'));
   if (!res.ok) throw new ApiError(res.status, data?.error ?? t('api.error', { status: res.status }));
   return data as T;
 }
@@ -118,7 +127,6 @@ export const api = {
   deleteGroup: (id: string) => req<{ ok: true }>('DELETE', `/groups/${id}`),
   groupContext: (id: string) => req<{ context: string }>('GET', `/groups/${id}/context`),
   projectFiles: (id: string) => req<{ files: string[] }>('GET', `/projects/${id}/files`),
-  harness: (refresh = false) => req<HarnessResponse>('GET', `/harness${refresh ? '?refresh=1' : ''}`),
   /** One harness (a tab of the Harness page). */
   harnessOne: (kind: AgentKind, refresh = false) => req<{ info: HarnessInfo; checkedAt: string }>('GET', `/harness/${kind}${refresh ? '?refresh=1' : ''}`),
   agentModels: (kind: AgentKind) => req<AgentModelsResponse>('GET', `/agents/${kind}/models`),
@@ -128,6 +136,31 @@ export const api = {
   harnessAccount: (kind: AgentKind, provider: string, account: string, op: 'switch' | 'logout') =>
     req<{ ok: true; output: string }>('POST', `/harness/${kind}/accounts/${encodeURIComponent(provider)}/${encodeURIComponent(account)}/${op}`),
   harnessDefaultModel: (kind: AgentKind, model: string | null) => req<{ ok: true }>('PUT', `/harness/${kind}/default-model`, { model }),
+  /** MCP servers × agents, from the agents' own configs (with a project: its servers too). */
+  mcp: (project?: string) => req<McpResponse>('GET', `/harness/mcp${q({ project })}`),
+  mcpAdd: (input: McpServerInput, project?: string) => req<McpResponse>('POST', `/harness/mcp${q({ project })}`, input),
+  mcpConnect: (name: string, kind: AgentKind, project?: string) =>
+    req<McpResponse>('PUT', `/harness/mcp/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  mcpDisconnect: (name: string, kind: AgentKind, project?: string) =>
+    req<McpResponse>('DELETE', `/harness/mcp/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  mcpDelete: (name: string, project?: string) => req<McpResponse>('DELETE', `/harness/mcp/${encodeURIComponent(name)}${q({ project })}`),
+  harnessExtensions: (kind: AgentKind, project?: string) => req<HarnessExtensions>('GET', `/harness/${kind}/extensions${q({ project })}`),
+  rulesFile: (kind: AgentKind, path: string, project?: string) => req<RulesFileContent>('GET', `/harness/${kind}/rules${q({ path, project })}`),
+  saveRulesFile: (kind: AgentKind, path: string, content: string, project?: string) =>
+    req<RulesFileContent>('PUT', `/harness/${kind}/rules${q({ path, project })}`, { content }),
+  extensionFile: (kind: AgentKind, path: string, project?: string) => req<RulesFileContent>('GET', `/harness/${kind}/file${q({ path, project })}`),
+  extensionsAll: (project?: string) => req<HarnessExtensionsAll>('GET', `/harness/extensions${q({ project })}`),
+  mcpCatalog: (query: string, cursor?: string) => req<McpCatalogResponse>('GET', `/harness/mcp/catalog${q({ q: query || undefined, cursor })}`),
+  skills: (project?: string) => req<SkillsResponse>('GET', `/harness/skills${q({ project })}`),
+  skill: (name: string, agent?: AgentKind, project?: string) => req<SkillContent>('GET', `/harness/skills/${encodeURIComponent(name)}${q({ agent, project })}`),
+  skillConnect: (name: string, kind: AgentKind, project?: string) =>
+    req<SkillsResponse>('PUT', `/harness/skills/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  skillDisconnect: (name: string, kind: AgentKind, project?: string) =>
+    req<SkillsResponse>('DELETE', `/harness/skills/${encodeURIComponent(name)}/agents/${kind}${q({ project })}`),
+  skillDelete: (name: string, project?: string) => req<SkillsResponse>('DELETE', `/harness/skills/${encodeURIComponent(name)}${q({ project })}`),
+  skillCreate: (input: SkillCreateInput, project?: string) => req<SkillsResponse>('POST', `/harness/skills${q({ project })}`, input),
+  skillImportPreview: (url: string) => req<SkillImportPreview>('POST', '/harness/skills/import/preview', { url }),
+  skillImport: (input: SkillImportInput, project?: string) => req<SkillsResponse>('POST', `/harness/skills/import${q({ project })}`, input),
   jobInput: (id: string, data: string) => req<{ ok: true }>('POST', `/jobs/${id}/input`, { data }),
   jobKill: (id: string) => req<{ ok: boolean }>('POST', `/jobs/${id}/kill`),
   browse: (path?: string) => req<BrowseResponse>('GET', `/fs/browse${q({ path })}`),
@@ -137,6 +170,7 @@ export const api = {
   updateProject: (id: string, patch: { name?: string; description?: string; instructions?: string }) => req<Project>('PATCH', `/projects/${id}`, patch),
 
   sessions: (scope: { projectId?: string; groupId?: string } = {}) => req<Session[]>('GET', `/sessions${q(scope)}`),
+  session: (id: string) => req<Session>('GET', `/sessions/${id}`),
   allSessions: () => req<Session[]>('GET', '/sessions?all=1'),
   archivedSessions: () => req<Session[]>('GET', '/sessions?archived=1'),
   archiveSession: (id: string) => req<Session>('POST', `/sessions/${id}/archive`),
@@ -158,19 +192,10 @@ export const api = {
   updateSession: (id: string, patch: { title?: string; agent?: Partial<AgentConfig> }) =>
     req<Session>('PATCH', `/sessions/${id}`, patch),
   deleteSession: (id: string) => req('DELETE', `/sessions/${id}`),
-  events: (id: string) => req<HubEvent[]>('GET', `/sessions/${id}/events`),
   send: (id: string, text: string, attachments?: Attachment[]) => req<Session>('POST', `/sessions/${id}/messages`, { text, attachments }),
   stop: (id: string) => req('POST', `/sessions/${id}/stop`),
   approve: (id: string, requestId: string, d: ApprovalDecision) =>
     req('POST', `/sessions/${id}/approvals/${requestId}`, d),
-
-  cards: (projectId: string) => req<Card[]>('GET', `/projects/${projectId}/cards`),
-  createCard: (projectId: string, input: { title: string; description?: string; column?: CardColumn }) =>
-    req<Card>('POST', `/projects/${projectId}/cards`, input),
-  updateCard: (id: string, patch: Partial<Pick<Card, 'title' | 'description' | 'column' | 'position'>>) =>
-    req<Card>('PATCH', `/cards/${id}`, patch),
-  deleteCard: (id: string) => req('DELETE', `/cards/${id}`),
-  startCard: (id: string, agent: AgentConfig) => req<Session>('POST', `/cards/${id}/start`, { agent }),
 
   tree: (projectId: string, path = '') => req<FsEntry[]>('GET', `/projects/${projectId}/tree${q({ path })}`),
   file: (projectId: string, path: string) => req<FileContent>('GET', `/projects/${projectId}/file${q({ path })}`),
@@ -183,8 +208,6 @@ export const api = {
   fsRename: (projectId: string, from: string, to: string) => req<{ path: string }>('POST', `/projects/${projectId}/fs/rename`, { from, to }),
   fsDelete: (projectId: string, path: string) => req<{ ok: true }>('POST', `/projects/${projectId}/fs/delete`, { path }),
   saveFile: (projectId: string, body: FileWrite) => req<FileContent>('PUT', `/projects/${projectId}/file`, body),
-  manifest: (projectId: string) => req<ManifestResponse>('GET', `/projects/${projectId}/manifest`),
-  createManifest: (projectId: string) => req<ManifestResponse>('POST', `/projects/${projectId}/manifest`),
   projectSuggestion: (sessionId: string) => req<ProjectSuggestion>('GET', `/sessions/${sessionId}/project-suggestion`),
   convertSession: (sessionId: string, name: string) =>
     req<{ project: Project; session: Session }>('POST', `/sessions/${sessionId}/convert`, { name }),
@@ -231,4 +254,10 @@ export const api = {
   setGitCredential: (host: string, body: { username: string; kind: GitCredentialKind; secret: string }) =>
     req<GitCredentialInfo[]>('PUT', `/git-credentials/${encodeURIComponent(host)}`, body),
   deleteGitCredential: (host: string) => req<GitCredentialInfo[]>('DELETE', `/git-credentials/${encodeURIComponent(host)}`),
+  users: () => req<User[]>('GET', '/users'),
+  createUser: (body: { username: string; password: string }) => req<User>('POST', '/users', body),
+  deleteUser: (id: string) => req<{ ok: true }>('DELETE', `/users/${encodeURIComponent(id)}`),
+  /** Your own password needs `currentPassword`; ends the account's other sessions. */
+  setUserPassword: (id: string, body: { password: string; currentPassword?: string }) =>
+    req<{ ok: true }>('PUT', `/users/${encodeURIComponent(id)}/password`, body),
 };

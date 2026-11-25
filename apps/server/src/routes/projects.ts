@@ -73,14 +73,14 @@ projectRoutes.patch('/projects/:id', async (c) => c.json(updateProject(c.req.par
  * on disk unless `?files=1&confirm=<folder name>`: then the repository folder is deleted too
  * (irreversible; the folder name guards against an accidental call).
  */
-projectRoutes.delete('/projects/:id', (c) => {
+projectRoutes.delete('/projects/:id', async (c) => {
   const id = c.req.param('id');
   const withFiles = c.req.query('files') === '1';
   const p = assertRemovable(id, isActive);
   const dir = withFiles ? deletableFolder(p) : null;
   if (dir && c.req.query('confirm') !== basename(dir)) throw new HttpError(400, 'confirm must be the name of the project folder');
   stopProjectProcesses(id);
-  stopContainer(id);
+  await stopContainer(id);
   if (dir) deleteFolder(dir);
   removeProject(id, isActive);
   return c.json({ ok: true, deleted: dir });
