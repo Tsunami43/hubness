@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createContext, Suspense, useCallback, useContext, useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, House, LogOut, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from './AuthGate';
@@ -8,7 +8,7 @@ import { timeAgo } from '../lib/format';
 import { useArchivedSessions, useLocalStorage, useRecentSessions, useSessionSync } from '../lib/hooks';
 import { useAgents } from '../lib/agents';
 import { t } from '../i18n';
-import { Button, ErrorLine, StatusDot } from './ui';
+import { Button, ErrorLine, PageSpinner, StatusDot } from './ui';
 import { confirmDialog } from './Confirm';
 import { matchesQuery, SessionSearch } from './SessionSearch';
 import { AgentIcon } from './AgentIcon';
@@ -372,7 +372,9 @@ export function Layout() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <main className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
-            <Outlet />
+            <Suspense fallback={<PageSpinner />}>
+              <Outlet />
+            </Suspense>
           </main>
           {/* Phone: bottom navigation */}
           {!full ? (

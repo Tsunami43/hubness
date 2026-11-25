@@ -72,7 +72,7 @@ environmentRoutes.post('/projects/:id/preview', async (c) => {
 
 // ---------- environment ----------
 
-environmentRoutes.get('/projects/:id/environment', (c) => c.json(environmentStatus(project(c))));
+environmentRoutes.get('/projects/:id/environment', async (c) => c.json(await environmentStatus(project(c))));
 environmentRoutes.put('/projects/:id/environment', async (c) => {
   const p = project(c);
   const before = runtimeOf(p);
@@ -80,15 +80,15 @@ environmentRoutes.put('/projects/:id/environment', async (c) => {
   // environment changed: running processes use the old one, so stop them
   if (before.environment !== after.environment || before.image !== after.image || before.sandbox !== after.sandbox) {
     stopProjectProcesses(p.id);
-    if (before.environment === 'docker') stopContainer(p.id);
+    if (before.environment === 'docker') await stopContainer(p.id);
   }
-  return c.json(environmentStatus(p));
+  return c.json(await environmentStatus(p));
 });
-environmentRoutes.post('/projects/:id/environment/container/remove', (c) => {
+environmentRoutes.post('/projects/:id/environment/container/remove', async (c) => {
   const p = project(c);
   stopProjectProcesses(p.id);
-  stopContainer(p.id);
-  return c.json(environmentStatus(p));
+  await stopContainer(p.id);
+  return c.json(await environmentStatus(p));
 });
 
 // ---------- secrets ----------

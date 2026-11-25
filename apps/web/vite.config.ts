@@ -49,6 +49,16 @@ function fileIcons(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), fileIcons()],
+  build: {
+    rolldownOptions: {
+      output: {
+        // the React runtime changes rarely: its own chunk stays cached across app updates
+        codeSplitting: {
+          groups: [{ name: 'react', test: /[\\/]node_modules[\\/](\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(react|react-dom|scheduler|react-router)[\\/]/ }],
+        },
+      },
+    },
+  },
   server: {
     port: Number(process.env.HUBNESS_WEB_PORT ?? 5173),
     host: process.env.HUBNESS_WEB_HOST ?? '127.0.0.1',

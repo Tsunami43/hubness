@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { Suspense, useState, type ReactNode } from 'react';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { t } from '../i18n';
-import { TopBar } from './ui';
+import { PageSpinner, TopBar } from './ui';
 
 export interface SubmenuItem {
   to: string;
@@ -118,7 +118,9 @@ export function SubmenuLayout({
         </nav>
 
         <div className={`${isIndex ? 'hidden' : 'block'} min-w-0 p-4 lg:block lg:p-0`}>
-          <Outlet context={outletContext} />
+          <Suspense fallback={<PageSpinner />}>
+            <Outlet context={outletContext} />
+          </Suspense>
         </div>
       </div>
     </div>

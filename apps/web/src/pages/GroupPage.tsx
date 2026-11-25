@@ -9,7 +9,7 @@ import { SessionsTool } from '../components/SessionsTool';
 import { Button, Empty, ErrorLine, Field, inputCls, Spinner } from '../components/ui';
 import { NewProject } from '../components/NewProject';
 import { ProviderIcon } from '../components/ProviderIcon';
-import { ShellPanel } from '../components/ProjectTools';
+import { ShellPanel } from '../components/project/shell';
 import { useHubSettings } from '../lib/hubSettings';
 import { GroupFolderField, ProjectPicker } from './ProjectsPage';
 import { Section } from './ProjectPage';

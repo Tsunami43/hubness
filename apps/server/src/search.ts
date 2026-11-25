@@ -129,7 +129,7 @@ function globRe(g: string): RegExp {
   return new RegExp(g.includes('/') ? `^${re}$` : `(^|/)${re}(/|$)`);
 }
 
-function searchNode(cwd: string, q: string, opts: SearchOptions): SearchResult {
+async function searchNode(cwd: string, q: string, opts: SearchOptions): Promise<SearchResult> {
   const source = opts.regex ? q : escapeRe(q);
   const re = new RegExp(opts.word ? `\\b(?:${source})\\b` : source, opts.caseSensitive ? 'g' : 'gi');
   const inc = globs(opts.include).map(globRe);
@@ -137,7 +137,7 @@ function searchNode(cwd: string, q: string, opts: SearchOptions): SearchResult {
   const files: SearchFile[] = [];
   let total = 0;
   const started = Date.now();
-  for (const path of listFiles(cwd)) {
+  for (const path of await listFiles(cwd)) {
     if (inc.length && !inc.some((r) => r.test(path))) continue;
     if (exc.some((r) => r.test(path))) continue;
     if (Date.now() - started > TIMEOUT_MS) return { files, total, truncated: true };

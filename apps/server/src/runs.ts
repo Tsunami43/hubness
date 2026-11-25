@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { JobInfo, Project, ProjectGroup, RunConfig, RunState, RunSuggestion } from '@hubness/shared';
+import type { JobInfo, Project, RunConfig, RunState, RunSuggestion } from '@hubness/shared';
 import { runConfigs } from './db/index.ts';
 import { HttpError } from './errors.ts';
 import { containerIp, execCommand, runtimeOf, type Scope } from './environments.ts';
@@ -196,10 +196,7 @@ const previewKey = (projectId: string, runId: string) => `${projectId}:${runId}`
 
 function previewTarget(p: Project, port: number) {
   return () => {
-    if (runtimeOf(p).environment === 'docker') {
-      const ip = containerIp(p.id);
-      return ip ? { host: ip, port } : null;
-    }
+    if (runtimeOf(p).environment === 'docker') return containerIp(p.id).then((ip) => (ip ? { host: ip, port } : null));
     return { host: '127.0.0.1', port };
   };
 }
@@ -324,5 +321,3 @@ export async function previewPortFor(p: Project, port: number): Promise<number> 
   if (!pp) throw new HttpError(503, 'No free preview ports (HUBNESS_PREVIEW_PORTS)');
   return pp;
 }
-
-export type { ProjectGroup };

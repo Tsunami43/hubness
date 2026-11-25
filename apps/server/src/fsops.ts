@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -23,21 +23,31 @@ export function safeJoin(root: string, rel: string): string {
 const byDirThenName = (a: FsEntry, b: FsEntry) =>
   a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1;
 
-/** Which paths git ignores (`git check-ignore`); null — the folder is not in a repository. */
-function gitIgnored(cwd: string, paths: string[]): Set<string> | null {
-  if (!paths.length) return new Set();
-  try {
-    const out = execFileSync('git', ['-C', cwd, 'check-ignore', '--stdin'], { input: paths.join('\n'), encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-    return new Set(out.split('\n').filter(Boolean));
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string };
-    // 1 — nothing is ignored; 128 — not a repository
-    if (err.status === 1) return new Set();
-    return null;
-  }
+/** git in a folder without blocking the event loop: exit code and stdout (stderr is dropped). */
+function gitOut(cwd: string, args: string[], input?: string): Promise<{ code: number; out: string }> {
+  return new Promise((resolve) => {
+    const child = spawn('git', ['-C', cwd, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
+    const chunks: Buffer[] = [];
+    child.stdout!.on('data', (d: Buffer) => chunks.push(d));
+    child.on('error', () => resolve({ code: 127, out: '' }));
+    child.on('close', (code) => resolve({ code: code ?? 1, out: Buffer.concat(chunks).toString('utf8') }));
+    if (input !== undefined) {
+      child.stdin!.on('error', () => {});
+      child.stdin!.end(input);
+    }
+  });
 }
 
-export function listTree(root: string, rel: string): FsEntry[] {
+/** Which paths git ignores (`git check-ignore`); null — the folder is not in a repository. */
+async function gitIgnored(cwd: string, paths: string[]): Promise<Set<string> | null> {
+  if (!paths.length) return new Set();
+  const r = await gitOut(cwd, ['check-ignore', '--stdin'], paths.join('\n'));
+  // 0 — some are ignored; 1 — nothing is ignored; 128 — not a repository
+  if (r.code === 0) return new Set(r.out.split('\n').filter(Boolean));
+  return r.code === 1 ? new Set() : null;
+}
+
+export async function listTree(root: string, rel: string): Promise<FsEntry[]> {
   const abs = safeJoin(root, rel);
   const rootReal = realpathSync(root);
   const entries = readdirSync(abs, { withFileTypes: true })
@@ -54,7 +64,7 @@ export function listTree(root: string, rel: string): FsEntry[] {
       return { name: d.name, path: relative(rootReal, p), dir, size } as FsEntry;
     })
     .sort(byDirThenName);
-  const ignored = gitIgnored(abs, entries.map((e) => (e.dir ? `${e.name}/` : e.name)));
+  const ignored = await gitIgnored(abs, entries.map((e) => (e.dir ? `${e.name}/` : e.name)));
   for (const e of entries) {
     e.ignored = ignored ? ignored.has(e.dir ? `${e.name}/` : e.name) || ignored.has(e.name) : IGNORED_FALLBACK.has(e.name);
   }
@@ -204,28 +214,22 @@ export function browse(path?: string): BrowseResponse {
 }
 
 /** All project files for search: git ls-files (tracked + untracked, excluding ignored); outside git — folder walk. */
-export function listFiles(root: string, limit = 20_000): string[] {
+export async function listFiles(root: string, limit = 20_000): Promise<string[]> {
   const rootReal = realpathSync(root);
-  try {
-    const out = execFileSync('git', ['-C', rootReal, 'ls-files', '-co', '--exclude-standard'], {
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return out.split('\n').filter(Boolean).slice(0, limit);
-  } catch {
-    const res: string[] = [];
-    const walk = (dir: string) => {
+  const r = await gitOut(rootReal, ['ls-files', '-co', '--exclude-standard']);
+  if (r.code === 0) return r.out.split('\n').filter(Boolean).slice(0, limit);
+  // outside git: a folder walk
+  const res: string[] = [];
+  const walk = (dir: string) => {
+    if (res.length >= limit) return;
+    for (const d of readdirSync(dir, { withFileTypes: true })) {
+      if (HIDDEN_IN_TREE.has(d.name) || IGNORED_FALLBACK.has(d.name)) continue;
+      const p = join(dir, d.name);
+      if (d.isDirectory()) walk(p);
+      else res.push(relative(rootReal, p));
       if (res.length >= limit) return;
-      for (const d of readdirSync(dir, { withFileTypes: true })) {
-        if (HIDDEN_IN_TREE.has(d.name) || IGNORED_FALLBACK.has(d.name)) continue;
-        const p = join(dir, d.name);
-        if (d.isDirectory()) walk(p);
-        else res.push(relative(rootReal, p));
-        if (res.length >= limit) return;
-      }
-    };
-    walk(rootReal);
-    return res;
-  }
+    }
+  };
+  walk(rootReal);
+  return res;
 }

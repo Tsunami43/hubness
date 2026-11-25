@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import {
   Bot,
   Check,
@@ -204,7 +204,11 @@ function ResolvedApproval({ ev }: { ev: Ev<'approval'> }) {
   );
 }
 
-export function EventItem({ ev, root, sessionId }: { ev: HubEvent; root?: string; sessionId?: string }) {
+/**
+ * One feed entry. Memoized: a streamed event replaces only its own object, so the rest of a
+ * long feed (markdown, diffs) is not re-rendered on every chunk.
+ */
+export const EventItem = memo(function EventItem({ ev, root, sessionId }: { ev: HubEvent; root?: string; sessionId?: string }) {
   switch (ev.kind) {
     case 'user':
       return (
@@ -267,4 +271,4 @@ export function EventItem({ ev, root, sessionId }: { ev: HubEvent; root?: string
         </div>
       );
   }
-}
+});

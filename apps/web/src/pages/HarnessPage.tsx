@@ -23,7 +23,7 @@ import { useApi, queryClient } from '../lib/query';
 import { AgentIcon, ProviderIcon } from '../components/AgentIcon';
 import { Button, ErrorLine, Spinner } from '../components/ui';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../components/SubmenuLayout';
-import { TerminalSheet } from '../components/Terminal';
+import { sheetTermSize, TerminalSheet } from '../components/Terminal';
 import { ModelPicker } from '../components/ModelPicker';
 import { ExtensionsCard } from '../components/HarnessExtensions';
 import { t, tOptional } from '../i18n';
@@ -46,12 +46,6 @@ const KEYWORDS = [
   'версия', 'обновление', 'вход', 'аккаунт', 'подписка', 'лимиты', 'провайдеры', 'модели', 'навыки', 'правила', 'агенты', 'команды', 'плагины',
 ];
 
-/** Terminal size fitted to the screen width (in characters). */
-function termSize() {
-  const w = Math.min(window.innerWidth, 768) - 56;
-  return { cols: Math.max(40, Math.floor(w / 7.9)), rows: 24 };
-}
-
 /**
  * Harness: agent submenu with search. Like System, nothing heavy is read up front: the menu
  * uses the light agent list (versions, signed in); a tab reads its own harness when opened.
@@ -68,7 +62,7 @@ export function HarnessLayout() {
   const run: Run = async (kind, action) => {
     setNotice(null);
     try {
-      const r = await api.harnessAction(kind, action, termSize());
+      const r = await api.harnessAction(kind, action, sheetTermSize(24));
       if ('id' in r) {
         setJob(r);
         jobAction.current = action;

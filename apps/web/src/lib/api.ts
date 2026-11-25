@@ -6,8 +6,6 @@ import type {
   ApprovalDecision,
   Attachment,
   BrowseResponse,
-  Card,
-  CardColumn,
   ContainerInfo,
   DockerNetwork,
   DockerVolume,
@@ -25,14 +23,11 @@ import type {
   GroupDetail,
   HarnessExtensions,
   HarnessInfo,
-  HarnessResponse,
   McpResponse,
   McpServerInput,
   RulesFileContent,
-  HubEvent,
   HubSettings,
   JobInfo,
-  ManifestResponse,
   PackageManagerInfo,
   PackagesResponse,
   PermissionMode,
@@ -125,7 +120,6 @@ export const api = {
   deleteGroup: (id: string) => req<{ ok: true }>('DELETE', `/groups/${id}`),
   groupContext: (id: string) => req<{ context: string }>('GET', `/groups/${id}/context`),
   projectFiles: (id: string) => req<{ files: string[] }>('GET', `/projects/${id}/files`),
-  harness: (refresh = false) => req<HarnessResponse>('GET', `/harness${refresh ? '?refresh=1' : ''}`),
   /** One harness (a tab of the Harness page). */
   harnessOne: (kind: AgentKind, refresh = false) => req<{ info: HarnessInfo; checkedAt: string }>('GET', `/harness/${kind}${refresh ? '?refresh=1' : ''}`),
   agentModels: (kind: AgentKind) => req<AgentModelsResponse>('GET', `/agents/${kind}/models`),
@@ -156,6 +150,7 @@ export const api = {
   updateProject: (id: string, patch: { name?: string; description?: string; instructions?: string }) => req<Project>('PATCH', `/projects/${id}`, patch),
 
   sessions: (scope: { projectId?: string; groupId?: string } = {}) => req<Session[]>('GET', `/sessions${q(scope)}`),
+  session: (id: string) => req<Session>('GET', `/sessions/${id}`),
   allSessions: () => req<Session[]>('GET', '/sessions?all=1'),
   archivedSessions: () => req<Session[]>('GET', '/sessions?archived=1'),
   archiveSession: (id: string) => req<Session>('POST', `/sessions/${id}/archive`),
@@ -177,19 +172,10 @@ export const api = {
   updateSession: (id: string, patch: { title?: string; agent?: Partial<AgentConfig> }) =>
     req<Session>('PATCH', `/sessions/${id}`, patch),
   deleteSession: (id: string) => req('DELETE', `/sessions/${id}`),
-  events: (id: string) => req<HubEvent[]>('GET', `/sessions/${id}/events`),
   send: (id: string, text: string, attachments?: Attachment[]) => req<Session>('POST', `/sessions/${id}/messages`, { text, attachments }),
   stop: (id: string) => req('POST', `/sessions/${id}/stop`),
   approve: (id: string, requestId: string, d: ApprovalDecision) =>
     req('POST', `/sessions/${id}/approvals/${requestId}`, d),
-
-  cards: (projectId: string) => req<Card[]>('GET', `/projects/${projectId}/cards`),
-  createCard: (projectId: string, input: { title: string; description?: string; column?: CardColumn }) =>
-    req<Card>('POST', `/projects/${projectId}/cards`, input),
-  updateCard: (id: string, patch: Partial<Pick<Card, 'title' | 'description' | 'column' | 'position'>>) =>
-    req<Card>('PATCH', `/cards/${id}`, patch),
-  deleteCard: (id: string) => req('DELETE', `/cards/${id}`),
-  startCard: (id: string, agent: AgentConfig) => req<Session>('POST', `/cards/${id}/start`, { agent }),
 
   tree: (projectId: string, path = '') => req<FsEntry[]>('GET', `/projects/${projectId}/tree${q({ path })}`),
   file: (projectId: string, path: string) => req<FileContent>('GET', `/projects/${projectId}/file${q({ path })}`),
@@ -202,8 +188,6 @@ export const api = {
   fsRename: (projectId: string, from: string, to: string) => req<{ path: string }>('POST', `/projects/${projectId}/fs/rename`, { from, to }),
   fsDelete: (projectId: string, path: string) => req<{ ok: true }>('POST', `/projects/${projectId}/fs/delete`, { path }),
   saveFile: (projectId: string, body: FileWrite) => req<FileContent>('PUT', `/projects/${projectId}/file`, body),
-  manifest: (projectId: string) => req<ManifestResponse>('GET', `/projects/${projectId}/manifest`),
-  createManifest: (projectId: string) => req<ManifestResponse>('POST', `/projects/${projectId}/manifest`),
   projectSuggestion: (sessionId: string) => req<ProjectSuggestion>('GET', `/sessions/${sessionId}/project-suggestion`),
   convertSession: (sessionId: string, name: string) =>
     req<{ project: Project; session: Session }>('POST', `/sessions/${sessionId}/convert`, { name }),
