@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use serde_json::Value;
 
-use crate::core::{Action, Ctx, Handled, Screen};
+use crate::core::{Action, Ctx, Handled, Hit, Screen};
 use crate::ui::Theme;
 
 #[allow(dead_code)] // `id` is for tabs that open other tabs (select_id)
@@ -128,6 +128,29 @@ impl Tabs {
         self.call(i, ctx, |s, c| s.on_paste(text, c));
     }
 
+    /// A click: on the tab bar (`bar:<i>`) or inside a tab (routed by its prefix).
+    pub fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        if let Some(i) = id.strip_prefix("bar:").and_then(|i| i.parse().ok()) {
+            return self.select(i, ctx);
+        }
+        if let Some((i, k)) = Self::route(id) {
+            self.call(i, ctx, |s, c| s.on_click(&k, c));
+        }
+    }
+
+    pub fn on_mouse(&mut self, m: crossterm::event::MouseEvent, ctx: &mut Ctx) -> Handled {
+        let i = self.active;
+        self.call(i, ctx, |s, c| s.on_mouse(m, c)).unwrap_or(Handled::No)
+    }
+
+    pub fn hints(&self) -> Vec<(String, String)> {
+        self.tabs[self.active].screen.hints()
+    }
+
+    pub fn mode(&self) -> Option<&'static str> {
+        self.tabs[self.active].screen.mode()
+    }
+
     pub fn names(&self) -> Vec<String> {
         self.tabs.iter().map(|t| t.label.clone()).collect()
     }
@@ -157,6 +180,9 @@ impl Tabs {
         // pills like Omarchy's waybar workspaces: the active one filled with the accent
         let mut spans = vec![Span::raw(" ")];
         for (i, tab) in self.tabs.iter().enumerate() {
+            let x = bar.x + spans.iter().map(|s| s.content.chars().count() as u16).sum::<u16>();
+            let w = tab.label.chars().count() as u16 + 4;
+            ctx.click(Rect { x, y: bar.y, width: w.min((bar.x + bar.width).saturating_sub(x)), height: 1 }, Hit::Click(format!("bar:{i}")));
             if i == self.active {
                 spans.push(Span::styled("\u{e0b6}", Style::default().fg(t.accent)));
                 spans.push(Span::styled(
@@ -172,6 +198,8 @@ impl Tabs {
         }
         f.render_widget(Paragraph::new(Line::from(spans)), bar);
         let i = self.active;
+        let saved = std::mem::replace(&mut *ctx.draw_prefix.borrow_mut(), Self::prefix(i));
         self.tabs[i].screen.draw(f, body, ctx);
+        *ctx.draw_prefix.borrow_mut() = saved;
     }
 }

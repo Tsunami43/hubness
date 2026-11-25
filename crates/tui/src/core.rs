@@ -75,6 +75,18 @@ impl Action {
     }
 }
 
+/// What a mouse click on a region does.
+#[derive(Clone, Debug)]
+pub enum Hit {
+    Go(Route),
+    /// A screen action by its key (as from `actions()`).
+    Action(String),
+    /// A key sent to the screen.
+    Key(KeyEvent),
+    /// A screen-defined target: `Screen::on_click(id)` (list rows: `"<list>:<index>"`).
+    Click(String),
+}
+
 /// What a key press did.
 pub enum Handled {
     /// The screen used it.
@@ -110,6 +122,20 @@ pub trait Screen {
     fn on_action(&mut self, _key: &str, _ctx: &mut Ctx) {}
     /// Pasted text (bracketed paste).
     fn on_paste(&mut self, _text: &str, _ctx: &mut Ctx) {}
+    /// A click on a region the screen registered with `Ctx::click`.
+    fn on_click(&mut self, _id: &str, _ctx: &mut Ctx) {}
+    /// A mouse event no registered region took (wheel, clicks inside an editor).
+    fn on_mouse(&mut self, _m: crossterm::event::MouseEvent, _ctx: &mut Ctx) -> Handled {
+        Handled::No
+    }
+    /// The mode for the status line while the screen takes the keys (`INSERT` by default).
+    fn mode(&self) -> Option<&'static str> {
+        None
+    }
+    /// Key hints for the status line; by default the screen's actions.
+    fn hints(&self) -> Vec<(String, String)> {
+        self.actions().into_iter().map(|a| (a.key.to_string(), a.label)).collect()
+    }
     /// Names of the screen's tabs (for the `Space t` menu); empty when it has none.
     fn tab_names(&self) -> Vec<String> {
         vec![]
@@ -168,6 +194,10 @@ pub struct Ctx {
     /// Prepended to task / stream / modal keys while a container (project, group) calls one
     /// of its tabs, so answers find their way back to that tab. Screens never set it.
     pub(crate) prefix: String,
+    /// Clickable regions of the frame being drawn (the last one on top wins).
+    pub(crate) hits: std::cell::RefCell<Vec<(Rect, ScreenId, Hit)>>,
+    /// The tab prefix while a tab draws (click ids are routed back like task keys).
+    pub(crate) draw_prefix: std::cell::RefCell<String>,
     /// Hub-wide data the screens share (agents, settings), refreshed by the app.
     pub shared: Shared,
 }
@@ -305,6 +335,24 @@ impl Ctx {
     /// Pick one of `items` (id, label); the id comes to `on_task(key, Ok(String | Null))`.
     pub fn pick(&mut self, key: &str, title: impl Into<String>, items: Vec<(String, String)>) {
         self.modal(Modal::Pick { title: title.into(), items, filter: String::new(), selected: 0, key: key.into() });
+    }
+
+    /// Make `area` clickable while drawing (cleared every frame).
+    pub fn click(&self, area: Rect, hit: Hit) {
+        let hit = match hit {
+            Hit::Click(id) => Hit::Click(format!("{}{id}", self.draw_prefix.borrow())),
+            other => other,
+        };
+        self.hits.borrow_mut().push((area, self.screen, hit));
+    }
+
+    /// Rows of a list drawn in `inner` (one line each, scrolled by `offset`): a click on row `i`
+    /// reaches `on_click("<id>:<index>")`.
+    pub fn click_rows(&self, id: &str, inner: Rect, offset: usize, count: usize) {
+        for row in 0..(inner.height as usize).min(count.saturating_sub(offset)) {
+            let r = Rect { x: inner.x, y: inner.y + row as u16, width: inner.width, height: 1 };
+            self.click(r, Hit::Click(format!("{id}:{}", offset + row)));
+        }
     }
 
     pub fn open_url(&mut self, url: impl Into<String>) {

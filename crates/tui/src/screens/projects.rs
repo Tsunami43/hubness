@@ -601,6 +601,24 @@ impl Screen for Projects {
         }
     }
 
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        if self.job.is_some() || self.import.is_some() || self.group.is_some() {
+            return;
+        }
+        use super::kit::{click_select, clicked_row, enter};
+        let (focus, i) = match (clicked_row(id, "groups"), clicked_row(id, "projects")) {
+            (Some(i), _) => (Focus::Groups, i),
+            (_, Some(i)) => (Focus::Projects, i),
+            _ => return,
+        };
+        let was = self.focus == focus;
+        self.focus = focus;
+        let list = if focus == Focus::Groups { &mut self.glist } else { &mut self.plist };
+        if click_select(list, i) && was {
+            self.on_key(enter(), ctx);
+        }
+    }
+
     fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
         if let Some(job) = &mut self.job {
             let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
@@ -764,11 +782,13 @@ impl Screen for Projects {
             if !gfocus {
                 st.select(None);
             }
+            let heights: Vec<u16> = gitems.iter().map(|i| i.height() as u16).collect();
             f.render_stateful_widget(
                 List::new(gitems).block(block("groups — G new · Enter open", gfocus)).highlight_style(t.selected()),
                 left,
                 &mut st,
             );
+            super::kit::click_items(ctx, "groups", left, true, &st, &heights);
             if gfocus {
                 self.glist = st;
             }
@@ -827,7 +847,9 @@ impl Screen for Projects {
             if !pfocus {
                 st.select(None);
             }
+            let heights: Vec<u16> = pitems.iter().map(|i| i.height() as u16).collect();
             f.render_stateful_widget(List::new(pitems).block(block(title, pfocus)).highlight_style(t.selected()), right, &mut st);
+            super::kit::click_items(ctx, "projects", right, true, &st, &heights);
             if pfocus {
                 self.plist = st;
             }

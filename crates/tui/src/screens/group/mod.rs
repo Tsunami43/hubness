@@ -94,6 +94,22 @@ impl Screen for GroupScreen {
         self.tabs.names()
     }
 
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        self.tabs.on_click(id, ctx);
+    }
+
+    fn on_mouse(&mut self, m: crossterm::event::MouseEvent, ctx: &mut Ctx) -> Handled {
+        self.tabs.on_mouse(m, ctx)
+    }
+
+    fn mode(&self) -> Option<&'static str> {
+        self.tabs.mode()
+    }
+
+    fn hints(&self) -> Vec<(String, String)> {
+        self.tabs.hints()
+    }
+
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         self.tabs.on_action(key, ctx);
     }

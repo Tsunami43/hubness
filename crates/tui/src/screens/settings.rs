@@ -620,11 +620,31 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("Space", "jump to a session"),
             ("c p s h ,", "chats · projects · system · harness · settings"),
-            ("w h/j/k/l", "focus another pane (w cycles)"),
+            ("a", "+actions: the keys of this screen (also ?)"),
+            ("w h/j/k/l", "+windows: focus another pane (w cycles)"),
+            ("t n/p/1…9", "+tabs: next / previous / a tab by name"),
             ("e", "toggle the sidebar"),
-            ("1…9", "tab 1…9"),
             ("r", "reload"),
             ("q", "quit (also Ctrl+Q)"),
+            ("Backspace", "up a menu (Esc closes)"),
+        ],
+    ),
+    (
+        "File editor (Files tab)",
+        &[
+            ("e", "edit the open file (Vim NORMAL, shown as EDIT)"),
+            ("i a o", "start typing; Esc stops"),
+            (":w Ctrl+S", "save"),
+            (":q Esc", "close (:q! discards the edits)"),
+        ],
+    ),
+    (
+        "Mouse",
+        &[
+            ("click", "sidebar, tabs, key pills, list rows, status-line hints, which-key"),
+            ("click again", "open the selected row"),
+            ("wheel", "scroll the list or viewer under the pointer"),
+            ("Shift+drag", "select text in the terminal (HUBNESS_TUI_MOUSE=0 turns the mouse off)"),
         ],
     ),
     (

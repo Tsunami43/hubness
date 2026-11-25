@@ -132,6 +132,11 @@ fn start(root: &Path, tx: broadcast::Sender<Change>) -> Option<Slot> {
         let git_dir = git_dir.clone();
         move |res: notify::Result<Event>| {
             let Ok(ev) = res else { return };
+            // reading a file (open / close without writing) is not a change; reporting it made
+            // every client that reloads on change read the file again — an endless loop
+            if matches!(ev.kind, notify::EventKind::Access(_)) {
+                return;
+            }
             for p in ev.paths {
                 let msg = match p.strip_prefix(&git_dir) {
                     Ok(rel) if is_git_file(&paths::to_string(rel)) => Raw::Git,

@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use edtui::clipboard::InternalClipboard;
 use edtui::{EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, LineNumbers, Lines, SyntaxHighlighter};
 use hubness_client::Method;
@@ -17,7 +17,8 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use serde_json::{Value, json};
 
 use super::{Opener, enc};
-use crate::core::{Action, Ctx, Handled, Screen};
+use crate::core::{Action, Ctx, Handled, Hit, Screen};
+use crate::screens::kit::{click_list, clicked_row};
 use crate::ui::{Theme, block, code};
 
 /// One entry of `GET /projects/:id/tree`.
@@ -147,6 +148,8 @@ pub struct FilesTab {
     /// A path to select once its folders are loaded.
     reveal: Option<String>,
     view_height: usize,
+    /// Where the tree and the file were drawn (for the mouse wheel).
+    areas: (Rect, Rect),
 }
 
 impl FilesTab {
@@ -163,6 +166,7 @@ impl FilesTab {
             watching: false,
             reveal: None,
             view_height: 20,
+            areas: (Rect::default(), Rect::default()),
         }
     }
 
@@ -486,7 +490,7 @@ impl FilesTab {
                 EditorMode::Visual => "VISUAL",
                 _ => "NORMAL",
             };
-            let title = format!("{}{} — {mode} · :w save · :q close · Esc leave", file.path, if dirty { " ●" } else { "" });
+            let title = format!("{}{}  [{mode}]", file.path, if dirty { " ● unsaved" } else { "" });
             let theme = EditorTheme::default()
                 .base(Style::default().bg(t.bg).fg(t.fg))
                 .cursor_style(Style::default().bg(t.accent).fg(t.bg))
@@ -610,6 +614,19 @@ impl Screen for FilesTab {
     }
 
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
+        // editor hints clicked in the status line
+        if self.focus == Focus::Editor {
+            match key {
+                ":w" | "Ctrl+S" => return self.save(false, ctx),
+                ":q" => return self.editor_command("q", ctx),
+                "i" | "Esc" => {
+                    let code = if key == "i" { KeyCode::Char('i') } else { KeyCode::Esc };
+                    self.editor_key(KeyEvent::new(code, KeyModifiers::NONE), ctx);
+                    return;
+                }
+                _ => {}
+            }
+        }
         match key {
             "e" => {
                 if self.file.is_none()
@@ -736,13 +753,19 @@ impl Screen for FilesTab {
             }
             match result {
                 Ok(v) => {
-                    let reload_editor = self.file.as_ref().and_then(|f| f.editor.as_ref()).is_some_and(|e| !e.dirty());
+                    // an open editor without edits follows the file only when its content changed
+                    let same = self.file.as_ref().is_some_and(|f| f.data["content"] == v["content"]);
+                    let reload_editor = !same && self.file.as_ref().and_then(|f| f.editor.as_ref()).is_some_and(|e| !e.dirty());
+                    if same && self.file.as_ref().is_some_and(|f| f.editor.is_some()) {
+                        return;
+                    }
                     self.set_data(v);
                     if reload_editor && let Some(f) = &mut self.file {
                         let cursor = f.editor.as_ref().map(|e| e.state.cursor).unwrap_or(Index2::new(0, 0));
                         let mut ed = Editor::new(f.data["content"].as_str().unwrap_or_default(), &f.path);
                         let rows = ed.state.lines.len().saturating_sub(1);
                         ed.state.cursor = Index2::new(cursor.row.min(rows), 0);
+                        ed.state.mode = f.editor.as_ref().map(|e| e.state.mode).unwrap_or(EditorMode::Normal);
                         f.editor = Some(ed);
                     }
                 }
@@ -920,11 +943,88 @@ impl Screen for FilesTab {
         }
     }
 
-    fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
+    fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx) {
         let tree_w = (area.width / 3).clamp(24, 48);
         let [tree, file] = Layout::horizontal([Constraint::Length(tree_w), Constraint::Min(20)]).areas(area);
+        self.areas = (tree, file);
         self.draw_tree(f, tree);
+        click_list(ctx, "tree", tree, true, &self.list, self.rows.len());
         self.draw_file(f, file);
+        // the viewer takes a click; an open editor gets the mouse itself (on_mouse)
+        if self.file.as_ref().is_some_and(|f| f.editor.is_none()) {
+            ctx.click(file, Hit::Click("viewer".into()));
+        }
+    }
+
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        if id == "viewer" {
+            self.focus = Focus::Viewer;
+        } else if let Some(i) = clicked_row(id, "tree") {
+            // one click: a folder opens / closes, a file opens in the viewer
+            self.list.select(Some(i));
+            self.focus = Focus::Tree;
+            self.toggle(ctx);
+        }
+    }
+
+    fn on_mouse(&mut self, m: MouseEvent, _ctx: &mut Ctx) -> Handled {
+        let pos = ratatui::layout::Position { x: m.column, y: m.row };
+        let (tree, file) = self.areas;
+        let wheel = match m.kind {
+            MouseEventKind::ScrollUp => -3,
+            MouseEventKind::ScrollDown => 3,
+            _ => 0,
+        };
+        let editing = self.file.as_ref().is_some_and(|f| f.editor.is_some());
+        if file.contains(pos) && editing {
+            if matches!(m.kind, MouseEventKind::Down(_)) {
+                self.focus = Focus::Editor;
+            }
+            if let Some(ed) = self.file.as_mut().and_then(|f| f.editor.as_mut()) {
+                for _ in 0..if wheel != 0 { 3 } else { 1 } {
+                    ed.handler.on_mouse_event(m, &mut ed.state);
+                }
+            }
+            return Handled::Yes;
+        }
+        if wheel == 0 {
+            return Handled::No;
+        }
+        if file.contains(pos) {
+            self.scroll(wheel);
+        } else if tree.contains(pos) {
+            self.move_by(wheel);
+        } else {
+            return Handled::No;
+        }
+        Handled::Yes
+    }
+
+    fn mode(&self) -> Option<&'static str> {
+        let ed = self.file.as_ref()?.editor.as_ref()?;
+        Some(match ed.state.mode {
+            EditorMode::Insert => "INSERT",
+            EditorMode::Visual => "VISUAL",
+            _ => "EDIT",
+        })
+    }
+
+    fn hints(&self) -> Vec<(String, String)> {
+        if self.focus != Focus::Editor {
+            return self.actions().into_iter().map(|a| (a.key.to_string(), a.label)).collect();
+        }
+        let insert = self.file.as_ref().and_then(|f| f.editor.as_ref()).is_some_and(|e| e.state.mode == EditorMode::Insert);
+        let mut h = vec![];
+        if insert {
+            h.push(("Esc".into(), "stop typing".into()));
+        } else {
+            h.push(("i".into(), "type".into()));
+            h.push((":w".into(), "save".into()));
+            h.push((":q".into(), "close".into()));
+            h.push(("Esc".into(), "leave".into()));
+        }
+        h.push(("Ctrl+S".into(), "save".into()));
+        h
     }
 }
 

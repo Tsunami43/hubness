@@ -9,7 +9,7 @@ mod screens;
 pub mod ui;
 
 // the file editor (edtui) is used by the project Files tab
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, EventStream};
+use crossterm::event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, EventStream};
 use crossterm::execute;
 use edtui as _;
 use futures_util::StreamExt;
@@ -38,7 +38,12 @@ pub async fn run(url: &str, token: Option<&str>) -> anyhow::Result<()> {
     });
 
     let mut terminal = ratatui::init();
+    // HUBNESS_TUI_MOUSE=0 leaves the mouse to the terminal (plain text selection)
+    let mouse = std::env::var("HUBNESS_TUI_MOUSE").map(|v| v != "0").unwrap_or(true);
     let _ = execute!(std::io::stdout(), EnableBracketedPaste);
+    if mouse {
+        let _ = execute!(std::io::stdout(), EnableMouseCapture);
+    }
     let mut app = app::App::new(client, tx);
     let result = async {
         loop {
@@ -56,7 +61,7 @@ pub async fn run(url: &str, token: Option<&str>) -> anyhow::Result<()> {
         anyhow::Ok(())
     }
     .await;
-    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+    let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
     ratatui::restore();
     result
 }

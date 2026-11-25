@@ -3,16 +3,16 @@
 
 use std::collections::HashMap;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::core::{Action, AppEvent, Ctx, Handled, Modal, Request, Route, Screen, ScreenId, Section, Shared, next_screen_id};
+use crate::core::{Action, AppEvent, Ctx, Handled, Hit, Modal, Request, Route, Screen, ScreenId, Section, Shared, next_screen_id};
 use crate::screens;
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::theme::icon;
@@ -91,6 +91,8 @@ impl App {
             streams: HashMap::new(),
             status: None,
             prefix: String::new(),
+            hits: Default::default(),
+            draw_prefix: Default::default(),
             shared: Shared { base_url, ..Default::default() },
         };
         let mut app = Self {
@@ -247,6 +249,7 @@ impl App {
                     self.with_screen(|s, ctx| s.on_paste(&text, ctx));
                 }
             }
+            AppEvent::Input(Event::Mouse(m)) => self.on_mouse(m),
             AppEvent::Input(_) => {}
             AppEvent::Task { screen: APP, key, result } => self.on_shared(&key, result),
             AppEvent::Task { screen, key, result } => {
@@ -419,6 +422,78 @@ impl App {
         if !self.history.is_empty() {
             self.ctx.back();
         }
+    }
+
+    /// A region of the app's own chrome (sidebar, status line, which-key).
+    fn hit(&self, area: Rect, hit: Hit) {
+        self.ctx.hits.borrow_mut().push((area, APP, hit));
+    }
+
+    fn on_mouse(&mut self, m: MouseEvent) {
+        let pos = Position { x: m.column, y: m.row };
+        let up = match m.kind {
+            MouseEventKind::ScrollUp => Some(true),
+            MouseEventKind::ScrollDown => Some(false),
+            _ => None,
+        };
+        if self.modal.is_some() {
+            // the wheel moves a picker; clicks stay inside the popup
+            if let Some(up) = up {
+                self.on_key(KeyEvent::new(if up { KeyCode::Up } else { KeyCode::Down }, KeyModifiers::NONE));
+            }
+            return;
+        }
+        let hit = self.ctx.hits.borrow().iter().rev().find(|(r, _, _)| r.contains(pos)).map(|(_, id, h)| (*id, h.clone()));
+        if m.kind == MouseEventKind::Down(MouseButton::Left) {
+            if let Some((APP, Hit::Key(k))) = hit
+                && self.overlay != Overlay::None
+            {
+                if k.code == KeyCode::Null {
+                    return;
+                }
+                // a which-key entry: as if its key was pressed
+                return self.on_key(k);
+            }
+            self.overlay = Overlay::None;
+            self.reset_pending();
+            match hit {
+                Some((_, Hit::Go(route))) => self.go(route),
+                // status line: `? more`, `␣ leader` (work in INSERT too)
+                Some((APP, Hit::Key(k))) => match k.code {
+                    KeyCode::Char('?') => self.overlay = Overlay::Leader(Menu::Actions),
+                    KeyCode::Char(' ') => self.overlay = Overlay::Leader(Menu::Root),
+                    _ => self.on_key(k),
+                },
+                Some((id, Hit::Key(k))) => {
+                    self.with_screen_id(id, |s, ctx| s.on_key(k, ctx));
+                }
+                // a status-line hint: the screen's own action (also editor hints such as `:w`)
+                Some((APP, Hit::Action(a))) => {
+                    self.with_screen(|s, ctx| s.on_action(&a, ctx));
+                }
+                Some((id, Hit::Action(a))) => {
+                    self.with_screen_id(id, |s, ctx| s.on_action(&a, ctx));
+                }
+                Some((id, Hit::Click(c))) => {
+                    self.with_screen_id(id, |s, ctx| s.on_click(&c, ctx));
+                }
+                None => {
+                    self.with_screen(|s, ctx| s.on_mouse(m, ctx));
+                }
+            }
+            return;
+        }
+        if let Some(up) = up {
+            if matches!(hit, Some((APP, Hit::Go(_)))) {
+                return; // the sidebar does not scroll
+            }
+            if self.with_screen(|s, ctx| s.on_mouse(m, ctx)).is_none_or(|h| matches!(h, Handled::No)) {
+                self.send_key(if up { KeyCode::Up } else { KeyCode::Down }, KeyModifiers::NONE, 2);
+            }
+            return;
+        }
+        // drags and releases: an editor selects text with them
+        self.with_screen(|s, ctx| s.on_mouse(m, ctx));
     }
 
     fn screen_actions(&self) -> Vec<Action> {
@@ -659,6 +734,8 @@ impl App {
 
     pub fn draw(&mut self, f: &mut Frame) {
         let t = Theme::get();
+        self.ctx.hits.borrow_mut().clear();
+        self.ctx.draw_prefix.borrow_mut().clear();
         // the theme's background and text everywhere
         f.render_widget(Block::default().style(t.base()), f.area());
         let [main, status] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(f.area());
@@ -709,7 +786,7 @@ impl App {
         } else if matches!(self.overlay, Overlay::Leader(_)) {
             ("LEADER", t.magenta)
         } else if self.typing() {
-            ("INSERT", t.ok)
+            (self.screens.get(&self.route).and_then(|s| s.screen.mode()).unwrap_or("INSERT"), t.ok)
         } else {
             ("NORMAL", t.accent)
         };
@@ -736,18 +813,24 @@ impl App {
             // the screen's main keys, as many as fit next to the right part (about 34 columns)
             let used: usize = left.iter().map(|s| s.content.chars().count()).sum();
             let mut room = (area.width as usize).saturating_sub(used + 34 + 16);
-            for a in self.screen_actions() {
-                let label = a.label.split(" (").next().unwrap_or(&a.label);
+            let hints = self.screens.get(&self.route).map(|s| s.screen.hints()).unwrap_or_default();
+            for (key, label) in hints {
+                let label = label.split(" (").next().unwrap_or(&label);
                 let label: String =
                     if label.chars().count() > 18 { label.chars().take(17).collect::<String>() + "…" } else { label.to_string() };
-                let w = a.key.chars().count() + label.chars().count() + 3;
+                let w = key.chars().count() + label.chars().count() + 3;
                 if w > room {
                     break;
                 }
                 room -= w;
-                left.push(Span::styled(format!("  {}", a.key), Style::default().fg(t.accent)));
+                let x = area.x + left.iter().map(|s| s.content.chars().count() as u16).sum::<u16>();
+                self.hit(Rect { x: x + 2, y: area.y, width: w as u16 - 2, height: 1 }, Hit::Action(key.clone()));
+                left.push(Span::styled(format!("  {key}"), Style::default().fg(t.accent)));
                 left.push(Span::styled(format!(" {label}"), t.dim_style()));
             }
+            let x = area.x + left.iter().map(|s| s.content.chars().count() as u16).sum::<u16>();
+            self.hit(Rect { x: x + 3, y: area.y, width: 6, height: 1 }, Hit::Key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)));
+            self.hit(Rect { x: x + 12, y: area.y, width: 8, height: 1 }, Hit::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)));
             left.push(Span::styled("   ? more · ␣ leader", t.muted_style()));
         }
         let sessions = &self.ctx.shared.sessions;
@@ -810,6 +893,14 @@ impl App {
             (Section::Harness, "Agents", icon("\u{f06a9}", "›")),
             (Section::Settings, "Settings", icon("\u{f0493}", "›")),
         ] {
+            let target = match s {
+                Section::Chats => Route::Home,
+                Section::Projects => Route::Projects,
+                Section::System => Route::System(None),
+                Section::Harness => Route::Harness(None),
+                Section::Settings => Route::Settings(None),
+            };
+            self.hit(Rect { x: area.x, y: area.y + lines.len() as u16, width: area.width, height: 1 }, Hit::Go(target));
             let on = s == section;
             let line = if on {
                 Line::from(vec![
@@ -843,6 +934,9 @@ impl App {
                 title.push('…');
             }
             let style = if on { t.selected() } else { Style::default().fg(t.fg) };
+            if let Some(id) = s["id"].as_str() {
+                self.hit(Rect { x: area.x, y: area.y + lines.len() as u16, width: area.width, height: 1 }, Hit::Go(self.session_route(id)));
+            }
             lines.push(Line::from(vec![Span::styled(format!("  {mark} "), Style::default().fg(color)), Span::styled(title, style)]));
         }
         let b = Block::default().borders(Borders::RIGHT).border_style(t.line_style()).style(Style::default().bg(t.bg_dark));
@@ -868,6 +962,8 @@ impl App {
         let b = block(title, true).style(Style::default().bg(t.bg_dark));
         let inner = b.inner(rect);
         f.render_widget(b, rect);
+        // a click on the box between entries keeps it open (entries are registered on top)
+        self.hit(rect, Hit::Key(KeyEvent::new(KeyCode::Null, KeyModifiers::NONE)));
         for (i, e) in entries.iter().enumerate() {
             let (c, r) = (i / rows, i % rows);
             let cell = Rect { x: inner.x + c as u16 * col_w, y: inner.y + r as u16, width: col_w.min(inner.width), height: 1 };
@@ -883,6 +979,8 @@ impl App {
                 ),
             ]);
             f.render_widget(Paragraph::new(line), cell);
+            let c = if e.key == "␣" { ' ' } else { e.key.chars().next().unwrap_or(' ') };
+            self.hit(cell, Hit::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
         }
     }
 }

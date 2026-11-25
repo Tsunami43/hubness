@@ -12,7 +12,8 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use serde_json::{Value, json};
 
 use super::composer::NewSession;
-use crate::core::{Action, Ctx, Handled, Route, Screen};
+use super::kit::{click_keys, click_list, click_select, clicked_row};
+use crate::core::{Action, Ctx, Handled, Hit, Route, Screen};
 use crate::ui::input::InputEvent;
 use crate::ui::{Theme, ago, block};
 
@@ -259,7 +260,9 @@ impl Screen for Home {
         }
         let mut spans = self.new.settings_spans(ctx);
         spans.extend([Span::styled(" w ", t.key_style()), Span::raw(format!(" {}", self.scope_label(ctx)))]);
+        click_keys(ctx, settings, &spans);
         f.render_widget(Paragraph::new(Line::from(spans)), settings);
+        ctx.click(composer, Hit::Click("composer".into()));
         let hint = "new session — Enter start · Alt+Enter newline · Tab sessions";
         self.new.input.draw(
             f,
@@ -293,6 +296,20 @@ impl Screen for Home {
         if !focused {
             state.select(None);
         }
+        let n = items.len();
         f.render_stateful_widget(List::new(items).block(block(title, focused)).highlight_style(t.selected()), list, &mut state);
+        click_list(ctx, "list", list, true, &state, n);
+    }
+
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        if id == "composer" {
+            self.focus = Focus::Composer;
+        } else if let Some(i) = clicked_row(id, "list") {
+            let was = self.focus == Focus::List;
+            self.focus = Focus::List;
+            if click_select(&mut self.list, i) && was {
+                self.open_selected(ctx);
+            }
+        }
     }
 }

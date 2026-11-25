@@ -13,7 +13,7 @@ use ratatui::widgets::{ListState, Paragraph};
 use serde_json::Value;
 
 use super::tabs::{Tab, Tabs};
-use crate::core::{Action, Ctx, Handled, Screen};
+use crate::core::{Action, Ctx, Handled, Hit, Screen};
 use crate::ui::{Theme, block, wrap};
 
 // ---------- a screen of sections ----------
@@ -57,6 +57,22 @@ impl Screen for Sections {
 
     fn tab_names(&self) -> Vec<String> {
         self.tabs.names()
+    }
+
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        self.tabs.on_click(id, ctx);
+    }
+
+    fn on_mouse(&mut self, m: crossterm::event::MouseEvent, ctx: &mut Ctx) -> Handled {
+        self.tabs.on_mouse(m, ctx)
+    }
+
+    fn mode(&self) -> Option<&'static str> {
+        self.tabs.mode()
+    }
+
+    fn hints(&self) -> Vec<(String, String)> {
+        self.tabs.hints()
     }
     fn captures_text(&self) -> bool {
         self.tabs.captures_text()
@@ -116,6 +132,60 @@ impl Nav {
         };
         self.state.select(Some(next));
         true
+    }
+}
+
+/// A clicked list row `id:<index>` of the list `list`, if it is one.
+pub fn clicked_row(id: &str, list: &str) -> Option<usize> {
+    id.strip_prefix(list)?.strip_prefix(':')?.parse().ok()
+}
+
+/// Select row `i` of a list; `true` when it was selected already (a second click opens it).
+pub fn click_select(state: &mut ListState, i: usize) -> bool {
+    let again = state.selected() == Some(i);
+    state.select(Some(i));
+    again
+}
+
+/// Rows of a list rendered with a block in `area` (after `render_stateful_widget`): clicking
+/// row `i` reaches `on_click("<id>:<i>")`.
+pub fn click_list(ctx: &Ctx, id: &str, area: Rect, bordered: bool, state: &ListState, n: usize) {
+    click_items(ctx, id, area, bordered, state, &vec![1; n]);
+}
+
+/// Like `click_list` for items of several lines (`heights[i]` lines each).
+pub fn click_items(ctx: &Ctx, id: &str, area: Rect, bordered: bool, state: &ListState, heights: &[u16]) {
+    let inner = if bordered { block("", false).inner(area) } else { area };
+    let mut y = inner.y;
+    for (i, h) in heights.iter().enumerate().skip(state.offset()) {
+        if y >= inner.y + inner.height {
+            break;
+        }
+        let height = (*h).min(inner.y + inner.height - y);
+        ctx.click(Rect { x: inner.x, y, width: inner.width, height }, Hit::Click(format!("{id}:{i}")));
+        y += h;
+    }
+}
+
+/// A second click on the selected row of a focused list opens it (as Enter).
+pub fn enter() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE)
+}
+
+/// Key pills in a line of `spans` drawn at `area` (`␣A␣ label`): a click runs that action.
+pub fn click_keys(ctx: &Ctx, area: Rect, spans: &[Span]) {
+    let key = Theme::get().key_style();
+    let mut x = area.x;
+    let mut i = 0;
+    while i < spans.len() {
+        let w = spans[i].content.chars().count() as u16;
+        if spans[i].style == key {
+            let label = spans.get(i + 1).map(|s| s.content.chars().count() as u16).unwrap_or(0);
+            let width = (w + label).min((area.x + area.width).saturating_sub(x));
+            ctx.click(Rect { x, y: area.y, width, height: 1 }, Hit::Action(spans[i].content.trim().to_string()));
+        }
+        x += w;
+        i += 1;
     }
 }
 

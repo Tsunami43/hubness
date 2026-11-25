@@ -119,6 +119,20 @@ impl Screen for HarnessScreen {
         self.tabs.as_ref().map(|t| t.names()).unwrap_or_default()
     }
 
+    fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
+        if let Some(t) = &mut self.tabs {
+            t.on_click(id, ctx);
+        }
+    }
+
+    fn on_mouse(&mut self, m: crossterm::event::MouseEvent, ctx: &mut Ctx) -> Handled {
+        self.tabs.as_mut().map(|t| t.on_mouse(m, ctx)).unwrap_or(Handled::No)
+    }
+
+    fn hints(&self) -> Vec<(String, String)> {
+        self.tabs.as_ref().map(|t| t.hints()).unwrap_or_default()
+    }
+
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         if let Some(t) = &mut self.tabs {
             t.on_action(key, ctx);

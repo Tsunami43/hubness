@@ -53,10 +53,27 @@ Every other letter is a screen action, listed by `?` and in the palette. Screens
 `Backspace` goes up a menu, `Esc` closes it. `Ctrl+g` opens the leader everywhere (also in
 INSERT, where `Space` types a space).
 
+## Mouse
+
+- Click the sidebar (sections, sessions), tab pills, key pills such as `A claude-code`, list
+  rows (a second click on the selected row opens it), status-line hints and which-key entries.
+- The wheel scrolls the list or viewer under the pointer; in the file editor clicks place the
+  cursor and dragging selects.
+- `HUBNESS_TUI_MOUSE=0` leaves the mouse to the terminal (plain text selection; most terminals
+  also select with `Shift` held while mouse capture is on).
+
+## Editing a file
+
+Files tab: open a file, `e` (or `Enter` in the viewer) starts the editor in Vim NORMAL (`EDIT`
+in the status line). `i` / `a` / `o` type, `Esc` stops typing, `:w` / `Ctrl+S` save, `:q` or
+`Esc` closes, `:q!` discards.
+
 ## Rules for screens
 
 - Open in NORMAL: no input or terminal takes the keys until `i` / `/` / `Enter`.
-- Pane titles are short names; key hints come from `actions()` (status line, `?`, palette).
+- Pane titles are short names; key hints come from `actions()` (`?`, palette) and `hints()`
+  (the status line; defaults to the actions, an editor shows its own).
+- Clickable regions are registered while drawing with `Ctx::click` / `kit::click_list`.
 - Never bind `h j k l g G q : ?` or `Space` as actions; `/` is for filtering.
 - Terminals: typing goes to the job while focused, `Ctrl+]` leaves for NORMAL.
 
