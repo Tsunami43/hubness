@@ -1,11 +1,11 @@
 import { useHubSettings } from '../../lib/hubSettings';
 import { t } from '../../i18n';
 
-/** Settings → storage: where the hub keeps its data and projects (read-only here; changed with hubcli). */
+/** Settings → storage: where the hub keeps its data and projects (read-only here; changed with hubness). */
 export function StoragePage() {
   const s = useHubSettings();
   const rows: { label: string; value: string | undefined; hint: string; command: string }[] = [
-    { label: t('storage.data'), value: s?.dataDir, hint: t('storage.dataHint'), command: 'hubcli server config data-dir <path>' },
+    { label: t('storage.data'), value: s?.dataDir, hint: t('storage.dataHint'), command: 'hubness server config data-dir <path>' },
     { label: t('storage.projects'), value: s?.projectsRoot, hint: t('storage.projectsHint'), command: 'HUBNESS_HOME=<path> (hub.env)' },
   ];
   return (

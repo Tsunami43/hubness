@@ -3,7 +3,7 @@
 //! - No accounts: the hub listens on a loopback address only (the server refuses anything
 //!   else) and asks for nothing, as before. `/api/auth/status` reports `setup: true` and the
 //!   first account can be created from this machine (`POST /api/auth/setup`) or with
-//!   `hubcli user add <name>`.
+//!   `hubness user add <name>`.
 //! - With accounts every `/api` request and every preview port needs a session:
 //!   - API clients (the TUI, scripts) send `Authorization: Bearer <token>` from
 //!     `POST /api/auth/login`;
@@ -186,7 +186,7 @@ pub async fn guard(mut req: Request, next: Next) -> Response {
         let msg = if users_exist {
             "Sign in to hubness"
         } else {
-            "This hub has no accounts yet: create one on its machine with `hubcli user add <name>`"
+            "This hub has no accounts yet: create one on its machine with `hubness user add <name>`"
         };
         return HttpError::new(401, msg).into_response();
     }
@@ -310,7 +310,7 @@ async fn setup(headers: HeaderMap, Extension(c): Extension<Caller>, JsonBody(b):
         return Err(HttpError::new(409, "The hub already has accounts: sign in"));
     }
     if !c.local {
-        return Err(HttpError::new(403, "The first account can only be created on the hub's machine (or with `hubcli user add <name>`)"));
+        return Err(HttpError::new(403, "The first account can only be created on the hub's machine (or with `hubness user add <name>`)"));
     }
     let username = users::check_username(&b.username)?;
     users::check_password(&b.password)?;

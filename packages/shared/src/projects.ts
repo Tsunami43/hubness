@@ -109,7 +109,7 @@ export interface Workspace {
 export interface HubSettings {
   /** Storage folder for new projects. null — not set yet. */
   projectsRoot: string;
-  /** The hub's data folder (database, logs, keys): HUBNESS_DATA_DIR, `hubcli server config data-dir`. */
+  /** The hub's data folder (database, logs, keys): HUBNESS_DATA_DIR, `hubness server config data-dir`. */
   dataDir: string;
   /** Permission mode a new session starts with (changeable per session). */
   defaultPermission: PermissionMode;

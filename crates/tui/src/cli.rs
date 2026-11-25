@@ -1,4 +1,4 @@
-//! Command-line arguments of the TUI, shared by `hubtui` and `hubcli tui` so both binaries
+//! Command-line arguments of `hubness tui`, shared by the full and the client build so both
 //! take the same flags and only this file changes when they do.
 
 /// Connection settings of the terminal UI.

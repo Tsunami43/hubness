@@ -82,18 +82,23 @@ both servers, backed by a contract test.
   the `embed-web` feature (`build.rs`, off by default, needs `pnpm build`), else `apps/web/dist`.
 - `client` — HTTP + SSE client of the API (`hubness-client`).
 - `tui` — ratatui terminal UI on top of the client (`hubness-tui`).
-- `hubcli` — the installed tool: `serve` (foreground), `server start|stop|restart|status|
-  logs|config|uninstall` (systemd user service, `src/service.rs`; unit and `hub.env` under
-  `$XDG_CONFIG_HOME`, data under `$XDG_DATA_HOME/hubness`; `HUBNESS_SYSTEMCTL`/`_JOURNALCTL`/
-  `_LOGINCTL` swap the tools for tests), `user`, `tui`, plus hidden `mcp` and
-  `git-credential-helper` that the server starts from its own executable (`current_exe`).
-  Feature `embed-web` compiles the web app in.
-- `hubtui` — the client-only binary (just the TUI, no server code). TUI flags live in
-  `hubness_tui::cli::Args`, shared by both binaries; saved hubs in `tui/src/hubs.rs`.
+- `hubness` — the one installed command: `serve` (foreground), `server start|stop|restart|
+  status|logs|config|uninstall` (systemd user service, `src/service.rs`; unit and `hub.env`
+  under `$XDG_CONFIG_HOME` (`src/hubenv.rs`), data under `$XDG_DATA_HOME/hubness`;
+  `HUBNESS_SYSTEMCTL`/`_JOURNALCTL`/`_LOGINCTL` swap the tools for tests), `user`, `tui`,
+  `webapp` (opens the web app; `HUBNESS_OPENER` swaps the opener), `update` (self-update from
+  GitHub Releases, `src/update.rs`; `HUBNESS_RELEASE_URL` points it at another release
+  folder, also `file://`), plus hidden `mcp` and `git-credential-helper` that the server
+  starts from its own executable (`current_exe`). Two flavors of the same binary: the
+  default feature `server` is the full build (feature `embed-web` compiles the web app in),
+  `--no-default-features` the client build (tui, webapp, update; no server code — keep
+  `cargo tree -p hubness --no-default-features` free of `hubness-server`). TUI flags live in
+  `hubness_tui::cli::Args`; saved hubs in `tui/src/hubs.rs`.
 - `install.sh` (repo root) — POSIX `curl … | sh` installer of the GitHub Release archives
-  (`--tui-only`, `--from-source`, `--version`, `--uninstall`; `HUBNESS_RELEASE_URL` points
-  it at another release folder for tests). `.github/workflows/release.yml` builds them on a
-  `v*` tag; `ci.yml` runs the checks below.
+  (`--tui-only` for the client build, `--from-source`, `--version`, `--uninstall`;
+  `HUBNESS_RELEASE_URL` points it at another release folder for tests).
+  `.github/workflows/release.yml` builds them on a `v*.*.*` tag (see `RELEASING.md`);
+  `ci.yml` runs the checks below.
 - `apps/server/test/contract.test.ts` — black-box HTTP tests every server must pass; they
   run against TS in `pnpm test` and against Rust with `pnpm test:contract:rust`.
 
@@ -107,8 +112,9 @@ pnpm test     # server tests (node:test)
 pnpm build    # typecheck and build the web app
 pnpm start    # production server, serves the built web app
 
-cargo run -p hubcli -- serve    # the Rust server (same port and data folder)
-cargo run -p hubtui             # terminal UI (asks for a hub; --url, HUBNESS_URL)
+cargo run -p hubness -- serve   # the Rust server (same port and data folder)
+cargo run -p hubness -- tui     # terminal UI (asks for a hub; --url, HUBNESS_URL)
+cargo build -p hubness --no-default-features   # the client build (no server code)
 pnpm check:rust                 # cargo fmt --check, clippy -D warnings, cargo test
 pnpm test:contract:rust         # contract tests against the Rust server
 ```

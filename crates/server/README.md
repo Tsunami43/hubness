@@ -5,9 +5,9 @@ Rust implementation of the hubness server, a port of `apps/server` covering its 
 servers can be switched on one data folder.
 
 ```sh
-cargo run -p hubcli -- serve       # http://127.0.0.1:8787, data in ./.data
-cargo run -p hubcli -- mcp         # the hub MCP server (agents get it automatically)
-cargo build --release -p hubcli --features embed-web   # with the web app inside (pnpm build first)
+cargo run -p hubness -- serve       # http://127.0.0.1:8787, data in ./.data
+cargo run -p hubness -- mcp         # the hub MCP server (agents get it automatically)
+cargo build --release -p hubness --features embed-web   # with the web app inside (pnpm build first)
 pnpm test:contract:rust            # apps/server/test/contract.test.ts against this server
 ```
 
@@ -28,9 +28,9 @@ offers to create the first account, which is accepted only from the hub's own ma
 To reach the hub from another machine:
 
 ```sh
-hubcli user add alice          # password from a hidden prompt (or stdin when not a TTY)
-HUBNESS_HOST=0.0.0.0 hubcli serve
-# or, for the service: hubcli server config host 0.0.0.0 && hubcli server restart
+hubness user add alice          # password from a hidden prompt (or stdin when not a TTY)
+HUBNESS_HOST=0.0.0.0 hubness serve
+# or, for the service: hubness server config host 0.0.0.0 && hubness server restart
 ```
 
 The hub refuses a non-loopback `HUBNESS_HOST` while it has no accounts. Once an account
@@ -39,7 +39,7 @@ exists every `/api` request and every preview port needs a session: `POST /api/a
 the TUI asks on start and keeps the token per hub URL in `~/.config/hubness/tui.json`,
 mode 0600) and sets an HttpOnly `SameSite=Lax` cookie for browsers. Failed sign-ins back
 off per username and address. Accounts are managed in Settings → Users (web and TUI),
-through `/api/users`, or with `hubcli user add|passwd|rm|list` on the data folder
+through `/api/users`, or with `hubness user add|passwd|rm|list` on the data folder
 (`HUBNESS_DATA_DIR`, also while the hub runs). A password change or a deleted account ends
 its sessions; the last account can't be deleted. The hub's own children (the MCP server)
 call it back with a random per-process service token from their environment.
@@ -63,7 +63,7 @@ v4).
 | Area | Routes | State |
 | --- | --- | --- |
 | Core | `GET /health`, CSRF guard, `{error}` responses, web app + SPA fallback | done |
-| Auth | accounts: `/auth/status`, `/auth/login`, `/auth/setup`, `/auth/logout`, `GET/POST /users`, `DELETE /users/:id`, `PUT /users/:id/password`; `hubcli user …` — Rust only | done |
+| Auth | accounts: `/auth/status`, `/auth/login`, `/auth/setup`, `/auth/logout`, `GET/POST /users`, `DELETE /users/:id`, `PUT /users/:id/password`; `hubness user …` — Rust only | done |
 | Database | open, WAL, migrations v1–v4 | done |
 | Projects | `GET /projects`, `GET /projects/discover`, `POST /projects/import`, `PATCH /projects/:id`, `DELETE /projects/:id` | done (incl. `?files=1&confirm=` with the TS safety checks) |
 | Settings | `GET /settings`, `PUT /settings` | done |
@@ -71,7 +71,7 @@ v4).
 | Manifest | `GET/POST /projects/:id/manifest`, manifest section of the agent context | done |
 | Projects | `GET /projects/:id` (repo info, provider links, languages), `POST /projects/new-repo`, `GET /groups/:id/context`, background repo-meta refresh on `GET /projects` | done |
 | Projects | `POST /projects/clone` (a terminal job with the stored host login; the project appears after a successful clone) | done |
-| Git logins | `GET /git-credentials`, `PUT/DELETE /git-credentials/:host` (same encrypted rows as TS), credential helper `hubcli git-credential-helper` for fetch/pull/push | done |
+| Git logins | `GET /git-credentials`, `PUT/DELETE /git-credentials/:host` (same encrypted rows as TS), credential helper `hubness git-credential-helper` for fetch/pull/push | done |
 | Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
 | Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
 | Sandbox | bubblewrap wrap for project/group agent runs (same hidden paths as TS) | done |
@@ -79,7 +79,7 @@ v4).
 | Sessions | pane file and diff (`/sessions/:id/file`, `/sessions/:id/diff`) | done |
 | Agents | Claude Code (stream-json, approvals, limits) | done |
 | Agents | Codex, OpenCode and Grok over ACP (load/resume, models, modes, client-side policy, provider retries) | done |
-| MCP | `hubcli mcp`: the hub MCP server (`open_pane`, `close_pane`) attached to every agent session | done |
+| MCP | `hubness mcp`: the hub MCP server (`open_pane`, `close_pane`) attached to every agent session | done |
 | Context | system prompt: hub instructions, project, group, manifest | done |
 | Secrets | `/projects/:id/secrets` (same AES-256-GCM format and keys), passing them to agents | done |
 | Files | tree, read/write (conflict-safe), create/rename/delete, file list, browse, search (ripgrep + fallback), `/watch` SSE (inotify) | done |

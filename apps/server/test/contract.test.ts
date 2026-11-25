@@ -25,7 +25,7 @@ let child: ChildProcess | null = null;
 let rustBase = '';
 
 async function startRust(): Promise<string> {
-  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubcli');
+  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
   if (!existsSync(bin)) throw new Error(`Rust server binary not found: ${bin} (run cargo build)`);
   child = spawn(bin, ['serve'], {
     cwd: tmp, // no .env from the repository
@@ -783,9 +783,9 @@ test('ACP agents: codex turn (bypass and ask with approval), opencode provider e
   ]);
 });
 
-test('hub MCP server: open_pane and close_pane reach the session (rust: `hubcli mcp`)', { skip: target !== 'rust' && 'the TS server runs in-process (no listener)' }, async () => {
+test('hub MCP server: open_pane and close_pane reach the session (rust: `hubness mcp`)', { skip: target !== 'rust' && 'the TS server runs in-process (no listener)' }, async () => {
   const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
-  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubcli');
+  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
   const mcp = spawn(bin, ['mcp'], { env: { ...process.env, HUB_URL: rustBase, HUB_SESSION_ID: s.id }, stdio: ['pipe', 'pipe', 'inherit'] });
   const { createInterface } = await import('node:readline');
   const replies = createInterface({ input: mcp.stdout! })[Symbol.asyncIterator]();
@@ -2274,7 +2274,7 @@ test('clone by URL is a terminal job; harness actions only from the list', async
 // ---------- accounts (rust only: the TS server has no sign-in and listens on loopback only) ----------
 
 const rustOnly = { skip: target !== 'rust' && 'the TS server has no accounts (loopback only)' };
-const rustBin = () => process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubcli');
+const rustBin = () => process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
 
 /** A separate Rust server on its own data folder (accounts change who may call it). */
 async function startAuthServer(dataDir: string) {
@@ -2329,7 +2329,7 @@ test('accounts: a public address is refused while the hub has no accounts', rust
     timeout: 10_000,
   });
   assert.notEqual(refused.status, 0);
-  assert.match(refused.stderr, /create an account first with `hubcli user add <name>`/);
+  assert.match(refused.stderr, /create an account first with `hubness user add <name>`/);
 });
 
 test('accounts: first-run setup from this machine, then sign-in with bearer and cookie', rustOnly, async () => {
@@ -2385,7 +2385,7 @@ test('accounts: users CRUD, password changes, the last account stays, failed sig
   try {
     const login = async (username: string, password: string) => req('POST', '/api/auth/login', { username, password });
     const alice = await login('alice', 'correct horse');
-    assert.equal(alice.status, 200, 'an account added with hubcli signs in');
+    assert.equal(alice.status, 200, 'an account added with hubness signs in');
     const a = { Authorization: `Bearer ${alice.json.token}` };
 
     const list = await req('GET', '/api/users', undefined, a);

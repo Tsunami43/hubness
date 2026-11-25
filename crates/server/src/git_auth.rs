@@ -3,7 +3,7 @@
 //! Logins (token or login + password over https) are used for the hub's own git runs:
 //! fetch / pull / push from the Git panel and clone. The secret is encrypted like project
 //! secrets (`secrets.rs`, same rows as the TS server) and is handed to git through our
-//! credential helper (`hubcli git-credential-helper`) via the environment of that one git
+//! credential helper (`hubness git-credential-helper`) via the environment of that one git
 //! process — never via argv. Agents never get it: their processes are started elsewhere
 //! and the sandbox hides git credentials.
 
@@ -25,7 +25,7 @@ use crate::secrets;
 const NS: &str = "git-credential";
 /// Environment variable the credential helper reads the logins from.
 pub const CREDENTIALS_ENV: &str = "HUB_GIT_CREDENTIALS";
-/// Subcommand of the `hubcli` binary that runs the credential helper.
+/// Subcommand of the `hubness` binary that runs the credential helper.
 pub const HELPER_COMMAND: &str = "git-credential-helper";
 
 static HOST_RE: LazyLock<Regex> =
@@ -159,7 +159,7 @@ pub fn git_auth_for(db: &Connection, data_dir: &Path, urls: &[String]) -> ApiRes
     if creds.is_empty() {
         return Ok(GitAuth::default());
     }
-    let exe = std::env::current_exe().map_err(|e| HttpError::new(500, format!("Cannot locate the hubcli binary: {e}")))?;
+    let exe = std::env::current_exe().map_err(|e| HttpError::new(500, format!("Cannot locate the hubness binary: {e}")))?;
     let json = serde_json::to_string(&creds).map_err(|e| HttpError::new(500, e.to_string()))?;
     Ok(GitAuth {
         args: vec![

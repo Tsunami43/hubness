@@ -118,7 +118,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let accounts = users::count(&*state.db.lock().map_err(|_| anyhow::anyhow!("database lock poisoned"))?)?;
     // never open the hub to other machines without accounts
     if !auth::is_loopback(&cfg.host) && accounts == 0 {
-        anyhow::bail!("HUBNESS_HOST={} is reachable from other machines: create an account first with `hubcli user add <name>`", cfg.host);
+        anyhow::bail!("HUBNESS_HOST={} is reachable from other machines: create an account first with `hubness user add <name>`", cfg.host);
     }
     auth::init(state.db.clone())?;
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await?;
@@ -131,7 +131,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             println!("hubness: plain HTTP — use an HTTPS reverse proxy or a VPN across untrusted networks");
         }
     } else {
-        println!("hubness: no accounts yet — open to this machine only; create one in the web app or with `hubcli user add <name>`");
+        println!("hubness: no accounts yet — open to this machine only; create one in the web app or with `hubness user add <name>`");
     }
     let rt = state.runtime.clone();
     axum::serve(listener, app(state).into_make_service_with_connect_info::<std::net::SocketAddr>())
