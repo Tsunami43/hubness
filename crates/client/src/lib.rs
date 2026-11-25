@@ -18,9 +18,20 @@ pub struct Client {
 }
 
 impl Client {
-    /// `base` is the hub URL, e.g. `http://127.0.0.1:8787`.
-    pub fn new(base: &str) -> anyhow::Result<Self> {
-        let http = reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).user_agent("hubness-tui").build()?;
+    /// `base` is the hub URL, e.g. `http://127.0.0.1:8787`; `token` — the hub's access token
+    /// when it requires one (sent as `Authorization: Bearer`).
+    pub fn new(base: &str, token: Option<&str>) -> anyhow::Result<Self> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(t) = token.filter(|t| !t.is_empty()) {
+            let mut v = reqwest::header::HeaderValue::from_str(&format!("Bearer {t}"))?;
+            v.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, v);
+        }
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .user_agent("hubness-tui")
+            .default_headers(headers)
+            .build()?;
         Ok(Self { base: base.trim_end_matches('/').to_string(), http })
     }
 

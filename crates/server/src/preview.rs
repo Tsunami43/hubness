@@ -119,6 +119,11 @@ fn text(status: StatusCode, body: String) -> Response<Body> {
 }
 
 async fn proxy(mut req: Request<Incoming>, target: Target) -> Result<Response<Body>, std::convert::Infallible> {
+    // preview ports are as reachable as the hub: the same token (the browser's session cookie)
+    if !crate::auth::authorized(req.headers()) {
+        return Ok(text(StatusCode::UNAUTHORIZED, "Sign in to hubness first, then reload this preview.".into()));
+    }
+    crate::auth::strip_credentials(req.headers_mut());
     // the target may ask docker for the container address: off the async threads
     let Ok(Some((host, port))) = tokio::task::spawn_blocking(move || target()).await else {
         return Ok(text(StatusCode::SERVICE_UNAVAILABLE, "The app is not running. Start it in hubness (Run).".into()));

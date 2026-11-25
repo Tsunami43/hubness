@@ -68,6 +68,8 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
+  // the hub requires its access token (HUBNESS_TOKEN): show the sign-in screen
+  if (res.status === 401) window.dispatchEvent(new Event('hubness:unauthorized'));
   if (!res.ok) throw new ApiError(res.status, data?.error ?? t('api.error', { status: res.status }));
   return data as T;
 }

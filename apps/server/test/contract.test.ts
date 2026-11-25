@@ -1612,3 +1612,48 @@ test('clone by URL is a terminal job; harness actions only from the list', async
   assert.equal((await call('POST', '/harness/grok/actions/nope')).status, 404);
   assert.equal((await call('POST', '/harness/nope/actions/install')).status, 404);
 });
+
+test('access token: bearer, browser session cookie, refusing a public address without one (rust)', { skip: target !== 'rust' && 'the TS server has no access token (loopback only)' }, async () => {
+  const bin = process.env.HUBNESS_RUST_BIN ?? join(repoRoot, 'target/debug/hubness');
+  const { spawnSync } = await import('node:child_process');
+  const refused = spawnSync(bin, ['serve'], { cwd: tmp, env: { ...process.env, HUBNESS_HOST: '0.0.0.0', HUBNESS_PORT: '0', HUBNESS_TOKEN: '', HUBNESS_DATA_DIR: join(tmp, 'auth-data') }, encoding: 'utf8', timeout: 10_000 });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /set HUBNESS_TOKEN first/);
+  const short = spawnSync(bin, ['serve'], { cwd: tmp, env: { ...process.env, HUBNESS_PORT: '0', HUBNESS_TOKEN: 'short', HUBNESS_DATA_DIR: join(tmp, 'auth-data') }, encoding: 'utf8', timeout: 10_000 });
+  assert.notEqual(short.status, 0, 'a short token is refused');
+
+  const token = 'contract-test-token-0123456789';
+  const srv = spawn(bin, ['serve'], { cwd: tmp, env: { ...process.env, HUBNESS_PORT: '0', HUBNESS_TOKEN: token, HUBNESS_DATA_DIR: join(tmp, 'auth-data'), HUBNESS_WEB_DIST: join(tmp, 'no-web') }, stdio: ['ignore', 'pipe', 'inherit'] });
+  try {
+    const base = await new Promise<string>((ok) => {
+      let out = '';
+      srv.stdout!.on('data', (d: Buffer) => {
+        out += d.toString();
+        const m = out.match(/hubness: (http:\/\/\S+)/);
+        if (m) ok(m[1]!);
+      });
+    });
+    const get = (path: string, headers: Record<string, string> = {}) => fetch(base + path, { headers });
+    assert.equal((await get('/api/health')).status, 200, 'health stays open');
+    assert.equal((await get('/api/projects')).status, 401);
+    assert.equal((await get('/api/projects', { Authorization: 'Bearer wrong-token-0123456789' })).status, 401);
+    assert.equal((await get('/api/projects', { Authorization: `Bearer ${token}` })).status, 200);
+    assert.deepEqual(await (await get('/api/auth/status')).json(), { required: true, authenticated: false });
+    const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+      fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    assert.equal((await post('/api/auth/login', { token: 'nope' })).status, 401);
+    const ok = await post('/api/auth/login', { token });
+    assert.equal(ok.status, 200);
+    const setCookie = ok.headers.get('set-cookie') ?? '';
+    assert.match(setCookie, /^hubness_session=[0-9a-f]{64}; Path=\/; HttpOnly; SameSite=Strict/);
+    assert.ok(!setCookie.includes(token), 'the cookie holds a hash, not the token');
+    const cookie = setCookie.split(';')[0]!;
+    assert.equal((await get('/api/projects', { Cookie: cookie })).status, 200);
+    assert.deepEqual(await (await get('/api/auth/status', { Cookie: cookie })).json(), { required: true, authenticated: true });
+    assert.equal((await get('/api/stream', { Cookie: 'hubness_session=deadbeef' })).status, 401, 'streams too');
+    const out = await post('/api/auth/logout', {}, { Cookie: cookie });
+    assert.match(out.headers.get('set-cookie') ?? '', /hubness_session=; .*Max-Age=0/);
+  } finally {
+    srv.kill('SIGTERM');
+  }
+});

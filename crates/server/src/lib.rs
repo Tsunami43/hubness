@@ -5,6 +5,7 @@
 
 pub mod agents;
 pub mod attachments;
+pub mod auth;
 pub mod bus;
 pub mod catalog;
 pub mod config;
@@ -100,7 +101,10 @@ impl AppState {
 /// The whole app: `/api` plus the built web app (with the SPA fallback to index.html).
 pub fn app(state: AppState) -> Router {
     // messages (up to 1M characters) and file writes can exceed axum's default 2 MB limit
-    let api = routes::api().layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)).layer(axum::middleware::from_fn(http::csrf_guard));
+    let api = routes::api()
+        .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
+        .layer(axum::middleware::from_fn(http::csrf_guard))
+        .layer(axum::middleware::from_fn(auth::guard));
     let mut router = Router::new().nest("/api", api);
     let dist = &state.config.web_dist;
     if dist.is_dir() {
@@ -112,12 +116,26 @@ pub fn app(state: AppState) -> Router {
 
 /// Bind and serve until SIGINT/SIGTERM.
 pub async fn serve(config: Config) -> anyhow::Result<()> {
+    // never open the hub to other machines without a token
+    if !auth::is_loopback(&config.host) && config.token.is_none() {
+        anyhow::bail!(
+            "HUBNESS_HOST={} is reachable from other machines: set HUBNESS_TOKEN first (generate one with `hubness token`)",
+            config.host
+        );
+    }
+    auth::init(config.token.clone())?;
     let state = AppState::open(config)?;
     let cfg = state.config.clone();
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await?;
     let addr = listener.local_addr()?;
     let _ = state.self_url.set(format!("http://127.0.0.1:{}", addr.port()));
     println!("hubness: http://{}:{}  (data: {})", addr.ip(), addr.port(), cfg.data_dir.display());
+    if auth::required() {
+        println!("hubness: access token required (HUBNESS_TOKEN)");
+        if !auth::is_loopback(&cfg.host) {
+            println!("hubness: plain HTTP — use an HTTPS reverse proxy or a VPN across untrusted networks");
+        }
+    }
     let rt = state.runtime.clone();
     axum::serve(listener, app(state))
         .with_graceful_shutdown(async move {

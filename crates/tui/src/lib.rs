@@ -52,9 +52,13 @@ struct App {
 }
 
 /// Run the TUI against the hub at `url` until the user quits.
-pub async fn run(url: &str) -> anyhow::Result<()> {
-    let client = Client::new(url)?;
+pub async fn run(url: &str, token: Option<&str>) -> anyhow::Result<()> {
+    let client = Client::new(url, token)?;
     client.health().await.map_err(|e| anyhow::anyhow!("hubness is not reachable at {url}: {e}"))?;
+    client
+        .sessions()
+        .await
+        .map_err(|e| anyhow::anyhow!("hubness at {url} refused the TUI ({e}) — pass the access token with --token or HUBNESS_TOKEN"))?;
     let sessions = client.sessions().await?;
     let default_agent = client.default_agent().await.unwrap_or_else(|_| "claude-code".into());
     let (tx, mut rx) = mpsc::unbounded_channel();

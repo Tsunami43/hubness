@@ -10,6 +10,17 @@ cargo run -p hubness -- mcp        # the hub MCP server (agents get it automatic
 pnpm test:contract:rust            # apps/server/test/contract.test.ts against this server
 ```
 
+## Remote access
+
+By default the hub listens on 127.0.0.1 and asks for nothing. To reach it from another
+machine, set `HUBNESS_TOKEN` (generate one with `hubness token`) and `HUBNESS_HOST`; the
+hub refuses a non-loopback address without a token. Every `/api` request and every preview
+port then needs the token: `Authorization: Bearer <token>` for API clients
+(`hubness tui --url http://host:8787 --token …`), a one-time sign-in for the browser (an
+HttpOnly cookie with a hash of the token). The hub speaks plain HTTP — across untrusted
+networks put it behind an HTTPS reverse proxy (Caddy, nginx) or a VPN (Tailscale,
+WireGuard). The TypeScript server has no access token and stays loopback-only.
+
 ## Rules while both servers exist
 
 - An API change goes into both servers, with a contract test that passes against both
@@ -24,6 +35,7 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Area | Routes | State |
 | --- | --- | --- |
 | Core | `GET /health`, CSRF guard, `{error}` responses, web app + SPA fallback | done |
+| Auth | access token (`HUBNESS_TOKEN`), `/auth/status`, `/auth/login`, `/auth/logout` — Rust only | done |
 | Database | open, WAL, migrations v1–v3 | done |
 | Projects | `GET /projects`, `GET /projects/discover`, `POST /projects/import`, `PATCH /projects/:id`, `DELETE /projects/:id` | done (incl. `?files=1&confirm=` with the TS safety checks) |
 | Settings | `GET /settings`, `PUT /settings` | done |

@@ -23,7 +23,14 @@ pub fn hub_mcp(self_url: &str, session_id: &str) -> Option<McpServer> {
         name: "hub".into(),
         command: exe.to_string_lossy().into_owned(),
         args: vec!["mcp".into()],
-        env: vec![("HUB_URL".into(), self_url.to_string()), ("HUB_SESSION_ID".into(), session_id.to_string())],
+        env: {
+            let mut env = vec![("HUB_URL".into(), self_url.to_string()), ("HUB_SESSION_ID".into(), session_id.to_string())];
+            // the MCP server calls the hub back: with a token it needs it too
+            if let Some(t) = crate::auth::token_for_children() {
+                env.push(("HUB_TOKEN".into(), t));
+            }
+            env
+        },
     })
 }
 
@@ -63,8 +70,10 @@ async fn call_hub(hub_url: &str, session_id: &str, pane: Value) -> Result<(), St
     let mut stream = tokio::net::TcpStream::connect(authority).await.map_err(|e| e.to_string())?;
     let body = json!({ "pane": pane }).to_string();
     let req = format!(
-        "POST /api/sessions/{session_id}/pane HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
+        "POST /api/sessions/{session_id}/pane HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth}Connection: close\r\n\r\n{body}",
+        body.len(),
+        auth =
+            std::env::var("HUB_TOKEN").ok().filter(|t| !t.is_empty()).map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default()
     );
     stream.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
     let mut resp = String::new();

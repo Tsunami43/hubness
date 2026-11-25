@@ -653,6 +653,13 @@ export const en = {
 
   // api
   'api.error': 'Error {status}',
+  // access token (a hub reachable from other machines)
+  'auth.title': 'Sign in to hubness',
+  'auth.hint': 'This hub requires an access token (HUBNESS_TOKEN on the server).',
+  'auth.token': 'Access token',
+  'auth.signIn': 'Sign in',
+  'auth.wrong': 'Wrong access token',
+  'auth.unreachable': 'The hub is not reachable',
   // projects, groups, tree, workspace folder
   'projects.menu': 'Project menu',
   'projects.new': 'New project',

@@ -654,6 +654,13 @@ export const ru: Record<MessageKey, string> = {
 
   // api
   'api.error': 'Ошибка {status}',
+  // токен доступа (хаб, доступный с других машин)
+  'auth.title': 'Вход в hubness',
+  'auth.hint': 'Этот хаб требует токен доступа (HUBNESS_TOKEN на сервере).',
+  'auth.token': 'Токен доступа',
+  'auth.signIn': 'Войти',
+  'auth.wrong': 'Неверный токен',
+  'auth.unreachable': 'Хаб недоступен',
   // проекты, группы, дерево, рабочая папка
   'projects.menu': 'Меню проекта',
   'projects.new': 'Новый проект',
