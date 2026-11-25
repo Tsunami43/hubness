@@ -16,7 +16,7 @@ use hubness_core::{
 use rusqlite::Connection;
 
 use crate::config::Config;
-use crate::db::{self, groups, kv, projects};
+use crate::db::{self, groups, kv, projects, sessions};
 use crate::error::{ApiResult, HttpError};
 use crate::paths;
 use crate::workspaces;
@@ -225,18 +225,21 @@ pub fn update_project(db: &Connection, id: &str, b: ProjectPatch) -> ApiResult<P
 }
 
 /// Checks before removing a project from the hub.
-pub fn assert_removable(db: &Connection, id: &str) -> ApiResult<Project> {
+pub fn assert_removable(db: &Connection, id: &str, is_active: &dyn Fn(&str) -> bool) -> ApiResult<Project> {
     let p = projects::get(db, id)?.ok_or_else(|| HttpError::not_found("Project not found"))?;
     if p.kind == ProjectKind::System {
         return Err(HttpError::bad_request("The system project can’t be removed"));
     }
-    // TODO(rust-port): refuse with 409 while an agent works in the project (needs the runtime)
+    let all = sessions::list(db, sessions::Filter { project_id: Some(id), archived: sessions::Archived::All, ..Default::default() })?;
+    if all.iter().any(|s| is_active(&s.id)) {
+        return Err(HttpError::new(409, "An agent is working in this project — stop it first"));
+    }
     Ok(p)
 }
 
 /// Remove a project from the hub. Repository files are untouched; project sessions are deleted.
-pub fn remove_project(db: &Connection, config: &Config, id: &str) -> ApiResult<()> {
-    assert_removable(db, id)?;
+pub fn remove_project(db: &Connection, config: &Config, id: &str, is_active: &dyn Fn(&str) -> bool) -> ApiResult<()> {
+    assert_removable(db, id, is_active)?;
     workspaces::remove_workspaces(db, config, WorkspaceScopeKind::Project, id)?;
     projects::delete(db, id)?;
     Ok(())
@@ -359,9 +362,12 @@ pub fn update_group(db: &Connection, config: &Config, id: &str, b: GroupFields) 
 }
 
 /// Deletes a group, its workspace and group sessions. Projects and their sessions are untouched.
-pub fn delete_group(db: &Connection, config: &Config, id: &str) -> ApiResult<()> {
+pub fn delete_group(db: &Connection, config: &Config, id: &str, is_active: &dyn Fn(&str) -> bool) -> ApiResult<()> {
     group_or_404(db, id)?;
-    // TODO(rust-port): refuse with 409 while an agent works in the group (needs the runtime)
+    let all = sessions::list(db, sessions::Filter { group_id: Some(id), archived: sessions::Archived::All, ..Default::default() })?;
+    if all.iter().any(|s| is_active(&s.id)) {
+        return Err(HttpError::new(409, "An agent is working in this group — stop it first"));
+    }
     workspaces::remove_workspaces(db, config, WorkspaceScopeKind::Group, id)?;
     groups::delete(db, id)?;
     Ok(())

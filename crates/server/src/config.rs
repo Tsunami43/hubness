@@ -72,3 +72,14 @@ impl Config {
         self.data_dir.join("groups")
     }
 }
+
+/// Environment for child processes (agents, Run, Shell, CLI): without hub settings and
+/// secrets (`HUBNESS_*`, including the secrets key) and without the internal pnpm/npm
+/// variables the hub may have been started with.
+pub fn child_env() -> Vec<(String, String)> {
+    std::env::vars()
+        .filter(|(k, _)| {
+            !k.starts_with("HUBNESS_") && !k.starts_with("npm_") && !k.starts_with("PNPM_") && !k.starts_with("pnpm_") && k != "INIT_CWD"
+        })
+        .collect()
+}

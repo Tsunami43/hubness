@@ -78,7 +78,7 @@ async fn delete_project(State(s): State<AppState>, Path(id): Path<String>, Query
         return Err(HttpError::new(501, "Deleting project files is not supported by the Rust server yet"));
     }
     s.with(|db, cfg| {
-        catalog::remove_project(db, cfg, &id)?;
+        catalog::remove_project(db, cfg, &id, &|sid| s.runtime.is_active(sid))?;
         Ok(json!({ "ok": true, "deleted": null }))
     })
 }
@@ -153,7 +153,7 @@ async fn update_group(State(s): State<AppState>, Path(id): Path<String>, JsonBod
 
 async fn delete_group(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     s.with(|db, cfg| {
-        catalog::delete_group(db, cfg, &id)?;
+        catalog::delete_group(db, cfg, &id, &|sid| s.runtime.is_active(sid))?;
         Ok(json!({ "ok": true }))
     })
 }

@@ -1,6 +1,7 @@
 // A fake agent CLI for normalizer tests: replays recorded agent output (a fixture of
 // stdout lines) so the real adapter parses it. REPLAY_MODE picks the protocol:
-//  - stream: print every line after the first message arrives, exit when stdin closes (Claude Code stream-json);
+//  - stream: print the lines after the first message arrives, exit when stdin closes (Claude Code stream-json);
+//    a `{"replay":"await"}` line pauses until the next stdin line (a control_response);
 //  - acp: JSON-RPC — for each client request emit the recorded messages up to the next
 //    response (its id rewritten to the request's); agent requests wait for the client's answer.
 import { readFileSync } from 'node:fs';
@@ -12,12 +13,15 @@ const out = (m: unknown) => process.stdout.write((typeof m === 'string' ? m : JS
 const input = createInterface({ input: process.stdin });
 
 if (process.env.REPLAY_MODE === 'stream') {
-  let sent = false;
-  input.on('line', () => {
-    if (sent) return;
-    sent = true;
-    lines.forEach(out);
-  });
+  const queue = [...lines];
+  const flush = () => {
+    while (queue.length) {
+      const line = queue.shift()!;
+      if ((JSON.parse(line) as Json).replay === 'await') return;
+      out(line);
+    }
+  };
+  input.on('line', flush);
   input.on('close', () => process.exit(0));
 } else {
   const fixture = lines.map((l) => JSON.parse(l) as Json);

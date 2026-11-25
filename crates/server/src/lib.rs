@@ -7,13 +7,16 @@ pub mod agents;
 pub mod bus;
 pub mod catalog;
 pub mod config;
+pub mod context;
 pub mod db;
+pub mod environments;
 pub mod error;
 pub mod home;
 pub mod http;
 pub mod inbox;
 pub mod paths;
 pub mod routes;
+pub mod runtime;
 pub mod sessions;
 pub mod workspaces;
 
@@ -32,6 +35,7 @@ pub struct AppState {
     db: Arc<Mutex<Connection>>,
     config: Arc<Config>,
     bus: bus::Bus,
+    runtime: runtime::Runtime,
 }
 
 impl AppState {
@@ -42,7 +46,7 @@ impl AppState {
         home::ensure_home_project(&db, &config)?;
         // no agent survives a restart
         db::sessions::recover_interrupted(&db)?;
-        Ok(Self { db: Arc::new(Mutex::new(db)), config: Arc::new(config), bus: bus::Bus::default() })
+        Ok(Self { db: Arc::new(Mutex::new(db)), config: Arc::new(config), bus: bus::Bus::default(), runtime: runtime::Runtime::default() })
     }
 
     pub fn config(&self) -> &Config {
@@ -80,7 +84,13 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await?;
     let addr = listener.local_addr()?;
     println!("hubness: http://{}:{}  (data: {})", addr.ip(), addr.port(), cfg.data_dir.display());
-    axum::serve(listener, app(state)).with_graceful_shutdown(shutdown_signal()).await?;
+    let rt = state.runtime.clone();
+    axum::serve(listener, app(state))
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            rt.stop_all();
+        })
+        .await?;
     Ok(())
 }
 

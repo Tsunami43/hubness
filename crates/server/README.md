@@ -30,8 +30,13 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Projects | `GET /projects/:id` (repo info), `new-repo`, `clone`, manifest, `groups/:id/context` | todo |
 | Git logins | `/git-credentials` (needs the AES-256-GCM secrets format) | todo |
 | Sessions | list, create (no prompt), detail, patch, delete, archive/restore, empty archive, events, pane, stop, `GET /sessions/:id/stream`, `GET /stream` | done |
-| Sessions | messages, prompt on create, approvals, attachments, convert to project, pane file/diff | todo (needs the runtime) |
-| Agents | Claude Code, Codex (ACP), OpenCode, Grok adapters and normalizers | todo |
+| Runtime | messages, prompt on create, approvals, stop, title from the first message, run logs, restart recovery | done |
+| Sandbox | bubblewrap wrap for project/group agent runs (same hidden paths as TS) | done |
+| Sessions | attachments, convert to project, pane file/diff | todo |
+| Agents | Claude Code (stream-json, approvals, limits) | done |
+| Agents | Codex and OpenCode (ACP), Grok; the hub MCP server (`open_pane`); image attachments | todo |
+| Context | system prompt: hub instructions, project, group | done (manifest section todo) |
+| Secrets | sharing project secrets with agents | todo (such turns answer 501) |
 | Files | tree, read/write, search, watch | todo |
 | Git | status, diff, log, branches, operations | todo |
 | Environment | runs, shells, jobs, preview proxy, secrets, sandbox | todo |
@@ -39,8 +44,8 @@ pnpm test:contract:rust            # apps/server/test/contract.test.ts against t
 | Harness | agent install/accounts/models | todo |
 | System | containers, units, packages, overview, ask | todo |
 
-Known gaps in ported routes: deleting or archiving does not yet refuse while an agent is
-working (there is no runtime yet), and the background refresh of repository metadata on
-`GET /projects` is not ported. Session events are passed through as JSON (`HubEvent` is
+Known gaps in ported routes: the background refresh of repository metadata on
+`GET /projects` is not ported; sessions of agents other than Claude Code get an error
+notice in the feed. Session events are passed through as JSON (`HubEvent` is
 not typed in Rust yet); `serde_json` keeps key order and exact floats so the output is
 byte-identical to the TS server.

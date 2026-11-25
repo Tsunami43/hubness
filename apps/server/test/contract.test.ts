@@ -2,7 +2,7 @@ import { makeRepo, tmp } from './setup.ts';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, lstatSync, readlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 /**
@@ -78,6 +78,18 @@ async function makeClient(): Promise<{ call: Call; raw: Fetcher }> {
   return { raw, call: (method, url, body, headers) => send(raw, method, url, body, headers) };
 }
 
+// a fake Claude Code CLI: replays the fixture named in <tmp>/claude-fixture (see fixtures/replay-agent.ts)
+const fixtureFile = join(tmp, 'claude-fixture');
+const fakeClaude = join(tmp, 'fake-claude');
+const replayAgent = join(import.meta.dirname, 'fixtures', 'replay-agent.ts');
+writeFileSync(
+  fakeClaude,
+  `#!/bin/sh\nREPLAY_MODE=stream REPLAY_FIXTURE="$(cat ${fixtureFile})" exec ${process.execPath} --disable-warning=ExperimentalWarning ${replayAgent}\n`,
+);
+chmodSync(fakeClaude, 0o755);
+process.env.HUBNESS_CLAUDE_BIN = fakeClaude;
+const useFixture = (name: string) => writeFileSync(fixtureFile, join(import.meta.dirname, 'fixtures', 'agents', name));
+
 const { call, raw } = await makeClient();
 
 /** Open an SSE stream; next() resolves with the next `data:` message parsed as JSON. */
@@ -111,7 +123,11 @@ async function openStream(path: string) {
   await new Promise((r) => setTimeout(r, 50));
   return { next, close: () => reader.cancel().catch(() => {}) };
 }
-after(() => child?.kill('SIGTERM'));
+after(() => {
+  child?.kill('SIGTERM');
+  // a failed test may leave a fake agent or a stream behind: don't hang (keeps the exit code)
+  setTimeout(() => process.exit(), 500).unref();
+});
 
 const projectsRoot = join(tmp, 'hub', 'projects');
 makeRepo(join(projectsRoot, 'alpha'));
@@ -368,4 +384,93 @@ test('sessions: scopes, patch, archive, pane and live streams', async () => {
   assert.deepEqual((await call('DELETE', `/sessions/${chat.json.id}`)).json, { ok: true });
   assert.equal((await call('GET', `/sessions/${chat.json.id}`)).status, 404);
   global.close();
+});
+
+/** Poll the session until `pred` holds (agents run asynchronously). */
+async function waitFor(id: string, pred: (s: any) => boolean, what: string) {
+  for (let i = 0; i < 500; i++) {
+    const s = (await call('GET', `/sessions/${id}`)).json;
+    if (pred(s)) return s;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  const events = (await call('GET', `/sessions/${id}/events`)).json;
+  throw new Error(`timed out waiting for ${what}: ${JSON.stringify(events.slice(-3))}`);
+}
+
+/** The feed without volatile fields (uids carry timestamps; seq order is kept). */
+const feed = async (id: string) =>
+  (await call('GET', `/sessions/${id}/events`)).json.map(({ uid, seq: _s, ts: _t, durationMs: _d, ...rest }: any) => ({ uid: uid.split(':')[0], ...rest }));
+
+test('claude-code turn: streaming, tools, limits, result and resume id', async () => {
+  useFixture('claude-tool-turn.jsonl');
+  const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
+  assert.equal((await call('POST', `/sessions/${s.id}/messages`, { text: '   ' })).status, 400, 'empty message');
+  const live = await openStream(`/sessions/${s.id}/stream`);
+  await live.next(); // snapshot
+  const started = await call('POST', `/sessions/${s.id}/messages`, { text: 'What is in   this folder?' });
+  assert.equal(started.status, 200);
+  assert.equal(started.json.title, 'What is in this folder?', 'the first message names the chat');
+  const done = await waitFor(s.id, (x) => x.status === 'idle' && x.agentSessionId, 'the turn to finish');
+  assert.equal(done.agentSessionId, 'sess-claude-1');
+  assert.deepEqual(await feed(s.id), [
+    { uid: 'u', kind: 'user', text: 'What is in   this folder?' },
+    { uid: 'th', kind: 'thinking', text: 'List the folder first.' },
+    { uid: 't', kind: 'text', text: 'Checking the files.', streaming: false },
+    { uid: 'tool', kind: 'tool', toolId: 'toolu_1', name: 'Bash', input: { command: 'ls', description: 'List files' }, status: 'ok', output: 'README.md\nsrc' },
+    { uid: 'tool', kind: 'tool', toolId: 'toolu_2', name: 'Read', input: { file_path: '/work/missing.txt' }, status: 'error', output: 'File does not exist.' },
+    { uid: 't', kind: 'text', text: 'There is a README and a src folder.' },
+    { uid: 'res', kind: 'result', ok: true, billing: 'subscription', costUsd: 0.164, limit: { window: 'seven_day', utilization: 0.73 }, model: 'claude-opus-5-5' },
+  ]);
+  // the stream saw the text grow before it was persisted
+  const seen: any[] = [];
+  for (;;) {
+    const m = await live.next();
+    seen.push(m);
+    if (m.type === 'session' && m.session.status === 'idle') break;
+  }
+  live.close();
+  assert.ok(seen.some((m) => m.type === 'event' && m.event.streaming === true), 'streaming deltas are broadcast');
+  assert.ok(seen.some((m) => m.type === 'session' && m.session.status === 'running'));
+
+  useFixture('claude-error.jsonl');
+  await call('POST', `/sessions/${s.id}/messages`, { text: 'again' });
+  const failed = await waitFor(s.id, (x) => x.status !== 'running', 'the failed turn');
+  assert.equal(failed.status, 'idle', 'the turn ended with a result, not a crash');
+  const last = (await feed(s.id)).slice(-3);
+  assert.deepEqual(last.map((e: any) => e.kind), ['user', 'notice', 'result']);
+  assert.equal(last[1].text, 'API Error: 529 overloaded');
+  assert.equal(last[2].ok, false);
+  assert.equal(last[2].billing, 'api');
+});
+
+test('claude-code approvals and stop', async () => {
+  useFixture('claude-approval.jsonl');
+  {
+    // (the fake agent lives in /tmp, which the bubblewrap sandbox of project sessions hides: a chat)
+    const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' }, prompt: 'clean the build' })).json;
+    assert.equal(s.title, 'clean the build', 'a prompt on create starts the first turn');
+    await waitFor(s.id, (x) => x.status === 'waiting', 'the permission request');
+    const ap = (await feed(s.id)).find((e: any) => e.kind === 'approval');
+    assert.deepEqual(ap, { uid: 'ap', kind: 'approval', requestId: 'req-1', toolName: 'Bash', input: { command: 'rm -rf build' }, status: 'pending' });
+    assert.equal((await call('POST', `/sessions/${s.id}/messages`, { text: 'more' })).status, 409, 'one turn at a time');
+    assert.equal((await call('POST', `/sessions/${s.id}/archive`)).status, 409, 'a working session is not archived');
+    assert.equal((await call('POST', `/sessions/${s.id}/approvals/req-1`, { decision: 'maybe' })).status, 400);
+    assert.equal((await call('POST', `/sessions/${s.id}/approvals/nope`, { decision: 'allow' })).status, 404);
+    assert.deepEqual((await call('POST', `/sessions/${s.id}/approvals/req-1`, { decision: 'allow' })).json, { ok: true });
+    const done = await waitFor(s.id, (x) => x.status === 'idle', 'the turn after approval');
+    assert.equal(done.agentSessionId, 'sess-claude-2');
+    const events = await feed(s.id);
+    assert.equal(events.find((e: any) => e.kind === 'approval').status, 'allowed');
+    assert.equal(events.find((e: any) => e.kind === 'tool').status, 'ok');
+    assert.equal(events.at(-1).costUsd, 0.24259540000000002, 'floats survive exactly');
+  }
+
+  const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' }, prompt: 'clean the build' })).json;
+  await waitFor(s.id, (x) => x.status === 'waiting', 'the permission request');
+  assert.deepEqual((await call('POST', `/sessions/${s.id}/stop`)).json, { ok: true });
+  await waitFor(s.id, (x) => x.status === 'idle', 'the stopped turn');
+  const events = await feed(s.id);
+  assert.equal(events.find((e: any) => e.kind === 'approval').status, 'expired');
+  assert.deepEqual(events.at(-1), { uid: 'stop', kind: 'notice', level: 'info', text: 'Stopped' });
+  assert.deepEqual((await call('POST', `/sessions/${s.id}/stop`)).json, { ok: false }, 'nothing left to stop');
 });

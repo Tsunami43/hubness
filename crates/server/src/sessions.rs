@@ -20,7 +20,7 @@ use crate::db::sessions::{self as repo, Archived, Filter};
 use crate::db::{kv, now};
 use crate::error::{ApiResult, HttpError};
 use crate::http::{JsonBody, double_option};
-use crate::{AppState, agents, catalog, inbox, workspaces};
+use crate::{AppState, agents, catalog, inbox, runtime, workspaces};
 
 /// Keep-alive period of the SSE streams (as in the TS server).
 const PING: Duration = Duration::from_secs(25);
@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions/{id}/events", get(events))
         .route("/sessions/{id}/messages", post(messages))
         .route("/sessions/{id}/stop", post(stop))
+        .route("/sessions/{id}/approvals/{request_id}", post(approval))
         .route("/sessions/{id}/pane", post(set_pane))
         .route("/sessions/{id}/stream", get(session_stream))
         .route("/stream", get(global_stream))
@@ -144,9 +145,8 @@ async fn create(State(s): State<AppState>, JsonBody(b): JsonBody<CreateBody>) ->
     if project_id.is_some() && group_id.is_some() {
         return Err(HttpError::bad_request("A session belongs to a project or a group, not both"));
     }
-    if b.prompt.as_deref().is_some_and(|p| !p.trim().is_empty()) {
-        // TODO(rust-port): start the first turn once the agent runtime is ported
-        return Err(HttpError::new(501, "Starting a session with a prompt is not supported by the Rust server yet"));
+    if b.prompt.as_deref().is_some_and(|p| p.encode_utf16().count() > 1_000_000) {
+        return Err(HttpError::bad_request("prompt: at most 1000000 characters"));
     }
     let session = s.with(|db, cfg| {
         let workspace_id = if let Some(pid) = &project_id {
@@ -177,7 +177,10 @@ async fn create(State(s): State<AppState>, JsonBody(b): JsonBody<CreateBody>) ->
         )?)
     })?;
     s.bus.emit_global(GlobalStreamMsg::Session { session: session.0.clone() });
-    Ok((StatusCode::CREATED, session))
+    match b.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+        Some(prompt) => Ok((StatusCode::CREATED, axum::Json(runtime::send_message(&s, &session.0.id, prompt)?))),
+        None => Ok((StatusCode::CREATED, session)),
+    }
 }
 
 async fn detail(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<axum::Json<Session>> {
@@ -224,7 +227,7 @@ async fn patch(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b): J
 
 /// Delete one session for good and drop it from the lists.
 fn delete_now(s: &AppState, db: &Connection, id: &str) -> ApiResult<()> {
-    // TODO(rust-port): stop the session's agent first (needs the runtime)
+    s.runtime.stop(id);
     repo::delete(db, id)?;
     s.bus.emit_global(GlobalStreamMsg::SessionDeleted { id: id.to_string() });
     Ok(())
@@ -249,9 +252,11 @@ async fn empty_archive(State(s): State<AppState>) -> ApiResult<axum::Json<Value>
 }
 
 async fn set_archived(s: AppState, id: String, archived: bool) -> ApiResult<axum::Json<Session>> {
-    // TODO(rust-port): refuse with 409 while the agent works (needs the runtime)
     let session = s.with(|db, _| {
         let cur = session_or_404(db, &id)?;
+        if archived && s.runtime.is_active(&cur.id) {
+            return Err(HttpError::new(409, "The agent is still working — wait for it or stop it"));
+        }
         repo::set_archived(db, &cur.id, archived)?.ok_or_else(|| HttpError::not_found("Session not found"))
     })?;
     announce(&s, &session);
@@ -272,15 +277,53 @@ async fn events(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<
     s.with(|db, _| Ok(repo::events(db, &id)?))
 }
 
-async fn messages(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<axum::Json<Value>> {
-    session_or_404(&*s.db()?, &id)?;
-    // TODO(rust-port): agent runtime
-    Err(HttpError::new(501, "Sending messages is not supported by the Rust server yet"))
+#[derive(Deserialize)]
+struct MessageBody {
+    #[serde(default)]
+    text: String,
+    attachments: Option<Value>,
 }
 
-/// Stop the session's agent. Nothing runs in the Rust server yet, so there is nothing to stop.
-async fn stop() -> axum::Json<Value> {
-    axum::Json(json!({ "ok": false }))
+async fn messages(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b): JsonBody<MessageBody>) -> ApiResult<axum::Json<Session>> {
+    if b.text.encode_utf16().count() > 1_000_000 {
+        return Err(HttpError::bad_request("text: at most 1000000 characters"));
+    }
+    if b.attachments.as_ref().and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
+        // TODO(rust-port): attachments.ts
+        return Err(HttpError::new(501, "Attachments are not supported by the Rust server yet"));
+    }
+    {
+        let db = s.db()?;
+        let cur = session_or_404(&db, &id)?;
+        // writing to an archived session brings it back
+        if cur.archived_at.is_some() && !b.text.trim().is_empty() {
+            repo::set_archived(&db, &cur.id, false)?;
+        }
+    }
+    Ok(axum::Json(runtime::send_message(&s, &id, &b.text)?))
+}
+
+async fn stop(State(s): State<AppState>, Path(id): Path<String>) -> axum::Json<Value> {
+    axum::Json(json!({ "ok": s.runtime.stop(&id) }))
+}
+
+async fn approval(
+    State(s): State<AppState>,
+    Path((id, request_id)): Path<(String, String)>,
+    JsonBody(b): JsonBody<agents::ApprovalDecision>,
+) -> ApiResult<axum::Json<Value>> {
+    if b.reason.as_ref().is_some_and(|r| r.encode_utf16().count() > 10_000) {
+        return Err(HttpError::bad_request("reason: at most 10000 characters"));
+    }
+    if let Some(answers) = &b.answers
+        && answers.values().any(|v| !v.is_string())
+    {
+        return Err(HttpError::bad_request("answers: values must be strings"));
+    }
+    if !s.runtime.respond(&id, &request_id, b) {
+        return Err(HttpError::not_found("The request is no longer pending"));
+    }
+    Ok(axum::Json(json!({ "ok": true })))
 }
 
 // ---------- pane next to the chat (MCP open_pane) ----------
@@ -298,7 +341,7 @@ struct PaneInput {
     title: Option<String>,
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     // like JavaScript's slice: counted in UTF-16 units, never splitting a character
     let mut units = 0;
     s.chars()
