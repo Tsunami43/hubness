@@ -1,7 +1,7 @@
 # Releasing
 
 Releases are built by `.github/workflows/release.yml` from a `vX.Y.Z` tag. Each one
-publishes, for Linux (x86_64, aarch64) and macOS (Intel, Apple silicon):
+publishes, for Linux x86_64 and Apple silicon Macs:
 
 - `hubness-X.Y.Z-<target>-full.tar.gz` — the hub with the web app inside;
 - `hubness-X.Y.Z-<target>-client.tar.gz` — the client build (`tui`, `webapp`, `update`);

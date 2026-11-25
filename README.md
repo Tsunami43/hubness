@@ -32,7 +32,8 @@ own machine or server and work with them from one browser UI — on a desktop or
 
 ## Requirements
 
-- Linux (x86_64, aarch64) or macOS (Intel, Apple silicon); `hubness server` needs systemd
+- Linux x86_64 (any current distro) or a Mac with Apple silicon — ready-made builds; other
+  machines build from source (`--from-source`). `hubness server` needs systemd
 - git
 - At least one agent CLI: `claude`, `codex` (through `@zed-industries/codex-acp`, needs
   Node.js), `opencode` or `grok` — the Harness page can install them for you

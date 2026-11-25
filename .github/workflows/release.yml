@@ -58,16 +58,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 22.04 runners: the binaries need glibc 2.35, not the newest one
+          # Two binaries cover the usual machines: Linux x86_64 (built on 22.04 so it needs
+          # only glibc 2.35 — any current distro) and Apple silicon Macs. Anything else:
+          # install.sh --from-source.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04-arm
-          # Apple silicon runners build both macOS targets (Intel ones are being retired):
-          # x86_64 is cross-compiled and can't be run there to check its --version
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            cross: true
           - target: aarch64-apple-darwin
             os: macos-latest
     runs-on: ${{ matrix.os }}
@@ -105,9 +100,7 @@ jobs:
             name="hubness-$VERSION-$TARGET-$flavor"
             mkdir "$name"
             cp "out/$flavor/hubness" README.md LICENSE "$name/"
-            if [ "${{ matrix.cross }}" != "true" ]; then
-              "$name/hubness" --version | grep -F "hubness $VERSION ($flavor) $TARGET"
-            fi
+            "$name/hubness" --version | grep -F "hubness $VERSION ($flavor) $TARGET"
             tar -czf "$name.tar.gz" "$name"
             shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
             cat "$name.tar.gz.sha256"

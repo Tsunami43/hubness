@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Releases ship two builds: Linux x86_64 and Apple silicon Macs; other machines use
+  `install.sh --from-source`. CI checks Ubuntu and macOS.
+
 ## [0.2.2] - 2026-11-26
 
 ### Fixed

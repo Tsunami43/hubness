@@ -133,18 +133,15 @@ sha256_of() {
   fi
 }
 
+# Releases are built for Linux x86_64 and Apple silicon Macs; others build from source.
 target_triple() {
   os=$(uname -s)
   arch=$(uname -m)
-  case "$arch" in
-    x86_64 | amd64) arch=x86_64 ;;
-    aarch64 | arm64) arch=aarch64 ;;
-    *) die "no release for the $arch CPU: try --from-source" ;;
-  esac
-  case "$os" in
-    Linux) say "$arch-unknown-linux-gnu" ;;
-    Darwin) say "$arch-apple-darwin" ;;
-    *) die "no release for $os: try --from-source" ;;
+  case "$os/$arch" in
+    Linux/x86_64 | Linux/amd64) say "x86_64-unknown-linux-gnu" ;;
+    Darwin/arm64 | Darwin/aarch64) say "aarch64-apple-darwin" ;;
+    *) die "no ready-made build for $os on $arch (releases cover Linux x86_64 and Apple silicon Macs).
+  Build it here instead: curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh -s -- --from-source" ;;
   esac
 }
 
