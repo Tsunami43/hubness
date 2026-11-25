@@ -56,6 +56,12 @@ export function JobStatusLine({ status }: { status: Status }) {
   );
 }
 
+/** pty size for a terminal in TerminalSheet: the sheet width in characters (xterm: ~7.9px each). */
+export function sheetTermSize(rows: number) {
+  const w = Math.min(window.innerWidth, 768) - 56;
+  return { cols: Math.max(40, Math.floor(w / 7.9)), rows };
+}
+
 /**
  * Sheet for a terminal task (install, login, clone): terminal + an
  * "open link" button for URL-based login.
