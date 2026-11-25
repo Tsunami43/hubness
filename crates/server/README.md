@@ -18,7 +18,7 @@ takes the folder in `HUBNESS_WEB_DIST` when that is set; otherwise the copy comp
 the binary with the `embed-web` feature (`build.rs` embeds `apps/web/dist`, or
 `HUBNESS_EMBED_WEB_DIST` at build time, and fails with instructions when it is missing);
 otherwise `apps/web/dist` relative to the current folder, when it exists. The feature is off
-by default so `cargo build` and `cargo test` need no web build; `install.sh full` turns it on.
+by default so `cargo build` and `cargo test` need no web build; release builds (and `install.sh --from-source`) turn it on.
 
 ## Remote access
 
@@ -30,6 +30,7 @@ To reach the hub from another machine:
 ```sh
 hubcli user add alice          # password from a hidden prompt (or stdin when not a TTY)
 HUBNESS_HOST=0.0.0.0 hubcli serve
+# or, for the service: hubcli server config host 0.0.0.0 && hubcli server restart
 ```
 
 The hub refuses a non-loopback `HUBNESS_HOST` while it has no accounts. Once an account

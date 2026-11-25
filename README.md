@@ -31,52 +31,86 @@ own machine or server and work with them from one browser UI — on a desktop or
 
 ## Requirements
 
-- Node.js 24 or newer
-- pnpm 10 (via `corepack enable`)
+- Linux (x86_64, aarch64) or macOS (Intel, Apple silicon); `hubcli server` needs systemd
 - git
-- At least one agent CLI: `claude`, `codex` (through `@zed-industries/codex-acp`),
-  `opencode` or `grok` — the Harness page can install them for you
+- At least one agent CLI: `claude`, `codex` (through `@zed-industries/codex-acp`, needs
+  Node.js), `opencode` or `grok` — the Harness page can install them for you
 - Optional: `bwrap` (bubblewrap) for the sandbox environment, Docker and systemd for the
   System page
+- For development: Node.js 24+, pnpm 10, Rust (stable)
 
 ## Install
 
-`install.sh` builds from this checkout and installs into `~/.cargo/bin`. There are two
-flavors:
-
-| Command | Installs | Needs |
-| --- | --- | --- |
-| `./install.sh full` | `hubcli` — the hub (server with the web app compiled in) — and `hubtui`, plus a systemd user service `hubness` | Rust, Node.js 24, pnpm (or `npx`) |
-| `./install.sh tui` | `hubtui` — only the terminal client, no server code | Rust |
-
 ```sh
-git clone <repo-url> hubness && cd hubness
-./install.sh full                 # hub on http://127.0.0.1:8787, started as a user service
-./install.sh full --port 9000     # another port; --host sets the address (loopback by default)
-./install.sh full --no-service    # no systemd unit: start `hubcli serve` yourself
-./install.sh tui                  # just the terminal client
-./install.sh full --dry-run       # show every step without changing anything
-./install.sh uninstall            # stop the service, remove the binaries (--purge: data too)
+curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh
 ```
 
-`full` keeps its settings in `~/.config/hubness/hub.env` (created once with
-`HUBNESS_HOST=127.0.0.1`, `HUBNESS_PORT=8787` and the data folder
-`~/.local/share/hubness`) and manages the hub with `systemctl --user status|restart hubness`
-and `journalctl --user -u hubness`. To upgrade, pull and run the same command again. On a
-server, `sudo loginctl enable-linger $USER` keeps the hub running after you log out.
+It downloads the latest release for your OS and CPU, checks its sha256 and puts two
+binaries into `~/.local/bin`:
 
-**Remote access.** Run the hub on a server with `./install.sh full` and only the client on
-your laptop with `./install.sh tui`. The simplest way to connect keeps the hub on loopback
-and forwards its port over SSH:
+- `hubcli` — the hub (server with the web app inside) and its management commands;
+- `hubtui` — the terminal UI, a client for a hub here or on another machine.
+
+Options go after `sh -s --`:
 
 ```sh
-ssh -N -L 8787:127.0.0.1:8787 you@server   # in one terminal
-hubtui                                    # in another (or: hubtui --url http://127.0.0.1:8787)
+curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --tui-only     # just hubtui
+curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --version 0.2.0
+curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --from-source  # cargo (+ Node.js for the web app)
+curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --uninstall    # data stays
 ```
 
-To listen on a network address instead, see
-[Remote access](crates/server/README.md#remote-access) for the authentication the hub
-requires, and keep it behind HTTPS or a VPN.
+`--dir DIR` (or `HUBNESS_INSTALL_DIR`) installs elsewhere. Run it again to upgrade, then
+`hubcli server restart`.
+
+## Usage
+
+**Run the hub** as a systemd user service:
+
+```sh
+hubcli server start          # http://127.0.0.1:8787, starts again at login
+hubcli user add alice        # an account: sign-in for the web app, the TUI and the API
+hubcli server status         # running? health, URL, data folder, accounts
+hubcli server logs -f        # its log
+```
+
+Open the URL in a browser, or run `hubtui`. On a server, `sudo loginctl enable-linger $USER`
+keeps the hub running after you log out and across reboots (`server start` reminds you).
+Without systemd (macOS, containers) run `hubcli serve` under your own process manager.
+
+**Settings** live in `~/.config/hubness/hub.env`; data (database, logs, keys) in
+`~/.local/share/hubness`:
+
+```sh
+hubcli server config                        # show host, port, data-dir
+hubcli server config port 9000              # then: hubcli server restart
+hubcli server start --data-dir ~/hubness/.data   # keep using an existing data folder
+```
+
+**The terminal UI.** The first `hubtui` asks for the hub's address — a domain or an IP,
+with `:port` when it isn't 8787 (a bare host tries `https://` first, then `http://…:8787`;
+Enter alone is this machine). It signs in if the hub has accounts and remembers the hub, so
+the next start opens it directly. `Space H` switches between saved hubs or adds one;
+`hubtui --url <address>` opens another one from the command line.
+
+**Remote use.** The hub listens on `127.0.0.1` by default. The simplest way in keeps it
+there and forwards the port over SSH:
+
+```sh
+ssh -N -L 8787:127.0.0.1:8787 you@server    # on your laptop, then: hubtui (address 127.0.0.1)
+```
+
+To listen on the network, create an account first and set the host — hubcli refuses a
+public address while there are no accounts:
+
+```sh
+hubcli user add alice
+hubcli server config host 0.0.0.0 && hubcli server restart
+```
+
+Plain HTTP is fine on a VPN (Tailscale, WireGuard); across the internet put the hub behind an
+HTTPS reverse proxy and connect with `hubtui --url hub.example.com`. See
+[Remote access](crates/server/README.md#remote-access).
 
 ## Quick start (development)
 
@@ -113,9 +147,9 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `HUBNESS_CLAUDE_BIN`, `HUBNESS_OPENCODE_BIN`, `HUBNESS_GROK_BIN` | binary name | Agent CLI paths |
 | `HUBNESS_CODEX_ACP` | pinned `npx` command | Codex ACP adapter command |
 
-> **Security.** hubness has no authentication yet and gives agents shell access to the
-> host. Keep it on `127.0.0.1`, or put it behind a VPN or an authenticating reverse proxy.
-> Never expose it directly to the internet.
+> **Security.** hubness gives agents shell access to the host. Keep it on `127.0.0.1`
+> unless it has accounts (`hubcli user add`; the TypeScript dev server has none), and put
+> it behind HTTPS or a VPN before it leaves your machine.
 
 ## Development
 
