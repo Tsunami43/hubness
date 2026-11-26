@@ -157,12 +157,12 @@ export function Sheet({
   if (!open) return null;
   return (
     // phone: a full-screen page (no half-screen popups); desktop: a centered dialog
-    <div className="fixed inset-0 z-50 flex justify-center bg-black/40 sm:items-center sm:p-6" onClick={onClose}>
+    <div className="inset-app z-50 flex justify-center bg-black/40 sm:items-center sm:p-6" onClick={onClose}>
       <div
         role="dialog"
         aria-label={title}
         onClick={(e) => e.stopPropagation()}
-        className={`pt-safe flex h-dvh w-full flex-col bg-surface sm:h-auto sm:max-h-[90dvh] sm:border sm:border-line sm:pt-0 sm:shadow-2xl sm:shadow-black/50 ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}
+        className={`pt-safe flex h-app w-full motion-safe:animate-slide-in-up flex-col bg-surface sm:motion-safe:animate-none sm:h-auto sm:max-h-[90dvh] sm:border sm:border-line sm:pt-0 sm:shadow-2xl sm:shadow-black/50 ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-line py-1.5 pr-1.5 pl-4">
           <h2 className="flex-1 font-semibold text-accent">{title}</h2>
@@ -172,7 +172,7 @@ export function Sheet({
           </IconButton>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:flex-initial">{children}</div>
-        {footer ? <div className="flex shrink-0 items-center gap-2 border-t border-line px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">{footer}</div> : null}
+        {footer ? <div className="flex shrink-0 items-center gap-2 border-t border-line px-4 pt-3 pb-[max(0.75rem,var(--safe-b))]">{footer}</div> : null}
       </div>
     </div>
   );

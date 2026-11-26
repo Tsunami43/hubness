@@ -90,7 +90,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (state === 'checking')
     return (
-      <div className="flex h-dvh items-center justify-center bg-bg text-muted">
+      <div className="flex h-app items-center justify-center bg-bg text-muted">
         <Spinner />
       </div>
     );
@@ -134,7 +134,7 @@ function SignInForm({ setup, onSkip }: { setup: boolean; onSkip: () => void }) {
 
   const ready = username.trim() && password && (!setup || repeat);
   return (
-    <div className="flex h-dvh items-center justify-center bg-bg px-4">
+    <div className="flex h-app items-center justify-center bg-bg px-4">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4 border border-line bg-surface p-5 shadow-2xl shadow-black/50">
         <div>
           <div className="text-base font-semibold">{setup ? t('auth.setupTitle') : t('auth.title')}</div>

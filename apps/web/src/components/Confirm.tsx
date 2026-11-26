@@ -77,7 +77,7 @@ export function ConfirmHost() {
   if (!current) return null;
   return (
     // a small centered dialog on every screen size: a yes/no question is not worth a full page
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => settle(null)}>
+    <div className="inset-app z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => settle(null)}>
       <div
         role="alertdialog"
         aria-modal="true"

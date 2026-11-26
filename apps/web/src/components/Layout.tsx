@@ -319,7 +319,7 @@ export function Layout() {
   return (
     <NavContext.Provider value={{ historyOpen, toggleHistory, openHistory }}>
       <LeaderOverlay />
-      <div className="flex h-dvh">
+      <div className="flex h-app">
         {/* Desktop: sidebar, either a narrow strip or expanded with history */}
         <nav
           className={`hidden shrink-0 flex-col border-r border-line bg-surface transition-[width] duration-150 lg:flex ${expanded ? 'w-60' : 'w-12'}`}
@@ -378,7 +378,7 @@ export function Layout() {
           </main>
           {/* Phone: bottom navigation */}
           {!full ? (
-            <nav className="pb-safe grid shrink-0 grid-cols-5 border-t border-line bg-surface lg:hidden">
+            <nav className="hide-on-kb pb-safe grid shrink-0 grid-cols-5 border-t border-line bg-surface lg:hidden">
               {NAV.map(({ to, label, icon: Icon }) => (
                 <NavLink
                   key={to}
@@ -411,11 +411,11 @@ export function Layout() {
 
         {/* Phone: sessions panel slides in from the right */}
         {drawer ? (
-          <div className="fixed inset-0 z-50 lg:hidden" onClick={() => setDrawer(false)}>
-            <div className="absolute inset-0 bg-black/50" />
+          <div className="inset-app z-50 lg:hidden" onClick={() => setDrawer(false)}>
+            <div className="absolute inset-0 motion-safe:animate-fade-in bg-black/50" />
             <aside
               onClick={(e) => e.stopPropagation()}
-              className="pb-safe absolute inset-y-0 right-0 flex w-[94vw] max-w-lg flex-col border-l border-line bg-surface"
+              className="pb-safe absolute inset-y-0 right-0 flex w-[94vw] motion-safe:animate-slide-in-right max-w-lg flex-col border-l border-line bg-surface"
             >
               {panelHeader(() => setDrawer(false), 'close')}
               <SessionsPanel onPick={() => setDrawer(false)} />
