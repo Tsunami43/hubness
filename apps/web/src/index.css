@@ -36,7 +36,28 @@
   --color-add-fg: #8ee6a8;
   --color-del: #ff5f6629;
   --color-del-fg: #f2a0a6;
+
+  /* phone drawers and full-screen sheets slide in like native panels */
+  --animate-slide-in-right: slide-in-right 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-slide-in-up: slide-in-up 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-fade-in: fade-in 180ms ease-out;
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes slide-in-up {
+    from {
+      transform: translateY(100%);
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
 }
+
 
 html,
 body,
@@ -46,6 +67,43 @@ body,
 
 html {
   font-size: 14px;
+  /* no font inflation in landscape, no double-tap zoom / tap delay */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  touch-action: manipulation;
+  /* home-indicator padding; 0 while the on-screen keyboard is open (lib/viewport.ts) */
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+html[data-kb] {
+  --safe-b: 0px;
+}
+
+/*
+ * Touch devices: the app is pinned to the visible area (lib/viewport.ts sets --app-top and
+ * --app-h from visualViewport), the document itself never scrolls or bounces, so the
+ * keyboard shrinks the screen instead of pushing it up.
+ */
+html[data-touch],
+html[data-touch] body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+html[data-touch] #root {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--app-top, 0px);
+  height: var(--app-h, 100dvh);
+  overflow: hidden;
+}
+/* the bottom navigation is not needed above the keyboard */
+html[data-kb] .hide-on-kb {
+  display: none;
+}
+/* native feel: no link previews / text selection on long-press of controls */
+html[data-touch] :is(button, a, [role='button'], [role='tab'], nav) {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 body {
@@ -89,7 +147,19 @@ button:disabled {
 
 /* utilities (not plain classes): explicit pb-*/pt-* on the same element still win */
 @utility pb-safe {
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--safe-b);
+}
+
+/* height of the visible app area: the screen above the on-screen keyboard on touch devices */
+@utility h-app {
+  height: var(--app-h, 100dvh);
+}
+/* a full-screen overlay over the visible area (follows the keyboard like #root) */
+@utility inset-app {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--app-top, 0px);
+  height: var(--app-h, 100dvh);
 }
 
 /* Accent as selection, like in opencode: solid accent fill, dark text */

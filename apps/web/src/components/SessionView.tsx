@@ -60,7 +60,7 @@ function Composer({
     const el = ref.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
+    el.style.height = `${Math.min(el.scrollHeight, Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4))}px`;
   }, [text]);
 
   useEffect(() => {
@@ -90,7 +90,7 @@ function Composer({
 
   // TUI (like opencode): a frame with ">", below it a status line: agent, mode, keys
   return (
-    <div className="shrink-0 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4">
+    <div className="shrink-0 px-2 pb-[max(0.5rem,var(--safe-b))] sm:px-4">
       <div className="mx-auto mb-2 max-w-3xl sm:mb-3">
         <div
           {...att.dropProps}
@@ -354,6 +354,18 @@ export function SessionView({
     const el = scrollRef.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [events, mobileTab]);
+
+  // the feed got shorter (on-screen keyboard, a taller input box): keep the last message in view
+  const loaded = Boolean(session);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loaded, mobileTab]);
 
   // a new panel from the agent: show it right away on phone
   useEffect(() => {

@@ -153,7 +153,7 @@ export function HomePage() {
       </div>
 
       {/* Task field */}
-      <div className="px-3 pb-[max(1rem,env(safe-area-inset-bottom))] lg:px-6 lg:pt-6 lg:pb-16">
+      <div className="px-3 pb-4 lg:px-6 lg:pt-6 lg:pb-16">
         <div className="mx-auto max-w-3xl">
           <div
             {...att.dropProps}
