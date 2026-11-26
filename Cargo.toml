@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -16,10 +16,10 @@ rust-version = "1.91"
 # is committed and builds/installs use --locked.
 [workspace.dependencies]
 # workspace crates
-hubness-client = { version = "=0.2.2", path = "crates/client" }
-hubness-core = { version = "=0.2.2", path = "crates/core" }
-hubness-server = { version = "=0.2.2", path = "crates/server" }
-hubness-tui = { version = "=0.2.2", path = "crates/tui" }
+hubness-client = { version = "=0.2.3", path = "crates/client" }
+hubness-core = { version = "=0.2.3", path = "crates/core" }
+hubness-server = { version = "=0.2.3", path = "crates/server" }
+hubness-tui = { version = "=0.2.3", path = "crates/tui" }
 
 # shared
 anyhow = "=1.0.105"
