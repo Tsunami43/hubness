@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-26
+
+### Fixed
+
+- Mobile web app feels native: the on-screen keyboard shrinks the screen instead of
+  scrolling the page, the bottom navigation hides above it, fields no longer zoom the page
+  in on focus (pinch and double-tap zoom are off too), the page doesn't bounce, the chat
+  keeps its last message in view, and the sessions drawer and full-screen sheets slide in.
+
 ### Changed
 
 - Releases ship two builds: Linux x86_64 and Apple silicon Macs; other machines use
