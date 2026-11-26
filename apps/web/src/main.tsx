@@ -9,6 +9,7 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router'
 import './index.css';
 import './theme';
 import './lib/editorPrefs';
+import './lib/viewport';
 import { Layout } from './components/Layout';
 import { ChatPage } from './pages/ChatsPage';
 import { HomePage } from './pages/HomePage';
