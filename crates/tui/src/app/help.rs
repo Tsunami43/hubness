@@ -112,6 +112,14 @@ impl Help {
         self.selected = (self.selected as isize + by).clamp(0, n as isize - 1) as usize;
     }
 
+    /// Pasted text: into the filter while it is typed, nowhere otherwise.
+    pub fn on_paste(&mut self, text: &str) {
+        if self.typing {
+            self.filter.push_str(text);
+            self.selected = 0;
+        }
+    }
+
     pub fn on_key(&mut self, k: KeyEvent) -> Outcome {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         let half = (self.page / 2).max(1) as isize;
@@ -331,6 +339,62 @@ mod tests {
         press(&mut h, KeyCode::Esc);
         assert!(!h.typing && h.filter.is_empty());
         assert_eq!(press(&mut h, KeyCode::Esc), Outcome::Close);
+    }
+
+    #[test]
+    fn a_filter_hides_empty_sections_and_clamps_the_selection() {
+        let mut h = sample();
+        press(&mut h, KeyCode::Char('G'));
+        let last = h.selected;
+        assert!(last > 3);
+        // typing a filter starts from the first match again
+        press(&mut h, KeyCode::Char('/'));
+        for c in "refresh".chars() {
+            press(&mut h, KeyCode::Char(c));
+        }
+        assert_eq!(h.selected, 0);
+        assert_eq!(h.items().len(), 1);
+        let shown = visible(&h.rows, &h.filter);
+        assert_eq!(shown.iter().filter(|r| matches!(r, Row::Header(_))).count(), 1, "sections without a match are not listed");
+        // moving past the end stays on the last match
+        press(&mut h, KeyCode::Down);
+        press(&mut h, KeyCode::Down);
+        assert_eq!(h.selected, 0);
+        // nothing matches: nothing selected, Enter does nothing
+        press(&mut h, KeyCode::Char('z'));
+        press(&mut h, KeyCode::Char('z'));
+        assert!(h.items().is_empty());
+        press(&mut h, KeyCode::Down);
+        assert_eq!(h.selected, 0);
+        assert_eq!(press(&mut h, KeyCode::Enter), Outcome::Stay, "Enter keeps the filter");
+        assert!(!h.typing);
+        assert_eq!(press(&mut h, KeyCode::Enter), Outcome::Stay, "no item to run");
+        // a blank filter is no filter
+        assert_eq!(visible(&h.rows, "  "), h.rows);
+    }
+
+    #[test]
+    fn enter_runs_screen_actions_only() {
+        let mut h = sample();
+        // the first app key (after the two actions): Enter does not "run" a motion
+        press(&mut h, KeyCode::Char('j'));
+        press(&mut h, KeyCode::Char('j'));
+        assert!(matches!(h.items().get(h.selected), Some(Row::Item { action: false, .. })));
+        assert_eq!(press(&mut h, KeyCode::Enter), Outcome::Stay);
+        // a letter that is an app key, not an action of this screen
+        assert_eq!(press(&mut h, KeyCode::Char('z')), Outcome::Stay);
+        assert_eq!(press(&mut h, KeyCode::Char('?')), Outcome::Close);
+    }
+
+    #[test]
+    fn paste_goes_into_the_filter_only_while_it_is_typed() {
+        let mut h = sample();
+        h.on_paste("refresh");
+        assert!(h.filter.is_empty(), "not typing: a paste is not a row of key presses");
+        press(&mut h, KeyCode::Char('/'));
+        h.on_paste("refresh");
+        assert_eq!(h.filter, "refresh");
+        assert_eq!(h.items().len(), 1);
     }
 
     #[test]

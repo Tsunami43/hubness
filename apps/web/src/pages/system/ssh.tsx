@@ -1,19 +1,13 @@
 import { useState } from 'react';
-import { Check, Copy, KeyRound, Pencil, Plug, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Check, Copy, KeyRound, Pencil, Plug, Plus, ShieldCheck, Trash2, X } from 'lucide-react';
 import type { SshConnection } from '@hubness/shared';
 import { api } from '../../lib/api';
 import { useApi } from '../../lib/query';
 import { Button, Empty, ErrorLine, Field, IconButton, inputCls, Sheet, Spinner } from '../../components/ui';
 import { t } from '../../i18n';
 import { Header } from './parts';
-
-/** The colour of an environment label: prod stands out, dev stays quiet. */
-export function envCls(env: string) {
-  const e = env.toLowerCase();
-  if (/prod|live/.test(e)) return 'bg-danger/15 text-danger';
-  if (/stag|test|qa|pre/.test(e)) return 'bg-warn/15 text-warn';
-  return 'bg-sunken text-muted';
-}
+import { copyText } from '../../lib/clipboard';
+import { envCls } from '../../lib/sshEnv';
 
 export function EnvBadge({ env }: { env: string }) {
   if (!env) return null;
@@ -21,19 +15,19 @@ export function EnvBadge({ env }: { env: string }) {
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
-  const [done, setDone] = useState(false);
+  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
   return (
     <Button
       size="sm"
       onClick={() =>
-        void navigator.clipboard?.writeText(text).then(() => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1500);
+        void copyText(text).then((ok) => {
+          setState(ok ? 'done' : 'failed');
+          setTimeout(() => setState('idle'), ok ? 1500 : 4000);
         })
       }
     >
-      {done ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
-      {label}
+      {state === 'done' ? <Check className="size-3.5 text-ok" /> : state === 'failed' ? <X className="size-3.5 text-danger" /> : <Copy className="size-3.5" />}
+      {state === 'failed' ? t('common.copyFailed') : label}
     </Button>
   );
 }

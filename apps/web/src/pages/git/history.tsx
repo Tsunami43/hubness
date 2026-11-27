@@ -1,3 +1,4 @@
+import { copyText } from '../../lib/clipboard';
 import { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import type { GitCommit, GitStash } from '@hubness/shared';
@@ -51,9 +52,11 @@ export function CommitDetails({ ctx, c }: { ctx: Ctx; c: GitCommit }) {
             className="shrink-0 hover:text-fg"
             title={t('git.copyHash')}
             onClick={() => {
-              void navigator.clipboard?.writeText(c.hash);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1200);
+              void copyText(c.hash).then((ok) => {
+                if (!ok) return;
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1200);
+              });
             }}
           >
             {copied ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}

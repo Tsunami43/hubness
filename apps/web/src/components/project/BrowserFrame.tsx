@@ -23,6 +23,9 @@ import type { PreviewLog, Session } from '@hubness/shared';
 import { api } from '../../lib/api';
 import { setAskDraft } from '../../lib/askDraft';
 import { qrSvgPath } from '../../lib/qr';
+import { emptyLogs, isError, markSeen, mergeLogs, unseenErrors, type LogState } from '../../lib/previewLogs';
+import { logsDraft, pickDraft } from '../../lib/previewDrafts';
+import { parseFrameMessage, typedPath } from '../../lib/previewMessages';
 import { t } from '../../i18n';
 import { Button, ErrorLine, IconButton, Sheet } from '../ui';
 import { Select } from '../Select';
@@ -31,8 +34,8 @@ import { useLocalStorage } from '../../lib/hooks';
 type Device = 'fill' | 'phone' | 'tablet' | 'laptop';
 const SIZES: Record<Exclude<Device, 'fill'>, [number, number]> = { phone: [390, 844], tablet: [820, 1180], laptop: [1366, 768] };
 
-/** What the preview helper (packages/shared/assets/preview-inject.js) posts to us. */
-type Pick = { selector: string; text: string; html: string; rect: { width: number; height: number }; viewport: { width: number; height: number }; path: string };
+/** A device frame is never drawn smaller than this (a tiny or hidden panel would flip or vanish it). */
+const MIN_SCALE = 0.05;
 
 const LOOPBACK = ['localhost', '127.0.0.1', '[::1]', '::1'];
 
@@ -41,7 +44,8 @@ const LOOPBACK = ['localhost', '127.0.0.1', '[::1]', '::1'];
  * console with what the page reported (errors, failed requests — also from the agent's own
  * browser), "pick an element" and "send to agent", a QR code for a real phone, full screen.
  * Talks to the page through the helper the preview proxy injects (another origin: only
- * postMessage gets through).
+ * postMessage gets through). One instance per preview port: the caller keys it by the port, so
+ * another target starts from a clean state.
  */
 export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { projectId: string; previewPort: number; appPort: number; toolbar?: ReactNode }) {
   const navigate = useNavigate();
@@ -60,54 +64,60 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
   const [full, setFull] = useState(false);
   const [picking, setPicking] = useState(false);
   const [helper, setHelper] = useState(false);
-  const [logs, setLogs] = useState<PreviewLog[]>([]);
+  // the console: the ref is what the poll reads (its cursor must follow a Clear at once)
+  const [log, setLog] = useState<LogState>(emptyLogs);
+  const logRef = useRef(log);
+  const updateLog = (next: LogState) => {
+    logRef.current = next;
+    setLog(next);
+  };
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [seenErrors, setSeenErrors] = useState(0);
   const [qr, setQr] = useState(false);
   const [send, setSend] = useState<string | null>(null);
 
-  // a new target: start over
-  useEffect(() => {
-    setSrc('/');
-    setPath('/');
-    setDraft('/');
-    setLogs([]);
-    setSeenErrors(0);
-    setHelper(false);
-  }, [previewPort]);
-
-  // the page's messages (only from our frame)
+  // the page's messages: only from our frame and its origin, each checked (lib/previewMessages)
+  const pickingRef = useRef(picking);
+  pickingRef.current = picking;
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
-      const m = e.data;
-      if (!m || m.hubness !== 1 || e.source !== frame.current?.contentWindow) return;
-      if (m.type === 'ready') setHelper(true);
-      else if (m.type === 'location') {
+      const m = parseFrameMessage(e.data, { fromFrame: e.source === frame.current?.contentWindow, origin: e.origin, expectedOrigin: origin, picking: pickingRef.current });
+      if (!m) return;
+      if (m.type === 'ready') {
+        // a new document: its picker is off, whatever the old one was doing
+        setHelper(true);
+        setPicking(false);
+      } else if (m.type === 'location') {
         setPath(m.path);
         setDraft(m.path);
       } else if (m.type === 'pick') {
         setPicking(false);
-        setSend(pickDraft(m as Pick, appOrigin));
-      } else if (m.type === 'pick-cancel') setPicking(false);
+        const p = m.element;
+        setSend(pickDraft(p, t('preview.pickIntro', { url: appOrigin + p.path, width: p.viewport.width, height: p.viewport.height }), t('preview.untrusted')));
+      } else setPicking(false);
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [appOrigin]);
+  }, [origin, appOrigin]);
 
   // what the page reported, polled while the frame is shown
   useEffect(() => {
-    let since = 0;
     let stop = false;
-    const tick = () =>
-      api.previewLogs(projectId, previewPort, since).then(
-        (r) => {
-          if (stop || !r.logs.length) return;
-          since = r.logs[r.logs.length - 1]!.seq;
-          setLogs((cur) => [...cur, ...r.logs].slice(-500));
-        },
-        () => {},
-      );
-    void tick();
+    let busy = false;
+    const tick = () => {
+      // one request at a time: a slow answer must not be asked for twice
+      if (busy) return;
+      busy = true;
+      api
+        .previewLogs(projectId, previewPort, logRef.current.since)
+        .then(
+          (r) => {
+            if (!stop) updateLog(mergeLogs(logRef.current, r.logs));
+          },
+          () => {},
+        )
+        .finally(() => (busy = false));
+    };
+    tick();
     const id = setInterval(tick, 1500);
     return () => {
       stop = true;
@@ -120,7 +130,7 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
   useEffect(() => {
     const el = area.current;
     if (!el || !size) return setScale(1);
-    const fit = () => setScale(Math.min(1, (el.clientWidth - 16) / size[0]!, (el.clientHeight - 16) / size[1]!));
+    const fit = () => setScale(Math.max(MIN_SCALE, Math.min(1, (el.clientWidth - 16) / size[0]!, (el.clientHeight - 16) / size[1]!)));
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
@@ -137,27 +147,30 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
 
   const post = (type: string) => frame.current?.contentWindow?.postMessage({ hubness: 1, type }, origin);
   // reload where the page is now (it may have navigated inside the frame)
-  const reload = () => {
-    setSrc(path);
+  const load = (next: string) => {
+    setSrc(next);
+    // the new document starts without a helper and without a picker
+    setHelper(false);
+    setPicking(false);
     setNonce((n) => n + 1);
   };
+  const reload = () => load(path);
   const go = (p: string) => {
-    const next = p.startsWith('/') ? p : `/${p}`;
-    setSrc(next);
+    const next = typedPath(p);
     setPath(next);
     setDraft(next);
-    setNonce((n) => n + 1);
+    load(next);
   };
   const togglePick = () => {
     post(picking ? 'pick-cancel' : 'pick');
     setPicking(!picking);
   };
 
-  const errors = logs.filter((l) => l.level === 'error' || l.level === 'network').length;
-  const unseen = consoleOpen ? 0 : errors - seenErrors;
-  const openConsole = () => {
-    setConsoleOpen(!consoleOpen);
-    setSeenErrors(errors);
+  const unseen = unseenErrors(log, consoleOpen);
+  // opening and closing are both "looked at": what was on screen is not new afterwards
+  const showConsole = (open: boolean) => {
+    setConsoleOpen(open);
+    updateLog(markSeen(logRef.current));
   };
   const remote = !LOOPBACK.includes(window.location.hostname);
 
@@ -205,7 +218,7 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
         <IconButton label={t('preview.pick')} onClick={togglePick} disabled={!helper} className={`size-7 ${picking ? 'bg-accent text-accent-fg hover:bg-accent hover:text-accent-fg' : ''}`}>
           <MousePointerClick className="size-3.5" />
         </IconButton>
-        <IconButton label={t('preview.console')} onClick={openConsole} className={`relative size-7 ${consoleOpen ? 'bg-sunken text-accent' : ''}`}>
+        <IconButton label={t('preview.console')} onClick={() => showConsole(!consoleOpen)} className={`relative size-7 ${consoleOpen ? 'bg-sunken text-accent' : ''}`}>
           <SquareTerminal className="size-3.5" />
           {unseen > 0 ? <span className="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-danger px-1 text-[10px] leading-4 font-semibold text-white">{unseen > 99 ? '99+' : unseen}</span> : null}
         </IconButton>
@@ -226,9 +239,11 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
         <div style={size ? { width: size[0]! * scale, height: size[1]! * scale } : undefined} className={size ? 'shrink-0' : 'h-full w-full'}>
           <iframe
             ref={frame}
-            key={`${previewPort}#${nonce}`}
+            key={nonce}
             src={origin + src}
             title={t('preview.title')}
+            // the helper in the page talks only to a parent that greets it from the hub
+            onLoad={() => post('hello')}
             style={size ? { width: size[0], height: size[1], transform: `scale(${scale})`, transformOrigin: '0 0' } : undefined}
             className={size ? 'rounded-md border border-line bg-white shadow-lg' : 'h-full w-full bg-white'}
           />
@@ -238,14 +253,14 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
 
       {consoleOpen ? (
         <ConsoleDrawer
-          logs={logs}
-          onClose={() => setConsoleOpen(false)}
+          logs={log.logs}
+          onClose={() => showConsole(false)}
           onClear={() => {
-            setLogs([]);
-            setSeenErrors(0);
+            // from the start again: the server answers with what is left (nothing), then the new ones
+            updateLog(emptyLogs());
             void api.clearPreviewLogs(projectId, previewPort).catch(() => {});
           }}
-          onAsk={() => setSend(logsDraft(logs, appOrigin + path))}
+          onAsk={() => setSend(logsDraft(log.logs, t('preview.logsIntro', { url: appOrigin + path }), t('preview.untrusted')))}
         />
       ) : null}
 
@@ -269,9 +284,13 @@ const LEVEL: Record<PreviewLog['level'], string> = { error: 'text-danger', netwo
 
 function ConsoleDrawer({ logs, onClose, onClear, onAsk }: { logs: PreviewLog[]; onClose: () => void; onClear: () => void; onAsk: () => void }) {
   const [onlyErrors, setOnlyErrors] = useState(false);
-  const list = onlyErrors ? logs.filter((l) => l.level === 'error' || l.level === 'network') : logs;
+  const list = onlyErrors ? logs.filter(isError) : logs;
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [list.length]);
+  // braces matter: newer browsers return a Promise from scrollIntoView, and an effect that
+  // returns anything but a function breaks React on the next update
+  useEffect(() => {
+    void end.current?.scrollIntoView({ block: 'end' });
+  }, [list.length]);
   return (
     <div className="flex h-[38%] min-h-32 shrink-0 flex-col border-t border-line bg-surface">
       <div className="flex shrink-0 items-center gap-1.5 border-b border-line/60 px-2 py-1">
@@ -324,7 +343,9 @@ function QrSheet({ url, remote, onClose }: { url: string; remote: boolean; onClo
           <svg viewBox={`0 0 ${q.size} ${q.size}`} className="size-64 rounded-lg bg-white" shapeRendering="crispEdges" role="img" aria-label={url}>
             <path d={q.d} fill="#000" />
           </svg>
-        ) : null}
+        ) : (
+          <p className="text-sm text-warn">{t('preview.qrTooLong')}</p>
+        )}
         <code className="font-mono text-xs break-all">{url}</code>
         <p className="text-xs text-muted">{remote ? t('preview.qrHint') : t('preview.qrLocal')}</p>
       </div>
@@ -332,35 +353,22 @@ function QrSheet({ url, remote, onClose }: { url: string; remote: boolean; onClo
   );
 }
 
-/** A message for the agent about a picked element. */
-function pickDraft(p: Pick, origin: string): string {
-  const lines = [t('preview.pickIntro', { url: origin + p.path, width: p.viewport.width, height: p.viewport.height }), `- selector: \`${p.selector}\``];
-  if (p.text) lines.push(`- text: “${p.text.replace(/\s+/g, ' ').slice(0, 200)}”`);
-  lines.push(`- size: ${p.rect.width}×${p.rect.height}`, '```html', p.html, '```');
-  return lines.join('\n') + '\n\n';
-}
-
-function logsDraft(logs: PreviewLog[], url: string): string {
-  const list = logs.filter((l) => l.level !== 'log').slice(-60);
-  const body = (list.length ? list : logs.slice(-60)).map((l) => `[${l.level}] ${l.text}`).join('\n').slice(-15_000);
-  return `${t('preview.logsIntro', { url })}\n\`\`\`\n${body}\n\`\`\`\n\n`;
-}
-
 /** The draft, and where it goes: a session of this project, or a new chat. */
 function SendToAgent({ projectId, initial, onClose, onNewChat }: { projectId: string; initial: string; onClose: () => void; onNewChat: (text: string) => void }) {
   const navigate = useNavigate();
   const [text, setText] = useState(initial);
   const [sessions, setSessions] = useState<Session[] | null>(null);
-  const [target, setTarget] = useState('new');
+  // null until the user picks (or the sessions arrive): then the newest session
+  const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    api.sessions({ projectId }).then((list) => {
-      const recent = [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 15);
-      setSessions(recent);
-      if (recent[0]) setTarget(recent[0].id);
-    }, () => setSessions([]));
+    let stale = false;
+    api.sessions({ projectId }).then(
+      (list) => !stale && setSessions([...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 15)),
+      () => !stale && setSessions([]),
+    );
     requestAnimationFrame(() => {
       const el = ref.current;
       if (!el) return;
@@ -368,7 +376,11 @@ function SendToAgent({ projectId, initial, onClose, onNewChat }: { projectId: st
       el.setSelectionRange(el.value.length, el.value.length);
       el.scrollTop = el.scrollHeight;
     });
+    return () => {
+      stale = true;
+    };
   }, [projectId]);
+  const target = picked ?? sessions?.[0]?.id ?? 'new';
 
   const submit = async () => {
     if (target === 'new') return onNewChat(text);
@@ -395,7 +407,7 @@ function SendToAgent({ projectId, initial, onClose, onNewChat }: { projectId: st
           <Select
             size="sm"
             value={target}
-            onChange={setTarget}
+            onChange={setPicked}
             className="max-w-64 min-w-0 flex-1"
             options={[{ value: 'new', label: t('preview.newChat') }, ...(sessions ?? []).map((s) => ({ value: s.id, label: s.title || s.id.slice(0, 8) }))]}
           />

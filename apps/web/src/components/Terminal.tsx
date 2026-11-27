@@ -1,3 +1,4 @@
+import { copyText } from '../lib/clipboard';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Check, Copy, ExternalLink, Square } from 'lucide-react';
 import type { JobInfo } from '@hubness/shared';
@@ -104,7 +105,8 @@ export function TerminalSheet({ job, onClose, onDone }: { job: JobInfo | null; o
             <button
               type="button"
               onClick={() =>
-                void navigator.clipboard?.writeText(link).then(() => {
+                void copyText(link).then((ok) => {
+                  if (!ok) return;
                   setCopied(true);
                   setTimeout(() => setCopied(false), 1500);
                 })

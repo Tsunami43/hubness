@@ -19,6 +19,11 @@ use tokio::sync::mpsc;
 
 pub use reqwest::Method;
 
+/// The longest a request (not a stream) may take, answer included: a hub that stops
+/// answering mid-request must not leave a screen "loading…" for good. Generous, as some
+/// requests work for a while on the hub (a git push, an SSH test).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+
 #[derive(Clone)]
 pub struct Client {
     base: String,
@@ -97,12 +102,12 @@ impl Client {
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        self.decode(self.request(reqwest::Method::GET, path).send().await?).await
+        self.decode(self.request(reqwest::Method::GET, path).timeout(REQUEST_TIMEOUT).send().await?).await
     }
 
     /// A mutating request: always JSON, which also satisfies the hub's CSRF guard.
     pub async fn send<T: DeserializeOwned, B: Serialize>(&self, method: reqwest::Method, path: &str, body: &B) -> anyhow::Result<T> {
-        self.decode(self.request(method, path).json(body).send().await?).await
+        self.decode(self.request(method, path).timeout(REQUEST_TIMEOUT).json(body).send().await?).await
     }
 
     pub async fn health(&self) -> anyhow::Result<()> {
@@ -111,13 +116,14 @@ impl Client {
 
     /// Does the hub ask for a sign-in, and who is signed in with the current token?
     pub async fn auth_status(&self) -> anyhow::Result<AuthStatus> {
-        Self::decode_plain(self.request(reqwest::Method::GET, "/auth/status").send().await?).await
+        Self::decode_plain(self.request(reqwest::Method::GET, "/auth/status").timeout(REQUEST_TIMEOUT).send().await?).await
     }
 
     /// Sign in; on success the client uses the new session token (also returned).
     pub async fn login(&self, username: &str, password: &str) -> anyhow::Result<LoginResponse> {
         let body = json!({ "username": username, "password": password });
-        let res: LoginResponse = Self::decode_plain(self.http.post(self.url("/auth/login")).json(&body).send().await?).await?;
+        let res: LoginResponse =
+            Self::decode_plain(self.http.post(self.url("/auth/login")).timeout(REQUEST_TIMEOUT).json(&body).send().await?).await?;
         self.set_token(Some(res.token.clone()));
         Ok(res)
     }
@@ -267,7 +273,9 @@ impl Client {
             while let Some(chunk) = body.next().await {
                 let Ok(chunk) = chunk else { break };
                 for msg in events.push(&chunk) {
-                    if tx.send(serde_json::from_str::<T>(&msg).map_err(Into::into)).is_err() {
+                    // a message this client can't read (a newer hub) is skipped: the stream goes on
+                    let Ok(msg) = serde_json::from_str::<T>(&msg) else { continue };
+                    if tx.send(Ok(msg)).is_err() {
                         return;
                     }
                 }
@@ -299,15 +307,30 @@ impl SseBuffer {
     fn push(&mut self, chunk: &[u8]) -> Vec<String> {
         self.buf.extend_from_slice(chunk);
         let mut out = vec![];
-        while let Some(end) = self.buf[self.from..].windows(2).position(|w| w == b"\n\n").map(|i| self.from + i) {
-            let event: Vec<u8> = self.buf.drain(..end + 2).collect();
+        while let Some((end, sep)) = event_end(&self.buf, self.from) {
+            let event: Vec<u8> = self.buf.drain(..end + sep).collect();
             self.from = 0;
             out.extend(parse_event(&String::from_utf8_lossy(&event)));
         }
-        // the last byte may be the first half of the separator
-        self.from = self.buf.len().saturating_sub(1);
+        // the last bytes may be the start of a separator
+        self.from = self.buf.len().saturating_sub(3);
         out
     }
+}
+
+/// Where the first event of `buf` ends, looking from `from`: (index of the blank line's
+/// separator, its length). Events end with a blank line: `\n\n` or `\r\n\r\n`.
+fn event_end(buf: &[u8], from: usize) -> Option<(usize, usize)> {
+    (from..buf.len()).find_map(|i| {
+        let rest = &buf[i..];
+        if rest.starts_with(b"\r\n\r\n") {
+            Some((i, 4))
+        } else if rest.starts_with(b"\n\n") {
+            Some((i, 2))
+        } else {
+            None
+        }
+    })
 }
 
 /// The `data:` payload of one SSE event; `None` for keep-alives and named events (ping).
@@ -347,6 +370,25 @@ mod tests {
         assert_eq!(parse_event("event: ping\ndata: \n\n"), None);
         assert_eq!(parse_event(": comment\n\n"), None);
         assert_eq!(parse_event("data: a\ndata: b\n\n").as_deref(), Some("a\nb"));
+    }
+
+    #[test]
+    fn sse_crlf_and_data_without_a_space() {
+        assert_eq!(parse_event("data:{\"a\":1}\r\n\r\n").as_deref(), Some("{\"a\":1}"), "no space after the colon");
+        assert_eq!(parse_event("data:  two spaces\n\n").as_deref(), Some(" two spaces"), "only one space belongs to the field");
+        let stream = b"data: 1\r\n\r\ndata:2\n\ndata: 3\r\n\r\n";
+        for at in 0..stream.len() {
+            let mut b = SseBuffer::default();
+            let mut got = b.push(&stream[..at]);
+            got.extend(b.push(&stream[at..]));
+            assert_eq!(got, ["1", "2", "3"], "split at {at}");
+        }
+        // byte by byte: a separator is never missed across pushes
+        let mut b = SseBuffer::default();
+        let got: Vec<String> = stream.iter().flat_map(|byte| b.push(&[*byte])).collect();
+        assert_eq!(got, ["1", "2", "3"]);
+        let mut b = SseBuffer::default();
+        assert!(b.push(b"data: unfinished\n").is_empty(), "an event waits for its blank line");
     }
 
     #[test]

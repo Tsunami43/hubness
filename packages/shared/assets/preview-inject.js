@@ -34,6 +34,8 @@
     timer = null;
     if (!queue.length) return;
     var body = JSON.stringify(queue.splice(0, 50));
+    // the hub takes 50 entries a request: the rest goes with the next one
+    if (queue.length) timer = setTimeout(flush, 300);
     try {
       if (navigator.sendBeacon && navigator.sendBeacon(ENDPOINT, new Blob([body], { type: 'text/plain' }))) return;
     } catch (e) {}
@@ -47,15 +49,47 @@
     var entry = { level: level, text: String(text).slice(0, 4000), url: location.href, ts: new Date().toISOString() };
     if (extra) for (var k in extra) entry[k] = extra[k];
     queue.push(entry);
-    if (inFrame) post({ type: 'log', entry: entry });
     if (!timer) timer = setTimeout(flush, 300);
   }
 
-  function post(msg) {
+  // ---- the panel around the page ----
+  // Only a hubness panel on this very host is talked to (the preview is another port of the
+  // hub's host): a foreign page that frames the app learns nothing and commands nothing.
+  var panel = null; // the panel's origin once known
+  var waiting = []; // messages for the panel until then
+
+  function trusted(origin) {
     try {
-      msg.hubness = 1;
-      window.parent.postMessage(msg, '*');
+      return new URL(origin).hostname === location.hostname;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function meet(origin) {
+    if (panel || !trusted(origin)) return;
+    panel = origin;
+    var list = waiting;
+    waiting = [];
+    for (var i = 0; i < list.length; i++) post(list[i]);
+  }
+
+  function post(msg) {
+    if (!inFrame) return;
+    msg.hubness = 1;
+    if (!panel) {
+      if (waiting.length < 50) waiting.push(msg);
+      return;
+    }
+    try {
+      window.parent.postMessage(msg, panel);
     } catch (e) {}
+  }
+
+  if (inFrame) {
+    // Chromium and Safari name the frame's ancestors; elsewhere the panel says hello first
+    var ancestors = location.ancestorOrigins;
+    if (ancestors && ancestors.length) meet(ancestors[0]);
   }
 
   // ---- console and errors ----
@@ -83,7 +117,7 @@
   var origFetch = window.fetch ? window.fetch.bind(window) : null;
   if (origFetch)
     window.fetch = function (input, init) {
-      var url = typeof input === 'string' ? input : input && input.url;
+      var url = typeof input === 'string' ? input : input && (input.url || input.href || String(input));
       var method = (init && init.method) || (input && input.method) || 'GET';
       return origFetch(input, init).then(
         function (r) {
@@ -91,7 +125,8 @@
           return r;
         },
         function (err) {
-          report('network', method + ' ' + url + ' failed: ' + str(err));
+          // a request the app cancelled itself is not a failure
+          if (!err || err.name !== 'AbortError') report('network', method + ' ' + url + ' failed: ' + str(err));
           throw err;
         },
       );
@@ -104,9 +139,13 @@
   };
   XMLHttpRequest.prototype.send = function () {
     var x = this;
+    var aborted = false;
+    x.addEventListener('abort', function () {
+      aborted = true;
+    });
     x.addEventListener('loadend', function () {
       if (x.status >= 400) report('network', x.__hub + ' → ' + x.status);
-      else if (x.status === 0) report('network', x.__hub + ' failed');
+      else if (x.status === 0 && !aborted) report('network', x.__hub + ' failed');
     });
     return XS.apply(this, arguments);
   };
@@ -146,9 +185,9 @@
         parts.unshift('#' + el.id);
         break;
       }
-      var test = el.getAttribute('data-testid') || el.getAttribute('data-test');
-      if (test) {
-        parts.unshift('[data-testid="' + test + '"]');
+      var attr = el.hasAttribute('data-testid') ? 'data-testid' : el.hasAttribute('data-test') ? 'data-test' : '';
+      if (attr && /^[\w .:/-]+$/.test(el.getAttribute(attr))) {
+        parts.unshift('[' + attr + '="' + el.getAttribute(attr) + '"]');
         break;
       }
       var part = el.tagName.toLowerCase();
@@ -209,6 +248,14 @@
       path: location.pathname + location.search + location.hash,
     });
   }, true);
+  // while picking, the app must not react to the press that precedes the click
+  ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'touchstart', 'touchend'].forEach(function (name) {
+    document.addEventListener(name, function (e) {
+      if (!picking) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+  });
   document.addEventListener('keydown', function (e) {
     if (picking && e.key === 'Escape') {
       stopPicking();
@@ -218,8 +265,10 @@
 
   window.addEventListener('message', function (e) {
     var m = e.data;
-    if (!m || m.hubness !== 1 || e.source !== window.parent) return;
-    if (m.type === 'back') history.back();
+    if (!m || m.hubness !== 1 || e.source !== window.parent || !trusted(e.origin)) return;
+    meet(e.origin);
+    if (m.type === 'hello') post({ type: 'ready' });
+    else if (m.type === 'back') history.back();
     else if (m.type === 'forward') history.forward();
     else if (m.type === 'reload') location.reload();
     else if (m.type === 'pick') {

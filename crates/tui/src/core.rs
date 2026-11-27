@@ -396,3 +396,22 @@ impl Ctx {
         }
     }
 }
+
+/// A context for unit tests: no hub behind it (requests fail in the background) and nobody
+/// reading the events.
+#[cfg(test)]
+pub(crate) fn test_ctx() -> Ctx {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    Ctx {
+        client: Client::new("http://127.0.0.1:1", None).expect("a client"),
+        tx,
+        screen: 1,
+        requests: vec![],
+        streams: HashMap::new(),
+        status: None,
+        prefix: String::new(),
+        hits: Default::default(),
+        draw_prefix: Default::default(),
+        shared: Shared::default(),
+    }
+}

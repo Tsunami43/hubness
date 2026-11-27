@@ -1,4 +1,4 @@
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import { Check, ChevronLeft, Loader2, PanelRight, X } from 'lucide-react';
 import type { SessionStatus } from '@hubness/shared';
@@ -149,6 +149,7 @@ export function Sheet({
   /** Wider on desktop (terminal). */
   wide?: boolean;
 }) {
+  const downOnBackdrop = useRef(false);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -158,11 +159,18 @@ export function Sheet({
   if (!open) return null;
   return (
     // phone: a full-screen page (no half-screen popups); desktop: a centered dialog
-    <div className="inset-app z-50 flex justify-center bg-black/40 sm:items-center sm:p-6" onClick={onClose}>
+    <div
+      className="inset-app z-50 flex justify-center bg-black/40 sm:items-center sm:p-6"
+      // a click on the backdrop closes — not a drag that began inside (selecting text and letting go outside)
+      onMouseDown={(e) => (downOnBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && downOnBackdrop.current) onClose();
+        downOnBackdrop.current = false;
+      }}
+    >
       <div
         role="dialog"
         aria-label={title}
-        onClick={(e) => e.stopPropagation()}
         className={`ui-sheet pt-safe flex h-app w-full motion-safe:animate-slide-in-up flex-col bg-surface sm:motion-safe:animate-none sm:h-auto sm:max-h-[90dvh] sm:border sm:border-line sm:pt-0 sm:shadow-2xl sm:shadow-black/50 ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-line py-1.5 pr-1.5 pl-4">

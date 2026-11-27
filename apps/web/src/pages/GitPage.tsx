@@ -1,3 +1,4 @@
+import { gitMark } from '../lib/gitMark';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronRight, CloudUpload, GitBranch, Loader2, Minus, Plus, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react';
 import type { GitCommit, GitFile, GitOpResult } from '@hubness/shared';
@@ -38,7 +39,8 @@ export function GitPage() {
   const [inlineDiff, setInlineDiff] = useState<string | null>(null);
 
   const branches = useApi(['git', repo.id, 'branches'], () => api.gitBranches(repo.id));
-  const log = useApi(['git', repo.id, 'log', logLimit, false], () => api.gitLog(repo.id, { limit: logLimit, all: false }));
+  // "load more" is another query: the commits already shown stay while it loads (of this repository only)
+  const log = useApi(['git', repo.id, 'log', logLimit, false], () => api.gitLog(repo.id, { limit: logLimit, all: false }), { keepWhile: (prev) => prev[1] === repo.id });
   const stashes = useApi(['git', repo.id, 'stashes'], () => api.gitStashes(repo.id));
 
   // a success fades by itself; an error stays until dismissed
@@ -83,9 +85,9 @@ export function GitPage() {
   // one button: publish a branch without upstream, else pull what is behind and push what is ahead
   const sync = async () => {
     if (!git.upstream) return void run('push', t('git.publish'));
-    if (git.behind && !(await run('pull', 'Pull')).ok) return;
-    if (git.ahead) await run('push', 'Push');
-    if (!git.behind && !git.ahead) await run('fetch', 'Fetch');
+    if (git.behind && !(await run('pull', t('git.pull'))).ok) return;
+    if (git.ahead) await run('push', t('git.push'));
+    if (!git.behind && !git.ahead) await run('fetch', t('git.fetch'));
   };
   const syncLabel = !git.upstream ? t('git.publish') : git.behind || git.ahead ? t('git.sync') : t('git.fetch');
 
@@ -111,7 +113,7 @@ export function GitPage() {
             value={git.branch ?? ''}
             onChange={(b) => b !== git.branch && void switchBranch(run, b)}
             options={[
-              ...(git.branch ? [] : [{ value: '', label: 'HEAD (detached)' }]),
+              ...(git.branch ? [] : [{ value: '', label: t('gitline.detached') }]),
               ...local.map((b) => ({ value: b.name, label: b.name })),
               ...remote.filter((r) => !local.some((l) => r.name.endsWith(`/${l.name}`))).map((b) => ({ value: b.name.replace(/^[^/]+\//, ''), label: b.name })),
             ]}
@@ -301,20 +303,9 @@ function IconAct({ label, onClick, disabled, danger, children }: { label: string
   );
 }
 
-/** Letter and colour of a file's change on this side (staged or not). */
-function mark(f: GitFile, staged: boolean): { letter: string; cls: string } {
-  if (f.conflicted) return { letter: '!', cls: 'text-danger' };
-  if (f.untracked) return { letter: 'U', cls: 'text-ok' };
-  const x = staged ? f.index : f.worktree;
-  if (x === 'A') return { letter: 'A', cls: 'text-ok' };
-  if (x === 'D') return { letter: 'D', cls: 'text-danger' };
-  if (x === 'R') return { letter: 'R', cls: 'text-accent' };
-  return { letter: 'M', cls: 'text-warn' };
-}
-
 function FileRow({ f, staged, ctx, onOpen, inline }: { f: GitFile; staged: boolean; ctx: Ctx; onOpen: () => void; inline: boolean }) {
   const { dir, name } = splitPath(f.path);
-  const m = mark(f, staged);
+  const m = gitMark(f, staged ? 'staged' : 'worktree');
   return (
     <div>
       <div className="group flex items-center gap-2 pr-2 pl-5 hover:bg-sunken">
@@ -367,7 +358,7 @@ function CommitBox({ ctx, stagedCount, unstagedCount, onAsk }: { ctx: Ctx; stage
     if (!message.trim()) return;
     if (!(await ctx.run('commit', t('git.commit'), { message, all })).ok) return;
     setMessage('');
-    if (push) await ctx.run('push', 'Push');
+    if (push) await ctx.run('push', t('git.push'));
   };
   return (
     <div className="space-y-2 border-b border-line px-3 py-3">
@@ -378,7 +369,8 @@ function CommitBox({ ctx, stagedCount, unstagedCount, onAsk }: { ctx: Ctx; stage
         value={message}
         onChange={(e) => setMessage(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void commit(false);
+          // like the buttons: not on top of a pull / push / commit that is still running
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !ctx.busy) void commit(false);
         }}
       />
       {/* stacked: the side bar is narrow */}

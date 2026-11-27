@@ -16,6 +16,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import type { BrowserRequest, BrowserResult, PreviewLog } from '@hubness/shared';
 import { childEnv, config } from './config.ts';
 import { HttpError } from './errors.ts';
@@ -52,8 +53,10 @@ class Cdp {
 
   constructor(input: Writable, output: Readable) {
     this.input = input;
+    // a character may be split between two reads
+    const utf8 = new StringDecoder('utf8');
     output.on('data', (d: Buffer) => {
-      this.buf += d.toString('utf8');
+      this.buf += utf8.write(d);
       let i: number;
       while ((i = this.buf.indexOf('\0')) >= 0) {
         const raw = this.buf.slice(0, i);
@@ -116,6 +119,8 @@ interface Page {
   userSeen: number;
   /** localhost:<app port> ⇄ 127.0.0.1:<preview port>: the agent sees its own address. */
   alias: { from: string; to: string } | null;
+  /** The main frame is loading a document (a click or a key may have started it). */
+  loading: boolean;
   loaded: (() => void) | null;
 }
 
@@ -157,13 +162,20 @@ async function browser(): Promise<{ proc: ChildProcess; cdp: Cdp }> {
     const cdp = new Cdp(proc.stdio[3] as Writable, proc.stdio[4] as Readable);
     proc.on('exit', () => {
       cdp.closed = true;
+      // an old browser going away must not take the pages of the one started after it
+      if (chrome?.proc !== proc) return;
       pages.clear();
-      if (chrome?.proc === proc) chrome = null;
+      chrome = null;
     });
-    await new Promise<void>((resolve, reject) => {
-      proc.once('error', (e) => reject(new HttpError(503, `Chromium didn't start: ${e.message}`)));
-      cdp.send('Browser.getVersion', {}, undefined, 15_000).then(() => resolve(), (e) => reject(new HttpError(503, `Chromium didn't start: ${(e as Error).message}`)));
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        proc.once('error', (e) => reject(new HttpError(503, `Chromium didn't start: ${e.message}`)));
+        cdp.send('Browser.getVersion', {}, undefined, 15_000).then(() => resolve(), (e) => reject(new HttpError(503, `Chromium didn't start: ${(e as Error).message}`)));
+      });
+    } catch (e) {
+      proc.kill('SIGKILL');
+      throw e;
+    }
     cdp.listeners.add(onEvent);
     chrome = { proc, cdp };
     return chrome;
@@ -203,7 +215,21 @@ function onEvent(method: string, params: Json, sessionId?: string) {
     }
     case 'Log.entryAdded':
       // network errors come from Network.* (with the address) — not twice
-      if (params.entry?.level === 'error' && params.entry.source !== 'network') pushLog(p, 'error', params.entry.text ?? '', params.entry.url ?? '');
+      // …and what an app's own content policy says about the preview helper is not the app's error
+      if (params.entry?.level === 'error' && params.entry.source !== 'network' && !String(params.entry.text).includes('/__hubness/'))
+        pushLog(p, 'error', params.entry.text ?? '', params.entry.url ?? '');
+      break;
+    case 'Page.javascriptDialogOpening':
+      // nobody is there to answer alert / confirm / prompt: say yes, or the page hangs for good
+      pushLog(p, 'log', `The page showed a ${params.type ?? 'dialog'}: “${String(params.message ?? '').slice(0, 500)}” — accepted`);
+      void chrome?.cdp.send('Page.handleJavaScriptDialog', { accept: true }, p.sessionId).catch(() => {});
+      break;
+    case 'Page.frameStartedLoading':
+      // the target id of a page is the id of its main frame
+      if (params.frameId === p.targetId) p.loading = true;
+      break;
+    case 'Page.frameStoppedLoading':
+      if (params.frameId === p.targetId) p.loading = false;
       break;
     case 'Network.responseReceived': {
       const r = params.response ?? {};
@@ -214,6 +240,7 @@ function onEvent(method: string, params: Json, sessionId?: string) {
       if (!params.canceled) pushLog(p, 'network', `Request failed: ${params.errorText ?? ''}`);
       break;
     case 'Page.loadEventFired':
+      p.loading = false;
       p.loaded?.();
       p.loaded = null;
       break;
@@ -227,7 +254,7 @@ async function pageFor(hubSession: string): Promise<{ cdp: Cdp; page: Page }> {
   if (cur) return { cdp, page: cur };
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-  const page: Page = { sessionId, targetId, logs: [], seq: 0, previewKey: null, userSeen: 0, alias: null, loaded: null };
+  const page: Page = { sessionId, targetId, logs: [], seq: 0, previewKey: null, userSeen: 0, alias: null, loading: false, loaded: null };
   pages.set(hubSession, page);
   const { userAgent } = await cdp.send('Browser.getVersion');
   await Promise.all([
@@ -281,11 +308,13 @@ async function locate(cdp: Cdp, page: Page, b: BrowserRequest): Promise<{ x: num
   return at;
 }
 
+/** After a click or a key: if it started a navigation, wait for the new page; else for the app to react. */
 async function waitSettled(page: Page, ms = 600) {
-  // a click or a key may start a navigation: give it a moment, then wait for its load
   await sleep(150);
-  if (page.loaded) await Promise.race([new Promise<void>((r) => (page.loaded = r)), sleep(ms)]);
-  else await sleep(ms);
+  if (!page.loading) return void (await sleep(ms));
+  await Promise.race([new Promise<void>((r) => (page.loaded = r)), sleep(10_000)]);
+  page.loaded = null;
+  await sleep(300);
 }
 
 const KEYS: Record<string, { key: string; code: string; keyCode: number; text?: string }> = {
@@ -321,18 +350,18 @@ async function navigate(cdp: Cdp, page: Page, url: string, previewFor: PreviewFo
   } catch {
     throw new HttpError(400, `Not a URL: ${url}`);
   }
-  if (!['http:', 'https:', 'file:'].includes(u.protocol) && target !== 'about:blank') throw new HttpError(400, 'Only http(s) and file addresses');
+  // no file: — this browser runs outside the sandbox that hides the user's files from the agent
+  if (!['http:', 'https:'].includes(u.protocol) && target !== 'about:blank') throw new HttpError(400, 'Only http and https addresses');
   page.alias = null;
   page.previewKey = null;
   if (previewFor && u.protocol === 'http:' && ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(u.hostname) && u.port) {
     const pp = await previewFor(Number(u.port)).catch(() => null);
     if (pp) {
-      const from = `${u.protocol}//${u.host}`;
       const to = `http://127.0.0.1:${pp}`;
-      page.alias = { from, to };
+      page.alias = { from: u.origin, to };
       page.previewKey = previewKeyByPort(pp);
       page.userSeen = page.previewKey ? (previewLogs(page.previewKey).at(-1)?.seq ?? 0) : 0;
-      target = to + target.slice(from.length);
+      target = to + u.pathname + u.search + u.hash;
     }
   }
   const loaded = new Promise<void>((r) => (page.loaded = r));
@@ -341,7 +370,8 @@ async function navigate(cdp: Cdp, page: Page, url: string, previewFor: PreviewFo
     page.loaded = null;
     throw new HttpError(502, `Can't open ${url}: ${r.errorText}`);
   }
-  await Promise.race([loaded, sleep(NAV_TIMEOUT_MS)]);
+  // no loader: the same document (only the #hash changed) — there is no load to wait for
+  if (r.loaderId) await Promise.race([loaded, sleep(NAV_TIMEOUT_MS)]);
   page.loaded = null;
   // client-side apps render after load
   await sleep(500);
@@ -352,14 +382,25 @@ async function screenshot(cdp: Cdp, page: Page, fullPage: boolean): Promise<stri
   if (fullPage) {
     const m = await cdp.send('Page.getLayoutMetrics', {}, page.sessionId);
     const size = m.cssContentSize ?? m.contentSize;
-    clip = { x: 0, y: 0, width: Math.ceil(size.width), height: Math.min(8000, Math.ceil(size.height)), scale: 1 };
+    clip = { x: 0, y: 0, width: Math.min(3840, Math.ceil(size.width)), height: Math.min(8000, Math.ceil(size.height)), scale: 1 };
   }
   const r = await cdp.send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip, captureBeyondViewport: true } : {}) }, page.sessionId);
   return r.data as string;
 }
 
+/** Actions of one session run one after another: a page has one address, one pending load. */
+const queues = new Map<string, Promise<unknown>>();
+
 /** One agent browser action for a hub session. */
-export async function browserAction(hubSession: string, b: BrowserRequest, previewFor: PreviewFor | null): Promise<BrowserResult> {
+export function browserAction(hubSession: string, b: BrowserRequest, previewFor: PreviewFor | null): Promise<BrowserResult> {
+  const run = (queues.get(hubSession) ?? Promise.resolve()).then(() => act(hubSession, b, previewFor));
+  const tail = run.catch(() => {});
+  queues.set(hubSession, tail);
+  void tail.then(() => queues.get(hubSession) === tail && queues.delete(hubSession));
+  return run;
+}
+
+async function act(hubSession: string, b: BrowserRequest, previewFor: PreviewFor | null): Promise<BrowserResult> {
   if (b.action === 'close') {
     await closeSessionBrowser(hubSession);
     return { ok: true, url: '', title: '', text: 'Browser page closed', logs: [] };
@@ -439,6 +480,9 @@ export async function closeSessionBrowser(hubSession: string) {
   pages.delete(hubSession);
   await chrome?.cdp.send('Target.closeTarget', { targetId: p.targetId }).catch(() => {});
 }
+
+/** How many pages the agents have open (tests). */
+export const openPages = () => pages.size;
 
 export function shutdownBrowser() {
   pages.clear();

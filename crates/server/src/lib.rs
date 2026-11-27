@@ -124,6 +124,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         anyhow::bail!("HUBNESS_HOST={} is reachable from other machines: create an account first with `hubness user add <name>`", cfg.host);
     }
     auth::init(state.db.clone())?;
+    // agents and key scratch folders left by a crashed run
+    ssh::sweep_runtime(&cfg.data_dir);
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await?;
     let addr = listener.local_addr()?;
     let _ = state.self_url.set(format!("http://127.0.0.1:{}", addr.port()));
@@ -141,6 +143,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             rt.stop_all();
+            // the turns' ssh-agents hold decrypted keys: they never outlive the hub
+            crate::ssh::dispose_all();
             crate::browser::shutdown();
             // dev servers and shells must not outlive the hub
             terminal::kill_all_jobs();
