@@ -62,7 +62,7 @@ hubness server start --data-dir ~/hubness/.data   # keep using an existing data 
 
 **The terminal UI.** The first `hubness tui` asks for the hub's address — a domain or an IP,
 with `:port` when it isn't 8787 (a bare host tries `https://` first, then `http://…:8787`;
-Enter alone is this machine). It signs in if the hub has accounts and remembers the hub, so
+Enter alone is this machine). It signs in if the hub has its account and remembers the hub, so
 the next start opens it directly. `Space H` switches between saved hubs or adds one;
 `hubness tui --url <address>` opens another one from the command line.
 
