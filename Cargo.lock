@@ -1253,7 +1253,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hubness"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "hubness-client"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "hubness-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -1289,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "hubness-server"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1326,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "hubness-tui"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "clap",
