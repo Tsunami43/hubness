@@ -297,22 +297,31 @@ function SetupOverlay({ steps, onFinish }: { steps: Step[]; onFinish: () => void
   // follow it; on success choose the downloaded model and go on
   useEffect(() => {
     if (!job) return;
+    let done = false;
+    const finish = (code: number | null) => {
+      if (done) return;
+      done = true;
+      stop();
+      if (code !== 0) return setFailed('');
+      void (async () => {
+        if (step.kind === 'download') await api.saveVoice({ localModel: step.id }).catch(() => {});
+        if (index + 1 < steps.length) setIndex(index + 1);
+        else onFinish();
+      })();
+    };
     const stop = liveStream(`/api/jobs/${job.id}/stream`, (data) => {
       const m = JSON.parse(data) as JobStreamMsg;
-      if (m.type === 'snapshot') out.current = m.output;
-      else if (m.type === 'output') out.current += m.data;
-      else {
-        stop();
-        if (m.code !== 0) return setFailed('');
-        void (async () => {
-          if (step.kind === 'download') await api.saveVoice({ localModel: step.id }).catch(() => {});
-          if (index + 1 < steps.length) setIndex(index + 1);
-          else onFinish();
-        })();
-      }
+      if (m.type === 'output') out.current += m.data;
+      else if (m.type === 'snapshot') out.current = m.output;
       setLines(tailLines(out.current, 14));
+      if (m.type === 'exit') finish(m.code);
+      // the exit can fall between two connections: a (re)connect then finds the job already exited
+      else if (m.type === 'snapshot' && m.job.status === 'exited') finish(m.job.exitCode);
     });
-    return stop;
+    return () => {
+      done = true;
+      stop();
+    };
   }, [job?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const title = step.kind === 'download' ? t('voice.downloading', { name: step.label }) : t('voice.building');
