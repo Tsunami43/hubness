@@ -146,4 +146,4 @@ or forgets one; `--url` overrides the last hub and is saved too.
 A hub with accounts shows a sign-in screen (username, masked password; `Ctrl+O` goes to
 another hub). When the hub answers 401 the token is dropped and the screen comes back.
 `--user <name>` prefills the username. The hub has one account: Settings → Account shows
-it, changes its password and logs out (also `:` → Log out).
+it, changes its password (`p`) and logs out (`o`; also `Space L` and `:` → Log out).

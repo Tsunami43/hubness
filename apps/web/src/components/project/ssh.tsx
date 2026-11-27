@@ -27,11 +27,22 @@ export function SshBindingsPanel({ scope }: { scope: Scope }) {
     setSaved(JSON.stringify(next));
   }, []);
   useEffect(() => {
+    // another project or group: nothing of the previous one stays editable while this loads
+    let stale = false;
     setError(null);
-    Promise.all([api.sshConnections(), api.sshBindings(scope)]).then(([c, b]) => {
-      setAll(c);
-      apply(b);
-    }, (e) => setError((e as Error).message));
+    setAll(null);
+    setList(null);
+    Promise.all([api.sshConnections(), api.sshBindings(scope)]).then(
+      ([c, b]) => {
+        if (stale) return;
+        setAll(c);
+        apply(b);
+      },
+      (e) => !stale && setError((e as Error).message),
+    );
+    return () => {
+      stale = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 

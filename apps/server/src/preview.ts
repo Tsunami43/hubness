@@ -32,6 +32,8 @@ interface Preview {
   port: number;
   server: Server;
   target: Target;
+  /** When it was last asked for or served a request. */
+  used: number;
 }
 
 const previews = new Map<string, Preview>();
@@ -46,36 +48,75 @@ const injectOn = () => process.env.HUBNESS_PREVIEW_INJECT !== '0';
 /** The hub's headless browser (preview_* agent tools) marks itself in the user agent. */
 export const AGENT_UA_MARK = 'hubness-agent';
 const MAX_LOGS = 500;
+/** How much of a page is looked at for the place of the helper before it is passed on as is. */
+const HEAD_LIMIT = 64 * 1024;
 
-const logs = new Map<string, { seq: number; list: PreviewLog[] }>();
+const logs = new Map<string, PreviewLog[]>();
+/** One counter for the whole hub: a cleared log or a restarted preview never goes back to 1 (clients keep a cursor). */
+let logSeq = 0;
 
 export function addPreviewLog(key: string, raw: Partial<PreviewLog>, source: PreviewLog['source']) {
   const level = (['error', 'warn', 'log', 'network'] as const).find((l) => l === raw.level) ?? 'log';
-  const box = logs.get(key) ?? { seq: 0, list: [] };
-  logs.set(key, box);
-  box.list.push({
-    seq: ++box.seq,
+  const list = logs.get(key) ?? [];
+  logs.set(key, list);
+  const text = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
+  list.push({
+    seq: ++logSeq,
     ts: typeof raw.ts === 'string' ? raw.ts.slice(0, 40) : new Date().toISOString(),
     level,
-    text: String(raw.text ?? '').slice(0, 4000),
-    url: String(raw.url ?? '').slice(0, 2000),
+    text: text(raw.text).slice(0, 4000),
+    url: text(raw.url).slice(0, 2000),
     source,
   });
-  if (box.list.length > MAX_LOGS) box.list.splice(0, box.list.length - MAX_LOGS);
+  if (list.length > MAX_LOGS) list.splice(0, list.length - MAX_LOGS);
 }
 
 /** Log entries of a preview after `since` (a seq). */
-export const previewLogs = (key: string, since = 0): PreviewLog[] => (logs.get(key)?.list ?? []).filter((l) => l.seq > since);
+export const previewLogs = (key: string, since = 0): PreviewLog[] => (logs.get(key) ?? []).filter((l) => l.seq > since);
 export const clearPreviewLogs = (key: string) => logs.delete(key);
 export const previewKeyByPort = (port: number) => [...previews.values()].find((p) => p.port === port)?.key ?? null;
 
-/** Insert the helper tag right after <head> (or at the start of the document). */
+/**
+ * Where the helper tag goes in the start of a document: right after `<head>`, else after the
+ * doctype or `<html>` it begins with. `null` — this is not a document (a fragment for
+ * jQuery / htmx, JSON with a wrong type): it is left alone.
+ */
+export function injectPoint(html: string): number | null {
+  const head = /<head(\s[^>]*)?>/i.exec(html);
+  if (head) return head.index + head[0].length;
+  const start = /^\s*(<!doctype[^>]*>|<html(\s[^>]*)?>)/i.exec(html);
+  return start ? start[0].length : null;
+}
+
+/** A whole document with the helper tag (unchanged when it has one, or is not a document). */
 export function injectHtml(html: string): string {
   if (html.includes('/__hubness/preview.js')) return html;
-  const head = /<head(\s[^>]*)?>/i.exec(html);
-  if (head) return html.slice(0, head.index + head[0].length) + INJECT_TAG + html.slice(head.index + head[0].length);
-  const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
-  return doctype ? doctype[0] + INJECT_TAG + html.slice(doctype[0].length) : INJECT_TAG + html;
+  const at = injectPoint(html);
+  return at === null ? html : html.slice(0, at) + INJECT_TAG + html.slice(at);
+}
+
+/** Is it the browser loading a page (not a script asking for a piece of HTML)? */
+function pageRequest(req: IncomingMessage): boolean {
+  if (!injectOn() || req.method !== 'GET') return false;
+  const dest = req.headers['sec-fetch-dest'];
+  if (typeof dest === 'string') return dest === 'document' || dest === 'iframe' || dest === 'frame';
+  return String(req.headers.accept ?? '').includes('text/html');
+}
+
+/**
+ * Only the previewed page itself may report: another site in the user's browser can POST
+ * plain text here blindly, and what lands in the log is read by the agent.
+ */
+function sameOrigin(req: IncomingMessage): boolean {
+  const site = req.headers['sec-fetch-site'];
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return false;
+  const origin = req.headers.origin;
+  if (typeof origin !== 'string') return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
 }
 
 /** The proxy's own paths: the helper script and its log endpoint. */
@@ -87,6 +128,12 @@ function ownRoute(key: string, req: IncomingMessage, res: ServerResponse): boole
     return true;
   }
   if (path === '/__hubness/log' && req.method === 'POST') {
+    if (!sameOrigin(req)) {
+      req.resume();
+      res.writeHead(403);
+      res.end();
+      return true;
+    }
     const source = String(req.headers['user-agent'] ?? '').includes(AGENT_UA_MARK) ? 'agent' : 'user';
     let body = '';
     req.on('data', (d: Buffer) => {
@@ -95,7 +142,7 @@ function ownRoute(key: string, req: IncomingMessage, res: ServerResponse): boole
     req.on('end', () => {
       try {
         const list = JSON.parse(body);
-        for (const e of Array.isArray(list) ? list.slice(0, 50) : []) if (e && typeof e === 'object') addPreviewLog(key, e, source);
+        for (const e of Array.isArray(list) ? list.slice(0, 50) : []) if (e && typeof e === 'object' && !Array.isArray(e)) addPreviewLog(key, e, source);
       } catch {}
       res.writeHead(204);
       res.end();
@@ -105,8 +152,42 @@ function ownRoute(key: string, req: IncomingMessage, res: ServerResponse): boole
   return false;
 }
 
-function proxyServer(key: string, target: Target): Server {
+/**
+ * Pass an HTML answer on with the helper tag in it. Only the start is held back (until
+ * `<head>` shows up, or HEAD_LIMIT): a streamed page keeps streaming, a page that never
+ * ends is still shown, and bytes are never re-encoded (latin1 maps them 1:1).
+ */
+function relayHtml(ur: IncomingMessage, res: ServerResponse) {
+  let held = '';
+  let decided = false;
+  const decide = (final: boolean) => {
+    if (decided) return;
+    const head = /<head(\s[^>]*)?>/i.test(held);
+    if (!head && !final && held.length < HEAD_LIMIT) return;
+    decided = true;
+    const out = injectHtml(held);
+    const added = out.length - held.length;
+    const headers = { ...ur.headers };
+    // a known length grows by the tag; a chunked answer stays chunked
+    if (added && headers['content-length'] !== undefined) headers['content-length'] = String(Number(headers['content-length']) + added);
+    res.writeHead(ur.statusCode ?? 200, headers);
+    res.write(Buffer.from(out, 'latin1'));
+    held = '';
+  };
+  ur.on('data', (d: Buffer) => {
+    if (decided) return void res.write(d);
+    held += d.toString('latin1');
+    decide(false);
+  });
+  ur.on('end', () => {
+    decide(true);
+    res.end();
+  });
+}
+
+function proxyServer(key: string, target: Target, touch: () => void): Server {
   const server = createServer(async (req, res) => {
+    touch();
     if (ownRoute(key, req, res)) return;
     const t = await target();
     if (!t) {
@@ -115,7 +196,7 @@ function proxyServer(key: string, target: Target): Server {
       return;
     }
     // a page (not an asset) comes uncompressed, so the helper can be added to it
-    const page = injectOn() && req.method === 'GET' && String(req.headers.accept ?? '').includes('text/html');
+    const page = pageRequest(req);
     const headers = {
       ...req.headers,
       host: `localhost:${t.port}`,
@@ -124,27 +205,22 @@ function proxyServer(key: string, target: Target): Server {
       ...(page ? { 'accept-encoding': 'identity' } : {}),
     };
     const up = request({ host: t.host, port: t.port, method: req.method, path: req.url, headers }, (ur) => {
-      const html = page && String(ur.headers['content-type'] ?? '').includes('text/html') && !ur.headers['content-encoding'];
-      if (!html) {
-        res.writeHead(ur.statusCode ?? 502, ur.headers);
-        ur.pipe(res);
-        return;
-      }
-      const chunks: Buffer[] = [];
-      ur.on('data', (d: Buffer) => chunks.push(d));
-      ur.on('end', () => {
-        // latin1 maps bytes 1:1, so a page in any encoding keeps its bytes
-        const body = Buffer.from(injectHtml(Buffer.concat(chunks).toString('latin1')), 'latin1');
-        const { 'content-length': _l, ...rest } = ur.headers;
-        res.writeHead(ur.statusCode ?? 200, { ...rest, 'content-length': String(body.length) });
-        res.end(body);
-      });
+      // the app died mid-answer: the browser must not wait for the rest forever
       ur.on('error', () => res.destroy());
+      ur.on('aborted', () => res.destroy());
+      const status = ur.statusCode ?? 502;
+      const html = page && status !== 204 && status !== 304 && String(ur.headers['content-type'] ?? '').includes('text/html') && !ur.headers['content-encoding'];
+      if (html) return relayHtml(ur, res);
+      res.writeHead(status, ur.headers);
+      ur.pipe(res);
     });
     up.on('error', (e) => {
-      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      if (res.headersSent) return void res.destroy();
+      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(`The app doesn’t respond on port ${t.port} yet (${e.message}). Wait for it to start and reload.`);
     });
+    // the browser left (a closed tab, an event stream): let the app's side go too
+    res.on('close', () => up.destroy());
     req.pipe(up);
   });
   // WebSocket (HMR etc.): raw passthrough after replacing Host
@@ -181,24 +257,40 @@ function listen(server: Server, port: number): Promise<boolean> {
   });
 }
 
-/** Preview port for a key (project:app port); starts the proxy on first request. */
+/** A preview of a port somebody named (not of a run command): `<project>:port:<n>`. */
+const adHoc = (key: string) => key.includes(':port:');
+
+/**
+ * Preview port for a key (project:app port); starts the proxy on first request. When every
+ * port is taken, the ad-hoc preview nobody has used for the longest time gives its up (an
+ * agent trying addresses would otherwise use the range up for good).
+ */
 export async function ensurePreview(key: string, target: Target): Promise<number | null> {
   const cur = previews.get(key);
   if (cur) {
     cur.target = target;
+    cur.used = Date.now();
     return cur.port;
   }
-  const used = new Set([...previews.values()].map((p) => p.port));
-  for (let port = FROM; port <= TO; port++) {
-    if (used.has(port)) continue;
-    const entry: Preview = { key, port, server: null as unknown as Server, target };
-    entry.server = proxyServer(key, () => entry.target());
-    if (await listen(entry.server, port)) {
-      previews.set(key, entry);
-      return port;
+  const open = async (): Promise<number | null> => {
+    const taken = new Set([...previews.values()].map((p) => p.port));
+    for (let port = FROM; port <= TO; port++) {
+      if (taken.has(port)) continue;
+      const entry: Preview = { key, port, server: null as unknown as Server, target, used: Date.now() };
+      entry.server = proxyServer(key, () => entry.target(), () => (entry.used = Date.now()));
+      if (await listen(entry.server, port)) {
+        previews.set(key, entry);
+        return port;
+      }
     }
-  }
-  return null;
+    return null;
+  };
+  const port = await open();
+  if (port !== null) return port;
+  const idle = [...previews.values()].filter((p) => adHoc(p.key)).sort((a, b) => a.used - b.used)[0];
+  if (!idle) return null;
+  closePreview(idle.key);
+  return open();
 }
 
 export const previewPort = (key: string) => previews.get(key)?.port ?? null;

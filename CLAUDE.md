@@ -149,6 +149,13 @@ Always run `pnpm check` and `pnpm test` before considering a change done; for ch
 - Child processes get `childEnv()` — never leak `HUBNESS_*` values or secrets to agents.
 - Agent output normalizers are covered by fixture tests (`test/fixtures/agents/*.jsonl`,
   `normalizers.test.ts` snapshot); update fixtures when changing an adapter.
+- The web app has no test runner: keep logic worth testing in pure modules under
+  `apps/web/src/lib` (no React, no `t()`) and test them from `apps/server/test/web-logic*.test.ts`.
+  `preview-inject.js` is tested in `preview-inject.test.ts` (a `vm` context).
+- A React effect without braces returns its expression: only state setters may be written
+  that way (`web-logic.test.ts` checks it) — a returned Promise breaks the app on the next update.
+- Content that comes from a previewed page (logs, picked elements) is untrusted: it reaches an
+  agent only fenced and marked as page content.
 - Local data lives in `.data/` (SQLite, logs, keys) and is git-ignored. Do not commit it.
 
 ## Git workflow

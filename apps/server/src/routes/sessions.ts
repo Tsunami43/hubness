@@ -15,7 +15,7 @@ import { readFileSafe, safeJoin } from '../fsops.ts';
 import * as git from '../git.ts';
 import { attachmentPath, MAX_ATTACHMENT, resolveAttachments, saveAttachment } from '../attachments.ts';
 import { isActive, respondApproval, sendMessage, sessionCwd, stopSession } from '../runtime.ts';
-import { browserAction } from '../browser.ts';
+import { browserAction, closeSessionBrowser } from '../browser.ts';
 import { previewPortFor } from '../runs.ts';
 import { AgentConfigSchema, parseBody, pumpSSE, shortText, validateAgent } from './http.ts';
 
@@ -85,6 +85,8 @@ sessionRoutes.get('/sessions', (c) => {
 /** Delete one session for good: stop its agent, drop it from the hub. */
 function deleteSessionNow(id: string) {
   stopSession(id);
+  // its page in the agents' browser goes with it
+  void closeSessionBrowser(id);
   sessions.delete(id);
   bus.emitGlobal({ type: 'session-deleted', id });
 }
@@ -101,6 +103,7 @@ sessionRoutes.post('/sessions/:id/archive', (c) => {
   const id = sessionOr404(c.req.param('id')).id;
   if (isActive(id)) throw new HttpError(409, 'The agent is still working — wait for it or stop it');
   sessions.setArchived(id, true);
+  void closeSessionBrowser(id);
   return c.json(announce(id));
 });
 sessionRoutes.post('/sessions/:id/restore', (c) => {

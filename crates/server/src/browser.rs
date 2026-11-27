@@ -16,6 +16,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -109,7 +110,9 @@ type Reply = oneshot::Sender<Result<Value, String>>;
 
 /// One DevTools connection over the pipe; commands of a page carry its sessionId.
 struct Cdp {
-    input: Mutex<std::fs::File>,
+    /// Messages for Chromium; a thread of its own writes them (the pipe blocks when Chromium
+    /// stops reading, and that must never hold an async worker).
+    out: Mutex<mpsc::Sender<Vec<u8>>>,
     next: AtomicU64,
     pending: Mutex<HashMap<u64, Reply>>,
     closed: AtomicBool,
@@ -127,13 +130,7 @@ impl Cdp {
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
         let (tx, rx) = oneshot::channel();
         lock(&self.pending).insert(id, tx);
-        let mut msg = json!({ "id": id, "method": method, "params": params });
-        if let Some(s) = session {
-            msg["sessionId"] = json!(s);
-        }
-        let mut line = msg.to_string().into_bytes();
-        line.push(0);
-        if lock(&self.input).write_all(&line).is_err() {
+        if !self.write(id, method, params, session) {
             lock(&self.pending).remove(&id);
             return Err("The browser closed".into());
         }
@@ -145,6 +142,23 @@ impl Cdp {
                 Err(format!("{method} timed out"))
             }
         }
+    }
+
+    /// Queue one message for Chromium.
+    fn write(&self, id: u64, method: &str, params: Value, session: Option<&str>) -> bool {
+        let mut msg = json!({ "id": id, "method": method, "params": params });
+        if let Some(s) = session {
+            msg["sessionId"] = json!(s);
+        }
+        let mut line = msg.to_string().into_bytes();
+        line.push(0);
+        lock(&self.out).send(line).is_ok()
+    }
+
+    /// A command nobody waits for (sent from the reader thread, which must not block).
+    fn fire(&self, method: &str, params: Value, session: Option<&str>) {
+        let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
+        self.write(id, method, params, session);
     }
 
     fn fail(&self) {
@@ -178,7 +192,7 @@ fn read_loop(cdp: Arc<Cdp>, out: std::fs::File) {
                 let _ = tx.send(r);
             }
         } else if let Some(method) = m.get("method").and_then(Value::as_str) {
-            on_event(method, m.get("params").unwrap_or(&Value::Null), m.get("sessionId").and_then(Value::as_str));
+            on_event(&cdp, method, m.get("params").unwrap_or(&Value::Null), m.get("sessionId").and_then(Value::as_str));
         }
     }
     cdp.fail();
@@ -207,6 +221,8 @@ struct Page {
     user_seen: u64,
     /// localhost:<app port> ⇄ 127.0.0.1:<preview port>: the agent sees its own address.
     alias: Option<(String, String)>,
+    /// The main frame is loading a document (a click or a key may have started it).
+    loading: bool,
     loaded: Option<oneshot::Sender<()>>,
 }
 
@@ -277,11 +293,21 @@ fn launch(config: &Config) -> ApiResult<Chrome> {
     }
     let child = command.spawn().map_err(|e| HttpError::new(503, format!("Chromium didn't start: {e}")))?;
     drop((cmd_r, out_w));
-    let cdp = Arc::new(Cdp {
-        input: Mutex::new(std::fs::File::from(cmd_w)),
-        next: AtomicU64::new(0),
-        pending: Mutex::default(),
-        closed: AtomicBool::new(false),
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    let cdp = Arc::new(Cdp { out: Mutex::new(tx), next: AtomicU64::new(0), pending: Mutex::default(), closed: AtomicBool::new(false) });
+    // weak: the thread must not keep the Cdp (and with it its own sender) alive
+    let writer = Arc::downgrade(&cdp);
+    let mut input = std::fs::File::from(cmd_w);
+    std::thread::spawn(move || {
+        // ends when the Cdp (the sender) is dropped, or Chromium closed its end
+        for line in rx {
+            if input.write_all(&line).is_err() {
+                if let Some(cdp) = writer.upgrade() {
+                    cdp.fail();
+                }
+                break;
+            }
+        }
     });
     let reader = cdp.clone();
     let out = std::fs::File::from(out_r);
@@ -354,7 +380,7 @@ fn s<'a>(v: &'a Value, path: &[&str]) -> &'a str {
     path.iter().try_fold(v, |v, k| v.get(*k)).and_then(Value::as_str).unwrap_or("")
 }
 
-fn on_event(method: &str, params: &Value, session: Option<&str>) {
+fn on_event(cdp: &Cdp, method: &str, params: &Value, session: Option<&str>) {
     let mut pages = lock(&PAGES);
     let Some(p) = page_by_session(&mut pages, session) else { return };
     match method {
@@ -385,7 +411,8 @@ fn on_event(method: &str, params: &Value, session: Option<&str>) {
         "Log.entryAdded" => {
             // network errors come from Network.* (with the address) — not twice
             let e = params.get("entry").unwrap_or(&Value::Null);
-            if s(e, &["level"]) == "error" && s(e, &["source"]) != "network" {
+            // …and what an app's own content policy says about the preview helper is not the app's error
+            if s(e, &["level"]) == "error" && s(e, &["source"]) != "network" && !s(e, &["text"]).contains("/__hubness/") {
                 let (text, url) = (s(e, &["text"]).to_string(), s(e, &["url"]).to_string());
                 push_log(p, "error", &text, &url);
             }
@@ -404,7 +431,22 @@ fn on_event(method: &str, params: &Value, session: Option<&str>) {
                 push_log(p, "network", &t, "");
             }
         }
+        "Page.javascriptDialogOpening" => {
+            // nobody is there to answer alert / confirm / prompt: say yes, or the page hangs for good
+            let kind = match s(params, &["type"]) {
+                "" => "dialog",
+                t => t,
+            };
+            let message: String = s(params, &["message"]).chars().take(500).collect();
+            let sid = p.session_id.clone();
+            push_log(p, "log", &format!("The page showed a {kind}: “{message}” — accepted"), "");
+            cdp.fire("Page.handleJavaScriptDialog", json!({ "accept": true }), Some(&sid));
+        }
+        // the target id of a page is the id of its main frame
+        "Page.frameStartedLoading" if s(params, &["frameId"]) == p.target_id => p.loading = true,
+        "Page.frameStoppedLoading" if s(params, &["frameId"]) == p.target_id => p.loading = false,
         "Page.loadEventFired" => {
+            p.loading = false;
             if let Some(tx) = p.loaded.take() {
                 let _ = tx.send(());
             }
@@ -430,7 +472,17 @@ async fn page_for(config: &Config, hub_session: &str) -> ApiResult<(Arc<Cdp>, St
     let sid = s(&attached, &["sessionId"]).to_string();
     lock(&PAGES).insert(
         hub_session.to_string(),
-        Page { session_id: sid.clone(), target_id, logs: vec![], seq: 0, preview_key: None, user_seen: 0, alias: None, loaded: None },
+        Page {
+            session_id: sid.clone(),
+            target_id,
+            logs: vec![],
+            seq: 0,
+            preview_key: None,
+            user_seen: 0,
+            alias: None,
+            loading: false,
+            loaded: None,
+        },
     );
     let version = cdp.send("Browser.getVersion", json!({}), None).await.map_err(cdp_err)?;
     let ua = format!("{} {AGENT_UA_MARK}", s(&version, &["userAgent"]).replace("HeadlessChrome", "Chrome"));
@@ -513,9 +565,24 @@ async fn locate(cdp: &Cdp, sid: &str, b: &BrowserRequest) -> ApiResult<(f64, f64
     Ok((n("x"), n("y"), s(&at, &["desc"]).to_string()))
 }
 
-async fn settle(ms: u64) {
-    // a click or a key may start a navigation: give it a moment
-    tokio::time::sleep(Duration::from_millis(150 + ms)).await;
+/// After a click or a key: if it started a navigation, wait for the new page; else for the
+/// app to react.
+async fn wait_settled(hub_session: &str, ms: u64) {
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let waiter = {
+        let mut pages = lock(&PAGES);
+        pages.get_mut(hub_session).filter(|p| p.loading).map(|p| {
+            let (tx, rx) = oneshot::channel();
+            p.loaded = Some(tx);
+            rx
+        })
+    };
+    let Some(rx) = waiter else { return tokio::time::sleep(Duration::from_millis(ms)).await };
+    let _ = tokio::time::timeout(Duration::from_secs(10), rx).await;
+    if let Some(p) = lock(&PAGES).get_mut(hub_session) {
+        p.loaded = None;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
 /// (key, code, keyCode, text) of the named keys.
@@ -540,44 +607,67 @@ const KEYS: [(&str, &str, &str, u32, Option<&str>); 14] = [
 /// preview port for an app port.
 pub type PreviewFor = Box<dyn Fn(u16) -> Option<u16> + Send + Sync>;
 
-async fn navigate(cdp: &Cdp, sid: &str, hub_session: &str, url: &str, preview_for: Option<&PreviewFor>) -> ApiResult<()> {
+/// What the agent asked to open, as an address: `localhost:5173/x` has no scheme
+/// ("localhost:" is not one) and gets http://. Only http and https — no file:, this browser
+/// runs outside the sandbox that hides the user's files from the agent.
+fn parse_target(url: &str) -> ApiResult<reqwest::Url> {
     static SCHEME: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)^([a-z][a-z0-9+.-]*://|about:)").unwrap());
     let mut target = url.trim().to_string();
-    // `localhost:5173/x` has no scheme ("localhost:" is not one)
     if !SCHEME.is_match(&target) {
         target = format!("http://{target}");
     }
-    let lower = target.to_lowercase();
-    if !(lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("file://") || target == "about:blank") {
-        return Err(HttpError::bad_request("Only http(s) and file addresses"));
+    // an http address needs a host ("http://" alone is not one), as in the TypeScript server
+    let parsed = reqwest::Url::parse(&target)
+        .ok()
+        .filter(|u| !matches!(u.scheme(), "http" | "https") || u.host_str().is_some_and(|h| !h.is_empty()));
+    let Some(u) = parsed else { return Err(HttpError::bad_request(format!("Not a URL: {url}"))) };
+    if !matches!(u.scheme(), "http" | "https") && target != "about:blank" {
+        return Err(HttpError::bad_request("Only http and https addresses"));
     }
+    Ok(u)
+}
+
+/// `http://localhost:<port>` (any spelling of this machine): the app port.
+fn local_app_port(u: &reqwest::Url) -> Option<u16> {
+    let local = matches!(u.host_str()?, "localhost" | "127.0.0.1" | "0.0.0.0" | "[::1]");
+    (u.scheme() == "http" && local).then(|| u.port()).flatten()
+}
+
+/// Path, query and fragment of an address.
+fn after_origin(u: &reqwest::Url) -> String {
+    let mut out = u.path().to_string();
+    if let Some(q) = u.query() {
+        out.push('?');
+        out.push_str(q);
+    }
+    if let Some(f) = u.fragment() {
+        out.push('#');
+        out.push_str(f);
+    }
+    out
+}
+
+async fn navigate(cdp: &Cdp, sid: &str, hub_session: &str, url: &str, preview_for: Option<&PreviewFor>) -> ApiResult<()> {
+    let u = parse_target(url)?;
+    let mut target = u.to_string();
     let mut alias = None;
     let mut preview_key = None;
-    // http://(localhost|127.0.0.1|0.0.0.0|[::1]):port…
-    if let (Some(pf), Some(rest)) = (preview_for, target.strip_prefix("http://")) {
-        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-        if let Some((host, port)) = authority.rsplit_once(':')
-            && ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"].contains(&host.to_lowercase().as_str())
-            && let Ok(port) = port.parse::<u16>()
-            && let Some(pp) = pf(port)
-        {
-            let from = format!("http://{authority}");
-            let to = format!("http://127.0.0.1:{pp}");
-            target = format!("{to}{}", &target[from.len()..]);
-            preview_key = preview::preview_key_by_port(pp);
-            alias = Some((from, to));
-        }
+    if let Some(pf) = preview_for
+        && let Some(port) = local_app_port(&u)
+        && let Some(pp) = pf(port)
+    {
+        // origin ⇄ the preview port; a user:password@ part is not carried over
+        let from = u.origin().ascii_serialization();
+        let to = format!("http://127.0.0.1:{pp}");
+        target = format!("{to}{}", after_origin(&u));
+        preview_key = preview::preview_key_by_port(pp);
+        // a hub with accounts: the proxy of that port lets this browser in by its pass — not
+        // a hub credential (see `auth::preview_pass`), and the proxy strips it again
+        let pass = json!({ "name": crate::auth::PREVIEW_COOKIE, "value": crate::auth::preview_pass(pp), "url": to, "httpOnly": true });
+        let _ = cdp.send("Network.setCookie", pass, Some(sid)).await;
+        alias = Some((from, to));
     }
     let user_seen = preview_key.as_deref().and_then(|k| preview::preview_logs(k, 0).last().map(|l| l.seq)).unwrap_or(0);
-    // signed-in hubs: the proxy wants the hub's cookie (httpOnly; the proxy strips it again)
-    if alias.is_some()
-        && let Some(token) = crate::auth::service_token()
-    {
-        let to = alias.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
-        let _ = cdp
-            .send("Network.setCookie", json!({ "name": crate::auth::COOKIE, "value": token, "url": to, "httpOnly": true }), Some(sid))
-            .await;
-    }
     let (tx, rx) = oneshot::channel();
     {
         let mut pages = lock(&PAGES);
@@ -595,7 +685,10 @@ async fn navigate(cdp: &Cdp, sid: &str, hub_session: &str, url: &str, preview_fo
         }
         return Err(HttpError::new(502, format!("Can't open {url}: {err}")));
     }
-    let _ = tokio::time::timeout(NAV_TIMEOUT, rx).await;
+    // no loader: the same document (only the #hash changed) — there is no load to wait for
+    if r.get("loaderId").and_then(Value::as_str).is_some_and(|l| !l.is_empty()) {
+        let _ = tokio::time::timeout(NAV_TIMEOUT, rx).await;
+    }
     if let Some(p) = lock(&PAGES).get_mut(hub_session) {
         p.loaded = None;
     }
@@ -610,7 +703,7 @@ async fn screenshot(cdp: &Cdp, sid: &str, full_page: bool) -> ApiResult<String> 
         let m = cdp.send("Page.getLayoutMetrics", json!({}), Some(sid)).await.map_err(cdp_err)?;
         let size = m.get("cssContentSize").or_else(|| m.get("contentSize")).cloned().unwrap_or(Value::Null);
         let n = |k: &str| size.get(k).and_then(Value::as_f64).unwrap_or(0.0).ceil();
-        params["clip"] = json!({ "x": 0, "y": 0, "width": n("width"), "height": n("height").min(8000.0), "scale": 1 });
+        params["clip"] = json!({ "x": 0, "y": 0, "width": n("width").min(3840.0), "height": n("height").min(8000.0), "scale": 1 });
         params["captureBeyondViewport"] = json!(true);
     }
     let r = cdp.send("Page.captureScreenshot", params, Some(sid)).await.map_err(cdp_err)?;
@@ -621,6 +714,9 @@ fn result(text: &str) -> BrowserResult {
     BrowserResult { ok: true, url: String::new(), title: String::new(), text: text.into(), screenshot: None, logs: vec![] }
 }
 
+/// Actions of one session run one after another: a page has one address, one pending load.
+static QUEUES: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
+
 /// One agent browser action for a hub session.
 pub async fn browser_action(
     config: &Config,
@@ -629,6 +725,20 @@ pub async fn browser_action(
     preview_for: Option<PreviewFor>,
 ) -> ApiResult<BrowserResult> {
     b.check()?;
+    let queue = lock(&QUEUES).entry(hub_session.to_string()).or_default().clone();
+    let result = {
+        let _turn = queue.lock().await;
+        act(config, hub_session, b, preview_for).await
+    };
+    // nobody else is waiting: forget the queue (2 = this clone and the map's)
+    let mut queues = lock(&QUEUES);
+    if Arc::strong_count(&queue) <= 2 {
+        queues.remove(hub_session);
+    }
+    result
+}
+
+async fn act(config: &Config, hub_session: &str, b: BrowserRequest, preview_for: Option<PreviewFor>) -> ApiResult<BrowserResult> {
     if b.action == Action::Close {
         close_session_browser(hub_session).await;
         return Ok(result("Browser page closed"));
@@ -666,7 +776,7 @@ pub async fn browser_action(
                 .await
                 .map_err(cdp_err)?;
             }
-            settle(600).await;
+            wait_settled(hub_session, 600).await;
             format!("Clicked {desc}")
         }
         Action::Type => {
@@ -683,7 +793,7 @@ pub async fn browser_action(
             evaluate(&cdp, &sid, "(() => { const e = document.activeElement; if (e && 'select' in e) e.select(); else document.execCommand('selectAll'); })()")
                 .await?;
             cdp.send("Input.insertText", json!({ "text": b.value.as_deref().unwrap_or("") }), Some(&sid)).await.map_err(cdp_err)?;
-            settle(300).await;
+            wait_settled(hub_session, 300).await;
             format!("Typed into {desc}")
         }
         Action::Press => {
@@ -709,7 +819,7 @@ pub async fn browser_action(
             )
             .await
             .map_err(cdp_err)?;
-            settle(600).await;
+            wait_settled(hub_session, 600).await;
             format!("Pressed {key}")
         }
         Action::Eval => {
@@ -765,6 +875,11 @@ pub async fn close_session_browser(hub_session: &str) {
     }
 }
 
+/// How many pages the agents have open (tests).
+pub fn open_pages() -> usize {
+    lock(&PAGES).len()
+}
+
 /// Stop the browser (hub exit, idle): the whole process group, reaped.
 pub fn shutdown() {
     lock(&PAGES).clear();
@@ -802,5 +917,33 @@ mod tests {
         assert!(BrowserRequest { key: Some("x".repeat(41)), ..Default::default() }.check().is_err());
         assert!(serde_json::from_str::<BrowserRequest>(r#"{"action":"fly"}"#).is_err());
         assert!(serde_json::from_str::<BrowserRequest>(r#"{"action":"open","url":"x"}"#).is_ok());
+    }
+
+    #[test]
+    fn addresses_the_agent_may_open() {
+        let ok = |u: &str| parse_target(u).unwrap().to_string();
+        assert_eq!(ok("localhost:5173/cart"), "http://localhost:5173/cart", "no scheme: http");
+        assert_eq!(ok(" https://example.com/a?b=1#c "), "https://example.com/a?b=1#c");
+        assert_eq!(ok("about:blank"), "about:blank");
+        for bad in ["file:///etc/passwd", "chrome://version", "javascript:alert(1)", "http://", "about:config", "data:text/html,x", ""] {
+            let e = parse_target(bad).unwrap_err();
+            assert_eq!(e.status.as_u16(), 400, "{bad}");
+        }
+        assert_eq!(parse_target("http://").unwrap_err().message, "Not a URL: http://");
+        assert_eq!(parse_target("file:///etc/passwd").unwrap_err().message, "Only http and https addresses");
+
+        // this machine's ports go through the preview; the rest of the address is kept
+        let port = |u: &str| local_app_port(&parse_target(u).unwrap());
+        assert_eq!(port("http://localhost:5173/x"), Some(5173));
+        assert_eq!(port("127.0.0.1:3000"), Some(3000));
+        assert_eq!(port("http://[::1]:8080/"), Some(8080));
+        assert_eq!(port("http://0.0.0.0:8080/"), Some(8080));
+        assert_eq!(port("http://localhost/"), None, "no port named");
+        assert_eq!(port("https://localhost:5173/"), None);
+        assert_eq!(port("http://example.com:5173/"), None);
+        let u = parse_target("http://user:pw@localhost:5173/a/b?c=d#e").unwrap();
+        assert_eq!(u.origin().ascii_serialization(), "http://localhost:5173", "the user:password part is not part of the origin");
+        assert_eq!(after_origin(&u), "/a/b?c=d#e");
+        assert_eq!(after_origin(&parse_target("localhost:5173").unwrap()), "/");
     }
 }

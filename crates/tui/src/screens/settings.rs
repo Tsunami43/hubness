@@ -280,12 +280,14 @@ fn is_github(host: &str) -> bool {
 /// Public hostings offered when adding a login (the ones that already have a login are left out).
 const POPULAR_HOSTS: [&str; 4] = ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"];
 
-/// The one-time code GitHub's device flow shows (`ABCD-1234`) in the CLI's output.
+/// The one-time code GitHub's device flow shows (`ABCD-1234`) in the CLI's output: two
+/// groups of four capitals and digits with a letter among them (`2026-1128` is a date or a
+/// number, not a code).
 fn device_code(text: &str) -> Option<String> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).find_map(|w| {
         let (a, b) = w.split_once('-')?;
         let part = |p: &str| p.len() == 4 && p.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-        (part(a) && part(b)).then(|| w.to_string())
+        (part(a) && part(b) && w.chars().any(|c| c.is_ascii_uppercase())).then(|| w.to_string())
     })
 }
 
@@ -700,13 +702,14 @@ impl Screen for Account {
         if self.user().is_none() {
             return vec![Action::new("r", "Reload")];
         }
-        vec![Action::new("p", "Change the password"), Action::new("l", "Log out"), Action::new("r", "Reload")]
+        vec![Action::new("p", "Change the password"), Action::new("o", "Log out"), Action::new("r", "Reload")]
     }
 
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         match key {
             "p" if self.user().is_some() => ctx.prompt_secret("current", "Your current password"),
-            "l" if self.user().is_some() => ctx.log_out(),
+            // not `l`: that is "right" everywhere, the action would never run
+            "o" if self.user().is_some() => ctx.log_out(),
             "r" => self.reload(ctx),
             _ => {}
         }
@@ -778,7 +781,7 @@ impl Screen for Account {
                     lines.push(Line::styled(format!(" {l}"), t.muted_style()));
                 }
                 lines.push(Line::raw(""));
-                lines.push(Line::styled(" Enter/p change the password · l log out", t.muted_style()));
+                lines.push(Line::styled(" Enter/p change the password · o log out", t.muted_style()));
             }
             (Some(_), None) => {
                 for l in wrap_words(
@@ -857,7 +860,7 @@ impl Screen for Connection {
             "r" => self.check(ctx),
             "a" => ctx.switch_hub(None),
             "s" => {
-                if let Some(url) = self.selected_hub() {
+                if let Some(url) = self.selected_hub().filter(|url| *url != self.current) {
                     ctx.switch_hub(Some(url));
                 }
             }
@@ -885,7 +888,12 @@ impl Screen for Connection {
         if k.code == KeyCode::Enter
             && let Some(url) = self.selected_hub()
         {
-            ctx.switch_hub(Some(url));
+            // the hub you are on: nothing to switch to (a switch would restart the whole app)
+            if url == self.current {
+                ctx.info("You are on this hub");
+            } else {
+                ctx.switch_hub(Some(url));
+            }
             return Handled::Yes;
         }
         Handled::No
@@ -894,7 +902,7 @@ impl Screen for Connection {
     fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
         if let Some(i) = id.strip_prefix("hubs:").and_then(|i| i.parse::<usize>().ok()) {
             if self.nav.selected() == Some(i) {
-                if let Some(url) = self.selected_hub() {
+                if let Some(url) = self.selected_hub().filter(|url| *url != self.current) {
                     ctx.switch_hub(Some(url));
                 }
             } else {
@@ -1156,6 +1164,43 @@ mod tests {
             token_page("gitlab.com").as_deref(),
             Some("https://gitlab.com/-/user_settings/personal_access_tokens?name=hubness&scopes=read_repository,write_repository")
         );
+    }
+
+    #[test]
+    fn device_codes_are_not_dates_versions_or_words() {
+        assert_eq!(device_code("First copy your one-time code: WDJB-MJHT\nPress Enter").as_deref(), Some("WDJB-MJHT"));
+        assert_eq!(device_code("code 12AB-3456.").as_deref(), Some("12AB-3456"));
+        for other in [
+            "2026-1128",
+            "started 2026-11-28 at 10:00",
+            "abcd-1234",
+            "ABCD-12345",
+            "ABC-1234",
+            "ABCD-1234-5678",
+            "ABCD1234",
+            "gh version 2.63.0 (2026-11-01)",
+            "",
+        ] {
+            assert_eq!(device_code(other), None, "{other}");
+        }
+        // the first code in the output
+        assert_eq!(device_code("old AAAA-1111 new BBBB-2222").as_deref(), Some("AAAA-1111"));
+    }
+
+    #[test]
+    fn token_pages_by_the_kind_of_host() {
+        // GitHub Enterprise on its own domain
+        assert!(token_page("github.corp.example").is_some_and(|u| u.starts_with("https://github.corp.example/settings/tokens/new")));
+        assert!(token_page("gitea.example.org").is_some_and(|u| u.ends_with("/user/settings/applications")));
+        assert!(token_page("git-forgejo.example.org").is_some_and(|u| u.ends_with("/user/settings/applications")));
+        assert!(token_page("codeberg.org").is_some());
+        assert_eq!(token_page("bitbucket.org").as_deref(), Some("https://id.atlassian.com/manage-profile/security/api-tokens"));
+        // a name that only contains the word is not that product
+        for host in ["mygithub.com", "notgitlab.example.com", "gitlabs.io", "ungitea.dev", "bitbucket.example.com", "example.com", ""] {
+            assert_eq!(token_page(host), None, "{host}");
+        }
+        assert!(is_github("github.com") && is_github("github.corp.example"));
+        assert!(!is_github("gitlab.com") && !is_github("mygithub.com") && !is_github("github"));
     }
 
     #[test]

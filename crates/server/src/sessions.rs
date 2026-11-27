@@ -235,9 +235,19 @@ async fn patch(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b): J
 
 // ---------- delete / archive ----------
 
+/// The session's page in the agents' browser goes with it (in the background: the caller may
+/// hold the database).
+fn close_browser_page(id: &str) {
+    let id = id.to_string();
+    if let Ok(rt) = tokio::runtime::Handle::try_current() {
+        rt.spawn(async move { crate::browser::close_session_browser(&id).await });
+    }
+}
+
 /// Delete one session for good and drop it from the lists.
 fn delete_now(s: &AppState, db: &Connection, id: &str) -> ApiResult<()> {
     s.runtime.stop(id);
+    close_browser_page(id);
     repo::delete(db, id)?;
     s.bus.emit_global(GlobalStreamMsg::SessionDeleted { id: id.to_string() });
     Ok(())
@@ -269,6 +279,9 @@ async fn set_archived(s: AppState, id: String, archived: bool) -> ApiResult<axum
         }
         repo::set_archived(db, &cur.id, archived)?.ok_or_else(|| HttpError::not_found("Session not found"))
     })?;
+    if archived {
+        close_browser_page(&id);
+    }
     announce(&s, &session);
     Ok(session)
 }

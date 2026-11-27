@@ -36,6 +36,8 @@ use crate::http::JsonBody;
 use crate::users;
 
 pub const COOKIE: &str = "hubness_session";
+/// The cookie of the agents' headless browser on a preview port (see `preview_pass`).
+pub const PREVIEW_COOKIE: &str = "hubness_preview";
 const COOKIE_MAX_AGE: u64 = 30 * 24 * 3600;
 
 static DB: OnceLock<Arc<Mutex<Connection>>> = OnceLock::new();
@@ -138,14 +140,32 @@ fn local_peer(req: &Request) -> (bool, Option<IpAddr>) {
     (ip.is_some_and(|ip| ip.is_loopback()) && !forwarded, ip)
 }
 
-/// Does the request carry valid credentials (or does the hub have no accounts)? Used by the
-/// preview ports, which listen on the hub's own address.
-pub fn authorized(headers: &HeaderMap) -> bool {
-    let Some(db) = db() else { return true };
-    !has_users(&db) || authenticate(&db, headers).is_some()
+/// What lets the agents' headless browser through the preview proxy of one port on a hub with
+/// accounts. It is not a hub credential: `/api` never reads this cookie, and the value opens
+/// nothing but that one preview port — so a previewed app that gets to see it (cookies are
+/// shared by every port of a host) learns nothing it can use against the hub.
+pub fn preview_pass(port: u16) -> String {
+    use sha2::{Digest, Sha256};
+    static SECRET: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| users::random_token().unwrap_or_else(|_| uuid::Uuid::new_v4().to_string()));
+    Sha256::digest(format!("{}:{port}", *SECRET)).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Drop the hub's own credentials before a request goes to a previewed app.
+fn preview_authorized(db: &Connection, headers: &HeaderMap, port: u16) -> bool {
+    !has_users(db)
+        || authenticate(db, headers).is_some()
+        || cookie_value(headers, PREVIEW_COOKIE).is_some_and(|v| eq(v, &preview_pass(port)))
+}
+
+/// May the request use the preview of `port`? Preview ports listen on the hub's own address:
+/// the browser's hub session (or no accounts at all), or the agents' browser with its pass.
+pub fn authorized(headers: &HeaderMap, port: u16) -> bool {
+    let Some(db) = db() else { return true };
+    preview_authorized(&db, headers, port)
+}
+
+/// Drop the hub's own credentials (and the preview pass) before a request goes to a
+/// previewed app.
 pub fn strip_credentials(headers: &mut HeaderMap) {
     if bearer(headers).is_some_and(|t| db().is_some_and(|db| principal_for(&db, t).is_some())) {
         headers.remove(header::AUTHORIZATION);
@@ -156,7 +176,7 @@ pub fn strip_credentials(headers: &mut HeaderMap) {
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(';'))
         .map(str::trim)
-        .filter(|kv| !kv.is_empty() && !kv.starts_with(&format!("{COOKIE}=")))
+        .filter(|kv| !kv.is_empty() && !kv.starts_with(&format!("{COOKIE}=")) && !kv.starts_with(&format!("{PREVIEW_COOKIE}=")))
         .map(String::from)
         .collect();
     headers.remove(header::COOKIE);
@@ -370,6 +390,46 @@ mod tests {
         assert!(is_loopback("127.0.0.1") && is_loopback("::1") && is_loopback("localhost"));
         assert!(!is_loopback("0.0.0.0") && !is_loopback("192.168.1.5"));
         assert!(cookie(&h, "t", 10).contains("HttpOnly; SameSite=Lax"));
+    }
+
+    #[test]
+    fn the_preview_pass_opens_one_preview_port_and_never_the_api() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::init(&db).unwrap();
+        let cookie = |v: String| {
+            let mut h = HeaderMap::new();
+            h.insert(header::COOKIE, HeaderValue::from_str(&v).unwrap());
+            h
+        };
+        let pass = preview_pass(8790);
+        assert_eq!(pass.len(), 64);
+        assert_eq!(pass, preview_pass(8790));
+        assert_ne!(pass, preview_pass(8791), "a pass is for one port");
+        assert!(preview_authorized(&db, &HeaderMap::new(), 8790), "no account: previews are as open as the hub");
+
+        let user = users::create_first(&db, "alice", "$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaA").unwrap();
+        let session = users::create_session(&db, &user.id).unwrap();
+        assert!(!preview_authorized(&db, &HeaderMap::new(), 8790));
+        assert!(preview_authorized(&db, &cookie(format!("{PREVIEW_COOKIE}={pass}")), 8790), "the agents' browser");
+        assert!(!preview_authorized(&db, &cookie(format!("{PREVIEW_COOKIE}={pass}")), 8791), "not another preview");
+        assert!(!preview_authorized(&db, &cookie(format!("{PREVIEW_COOKIE}=nope")), 8790));
+        assert!(preview_authorized(&db, &cookie(format!("{COOKIE}={session}")), 8790), "the user's own browser");
+
+        // the API knows nothing of the pass, under either cookie name or as a bearer token
+        assert!(authenticate(&db, &cookie(format!("{PREVIEW_COOKIE}={pass}"))).is_none());
+        assert!(authenticate(&db, &cookie(format!("{COOKIE}={pass}"))).is_none());
+        assert!(authenticate(&db, &cookie(format!("{PREVIEW_COOKIE}={session}"))).is_none(), "nor does it read that cookie at all");
+        let mut bearer = HeaderMap::new();
+        bearer.insert(header::AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {pass}")).unwrap());
+        assert!(authenticate(&db, &bearer).is_none());
+
+        // nothing of the hub's goes on to the previewed app
+        let mut h = cookie(format!("a=1; {COOKIE}={session}; {PREVIEW_COOKIE}={pass}; b=2"));
+        strip_credentials(&mut h);
+        assert_eq!(h.get(header::COOKIE).unwrap(), "a=1; b=2");
+        let mut only = cookie(format!("{PREVIEW_COOKIE}={pass}"));
+        strip_credentials(&mut only);
+        assert!(only.get(header::COOKIE).is_none());
     }
 
     #[test]

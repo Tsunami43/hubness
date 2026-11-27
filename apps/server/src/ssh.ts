@@ -1,5 +1,5 @@
 /**
- * SSH connections (Settings → SSH): servers the hub reaches with keys it holds, attached to
+ * SSH connections (System → SSH): servers the hub reaches with keys it holds, attached to
  * projects and groups with a note on what they are for there. The Rust server has the same
  * logic in `ssh.rs` (same `ssh-keygen` / `ssh` commands, same session setup).
  *
@@ -10,12 +10,18 @@
  *   with an alias per connection and wrappers for ssh / scp / sftp (and GIT_SSH_COMMAND),
  *   bind-mounted read-only into the sandbox; the agent's context lists the connections with
  *   their descriptions, which tell it prod from dev.
+ *
+ * A private key in the clear exists only in memory, in the ssh-agent, and for a moment in a
+ * private folder under the runtime dir (tmpfs: `ssh-keygen` and `ssh -i` want a file). The
+ * per-turn agents are stopped with the turn, on hub exit, and — after a crash — by the
+ * sweep on the next start (`sweepSshRuntime`).
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { SshBinding, SshConnection, SshTestResult } from '@hubness/shared';
 import { childEnv, config } from './config.ts';
 import { db, tx } from './db/index.ts';
@@ -53,35 +59,99 @@ const toConn = (r: Row): SshConnection => ({
   updatedAt: r.updated_at,
 });
 
+// ---------- request bodies (shape and types; the rules with messages are below) ----------
+
+const port = z.number().int().min(1).max(65535);
+/** `POST /ssh`. `null` counts as "not given", as in the Rust server. */
+export const SshCreate = z.object({
+  name: z.string(),
+  host: z.string(),
+  port: port.nullish(),
+  username: z.string(),
+  environment: z.string().nullish(),
+  description: z.string().nullish(),
+  privateKey: z.string().nullish(),
+});
+/** `PATCH /ssh/:id`: only the given fields change. */
+export const SshPatch = z.object({
+  name: z.string().nullish(),
+  host: z.string().nullish(),
+  port: port.nullish(),
+  username: z.string().nullish(),
+  environment: z.string().nullish(),
+  description: z.string().nullish(),
+});
+/** `PUT /projects/:id/ssh`, `/groups/:id/ssh`. */
+export const SshBindings = z.object({
+  bindings: z.array(z.object({ connectionId: z.string(), note: z.string().optional() })),
+});
+
 // ---------- validation ----------
 
-const str = (v: unknown) => (typeof v === 'string' ? v : '');
-
-export function checkName(v: unknown): string {
-  const n = str(v).trim();
+/** The alias: what agents type after `ssh` (letters, digits, `.`, `_`, `-`). */
+export function checkName(v: string): string {
+  const n = v.trim();
   if (!n || n.length > 64 || !/^[A-Za-z0-9._-]+$/.test(n) || n.startsWith('-')) throw new HttpError(400, 'name: 1-64 latin letters, digits, dots, dashes and underscores');
   return n;
 }
-function checkHost(v: unknown): string {
-  const h = str(v).trim();
-  if (!h || h.length > 253 || h.startsWith('-') || !/^[A-Za-z0-9.:\[\]_-]+$/.test(h)) throw new HttpError(400, 'host: a domain name or an IP address');
+/** A domain name or an address (IPv6 without brackets: OpenSSH takes it bare). */
+export function checkHost(v: string): string {
+  const h = v.trim();
+  if (!h || h.length > 253 || h.startsWith('-') || !/^[A-Za-z0-9.:_-]+$/.test(h)) throw new HttpError(400, 'host: a domain name or an IP address');
   return h;
 }
-function checkUser(v: unknown): string {
-  const u = str(v).trim();
+function checkUser(v: string): string {
+  const u = v.trim();
   if (!u || u.length > 64 || u.startsWith('-') || !/^[A-Za-z0-9._-]+$/.test(u)) throw new HttpError(400, 'username: latin letters, digits, dots, dashes and underscores');
   return u;
 }
-function checkText(field: string, v: unknown, max: number): string {
-  if (v !== undefined && v !== null && typeof v !== 'string') throw new HttpError(400, `${field}: a string`);
-  const t = str(v).trim();
+function checkText(field: string, v: string, max: number): string {
+  const t = v.trim();
   if (t.length > max) throw new HttpError(400, `${field}: at most ${max} characters`);
   return t;
 }
-function checkPort(v: unknown, fallback: number): number {
-  if (v === undefined || v === null) return fallback;
-  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 65535) throw new HttpError(400, 'port: 1-65535');
-  return v;
+
+// ---------- the runtime folder: private, on tmpfs where there is one ----------
+
+/** Make (or accept) a folder only this user can enter; anything else there is refused. */
+function privateDir(path: string) {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+  }
+  const st = lstatSync(path);
+  if (!st.isDirectory() || (process.getuid && st.uid !== process.getuid()) || (st.mode & 0o077) !== 0) throw new Error(`${path} is not a private folder of this user`);
+}
+
+/**
+ * `$XDG_RUNTIME_DIR/hubness-ssh/<data folder id>` (else under the temp folder, per user):
+ * per hub, so two hubs on one machine never touch each other's agents, and short — a unix
+ * socket path must stay under ~108 bytes.
+ */
+export function runtimeBase(): string {
+  const xdg = process.env.XDG_RUNTIME_DIR;
+  if (xdg) mkdirSync(xdg, { recursive: true });
+  const root = xdg ? join(xdg, 'hubness-ssh') : join(tmpdir(), `hubness-ssh-${process.getuid?.() ?? 0}`);
+  privateDir(root);
+  const base = join(root, createHash('sha256').update(config.dataDir).digest('hex').slice(0, 8));
+  privateDir(base);
+  return base;
+}
+
+/** A private folder for one key operation. */
+function scratch(): { dir: string; write: (name: string, body: string) => string; done: () => void } {
+  const dir = join(runtimeBase(), `tmp-${randomUUID().replace(/-/g, '').slice(0, 12)}`);
+  mkdirSync(dir, { mode: 0o700 });
+  return {
+    dir,
+    write(name, body) {
+      const p = join(dir, name);
+      writeFileSync(p, body, { mode: 0o600, flag: 'wx' });
+      return p;
+    },
+    done: () => rmSync(dir, { recursive: true, force: true }),
+  };
 }
 
 // ---------- storage ----------
@@ -99,23 +169,8 @@ function getSsh(id: string): SshConnection {
 const nameTaken = (name: string, except = '') =>
   Boolean(db.prepare('SELECT 1 FROM ssh_connections WHERE name = ? COLLATE NOCASE AND id != ?').get(name, except));
 
-/** A private folder for one key operation. */
-function scratch(): { dir: string; write: (name: string, body: string) => string; done: () => void } {
-  const dir = join(config.dataDir, 'ssh', `tmp-${randomUUID().replace(/-/g, '')}`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  return {
-    dir,
-    write(name, body) {
-      const p = join(dir, name);
-      writeFileSync(p, body, { mode: 0o600, flag: 'wx' });
-      return p;
-    },
-    done: () => rmSync(dir, { recursive: true, force: true }),
-  };
-}
-
 function run(cmd: string, args: string[]): string {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = spawnSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() });
   if (r.error) throw new HttpError(500, `${r.error.message} (is OpenSSH installed?)`);
   if (r.status !== 0) throw new HttpError(400, (r.stderr ?? '').trim() || 'ssh-keygen failed');
   return (r.stdout ?? '').trim();
@@ -132,13 +187,19 @@ function generate(comment: string): { privateKey: string; publicKey: string } {
   }
 }
 
+/** A pasted key as OpenSSH reads it: unix line ends (a CRLF key is "invalid format"), one final newline. */
+export const normalizeKey = (key: string) => `${key.trim().replace(/\r\n?/g, '\n')}\n`;
+
+/** The public line of an imported private key (refused with a passphrase). */
 function publicOf(privateKey: string): string {
   const s = scratch();
   try {
-    const key = s.write('key', `${privateKey.trim().replace(/\r\n/g, '\n')}\n`);
+    const key = s.write('key', privateKey);
     try {
+      // -P '' fails at once on a key with a passphrase instead of asking for one
       return run('ssh-keygen', ['-y', '-P', '', '-f', key]);
-    } catch {
+    } catch (e) {
+      if ((e as HttpError).status === 500) throw e;
       throw new HttpError(400, 'privateKey: not an OpenSSH private key, or it has a passphrase');
     }
   } finally {
@@ -146,35 +207,38 @@ function publicOf(privateKey: string): string {
   }
 }
 
-export function createSsh(b: Record<string, unknown>): SshConnection {
+export function createSsh(b: z.input<typeof SshCreate>): SshConnection {
   const name = checkName(b.name);
   const host = checkHost(b.host);
   const username = checkUser(b.username);
-  const port = checkPort(b.port, 22);
-  const environment = checkText('environment', b.environment, 32);
-  const description = checkText('description', b.description, 4000);
+  const environment = checkText('environment', b.environment ?? '', 32);
+  const description = checkText('description', b.description ?? '', 4000);
   if (nameTaken(name)) throw new HttpError(409, `An SSH connection named ${name} exists`);
-  const imported = str(b.privateKey).trim();
-  if (imported.length > 20_000) throw new HttpError(400, 'privateKey: too long');
-  const { privateKey, publicKey } = imported ? { privateKey: `${imported}\n`, publicKey: publicOf(imported) } : generate(`hubness:${name}`);
+  const pasted = (b.privateKey ?? '').trim();
+  if (pasted.length > 20_000) throw new HttpError(400, 'privateKey: too long');
+  let keys: { privateKey: string; publicKey: string };
+  if (pasted) {
+    const privateKey = normalizeKey(pasted);
+    keys = { privateKey, publicKey: publicOf(privateKey) };
+  } else keys = generate(`hubness:${name}`);
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO ssh_connections (id, name, host, port, username, environment, description, public_key, private_key, host_keys, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)`,
-  ).run(id, name, host, port, username, environment, description, publicKey, encrypt(NS, id, privateKey), now, now);
+  ).run(id, name, host, b.port ?? 22, username, environment, description, keys.publicKey, encrypt(NS, id, keys.privateKey), now, now);
   return getSsh(id);
 }
 
-export function updateSsh(id: string, b: Record<string, unknown>): SshConnection {
+export function updateSsh(id: string, b: z.input<typeof SshPatch>): SshConnection {
   const cur = getSsh(id);
-  const name = b.name === undefined ? cur.name : checkName(b.name);
+  const name = b.name == null ? cur.name : checkName(b.name);
   if (nameTaken(name, id)) throw new HttpError(409, `An SSH connection named ${name} exists`);
-  const host = b.host === undefined ? cur.host : checkHost(b.host);
-  const username = b.username === undefined ? cur.username : checkUser(b.username);
-  const port = checkPort(b.port, cur.port);
-  const environment = b.environment === undefined ? cur.environment : checkText('environment', b.environment, 32);
-  const description = b.description === undefined ? cur.description : checkText('description', b.description, 4000);
+  const host = b.host == null ? cur.host : checkHost(b.host);
+  const username = b.username == null ? cur.username : checkUser(b.username);
+  const port = b.port ?? cur.port;
+  const environment = b.environment == null ? cur.environment : checkText('environment', b.environment, 32);
+  const description = b.description == null ? cur.description : checkText('description', b.description, 4000);
   // a new address drops the pinned host keys: test again
   const hostKeys = host !== cur.host || port !== cur.port ? '' : cur.hostKeys;
   db.prepare('UPDATE ssh_connections SET name = ?, host = ?, port = ?, username = ?, environment = ?, description = ?, host_keys = ?, updated_at = ? WHERE id = ?').run(
@@ -202,12 +266,13 @@ function privateKey(id: string): string {
 
 // ---------- test ----------
 
+/** Connect once (`ssh … true`): accept and pin the host keys the first time, insist on them later. */
 export async function testSsh(id: string): Promise<SshTestResult> {
   const c = getSsh(id);
   const s = scratch();
   try {
     const key = s.write('key', privateKey(id));
-    const known = s.write('known_hosts', c.hostKeys);
+    const known = s.write('known_hosts', c.hostKeys ? `${c.hostKeys}\n` : '');
     const strict = c.hostKeys.trim() ? 'yes' : 'accept-new';
     const args = [
       '-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none',
@@ -257,20 +322,17 @@ export function sshBindings(o: Owner): SshBinding[] {
   return rows.map((r) => ({ connection: toConn(r), note: r.note }));
 }
 
-/** `{ bindings: [{ connectionId, note }] }` replaces the owner's connections (in that order). */
-export function setSshBindings(o: Owner, raw: unknown): SshBinding[] {
-  const body = (raw as { bindings?: unknown } | null)?.bindings;
-  if (!Array.isArray(body)) throw new HttpError(400, 'bindings: a list of { connectionId, note }');
+/** Replace the owner's connections (in the order given; a repeated one is ignored). */
+export function setSshBindings(o: Owner, body: z.input<typeof SshBindings>): SshBinding[] {
   const [col, id] = column(o);
   tx(() => {
     db.prepare(`DELETE FROM ssh_bindings WHERE ${col} = ?`).run(id);
     const seen = new Set<string>();
-    body.forEach((b: Record<string, unknown>, i) => {
-      const cid = str(b?.connectionId);
-      if (!cid || seen.has(cid)) return;
-      seen.add(cid);
-      getSsh(cid);
-      db.prepare(`INSERT INTO ssh_bindings (connection_id, ${col}, note, position) VALUES (?, ?, ?, ?)`).run(cid, id, checkText('note', b.note, 2000), i);
+    body.bindings.forEach((b, i) => {
+      if (seen.has(b.connectionId)) return;
+      seen.add(b.connectionId);
+      getSsh(b.connectionId);
+      db.prepare(`INSERT INTO ssh_bindings (connection_id, ${col}, note, position) VALUES (?, ?, ?, ?)`).run(b.connectionId, id, checkText('note', b.note ?? '', 2000), i);
     });
   });
   return sshBindings(o);
@@ -291,15 +353,25 @@ const which = (bin: string) =>
       }
     });
 
+/** A path in an ssh config (no escapes there: our paths have no quotes). */
 const q = (p: string) => `"${p}"`;
+/** A word for /bin/sh. */
+const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The ssh config of a session (the same text as `session_config` in ssh.rs). */
-export function sessionConfig(list: SshBinding[], sock: string, known: string): string {
+/**
+ * The ssh config of a session in `dir` (the same text as `session_config` in ssh.rs). Each
+ * alias offers only its own key (`IdentitiesOnly` + the public key file): with many
+ * connections a server would otherwise refuse after the first few wrong keys.
+ */
+export function sessionConfig(list: SshBinding[], dir: string): string {
   let out = "# hubness: the SSH connections of this session; the keys stay in the hub's agent\n";
   for (const { connection: c } of list) {
     const strict = c.hostKeys.trim() ? 'yes' : 'accept-new';
-    out += `\nHost ${c.name}\n  HostName ${c.host}\n  Port ${c.port}\n  User ${c.username}\n  IdentityAgent ${q(sock)}\n  UserKnownHostsFile ${q(known)}\n  StrictHostKeyChecking ${strict}\n`;
+    out +=
+      `\nHost ${c.name}\n  HostName ${c.host}\n  Port ${c.port}\n  User ${c.username}\n  IdentityAgent ${q(join(dir, 'agent.sock'))}\n` +
+      `  IdentityFile ${q(join(dir, 'keys', `${c.name}.pub`))}\n  IdentitiesOnly yes\n  UserKnownHostsFile ${q(join(dir, 'known_hosts'))}\n  StrictHostKeyChecking ${strict}\n`;
   }
+  // the user's own hosts (and their own agent) keep working outside the sandbox
   return out + '\nMatch all\n  Include ~/.ssh/config\n';
 }
 
@@ -316,60 +388,141 @@ export function sessionContext(list: SshBinding[]): string {
 }
 
 export interface SessionSsh {
+  /** PATH with the wrappers first, GIT_SSH_COMMAND. SSH_AUTH_SOCK is left alone: the user's own agent keeps working. */
   env: Record<string, string>;
-  /** Bind-mounted read-only into a sandbox. */
+  /** The session's folder: bind-mounted read-only into a sandbox. */
   mount: string;
+  /** The session agent's socket. */
+  sock: string;
   context: string;
+  /** Connections whose key the agent refused (left out of the config and the context). */
+  failed: string[];
   dispose: () => void;
 }
 
-const runtimeBase = () => (process.env.XDG_RUNTIME_DIR ? join(process.env.XDG_RUNTIME_DIR, 'hubness-ssh') : join(tmpdir(), `hubness-ssh-${process.getuid?.() ?? 0}`));
+/** Setups of turns in progress: stopped on hub exit. */
+const live = new Set<SessionSsh>();
 
-/** Set up the connections of a project / group session for one turn (null without any, or without OpenSSH). */
+export function disposeAllSsh() {
+  for (const s of [...live]) s.dispose();
+}
+process.on('exit', disposeAllSsh);
+
+/**
+ * Remove a session folder. A dying ssh-agent unlinks its own socket: `rmSync` that meets the
+ * vanished file stops quietly with the rest still there, so look again.
+ */
+function removeDir(dir: string) {
+  for (let i = 0; i < 5; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {}
+    if (!existsSync(dir)) return;
+    sleepMs(5);
+  }
+}
+
+const sleepMs = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function stopAgent(pid: number) {
+  try {
+    // only ever an ssh-agent: the pid may have been reused since a crash
+    if (readFileSync(`/proc/${pid}/comm`, 'utf8').trim() === 'ssh-agent') process.kill(pid);
+  } catch {}
+}
+
+/**
+ * Hub start: nothing of a previous run survives it. Agents left by a crash are stopped (their
+ * folders name them in `agent.pid`), key scratch folders are removed.
+ */
+export function sweepSshRuntime() {
+  try {
+    const base = runtimeBase();
+    for (const name of readdirSync(base)) {
+      const dir = join(base, name);
+      try {
+        stopAgent(Number(readFileSync(join(dir, 'agent.pid'), 'utf8')));
+      } catch {}
+      removeDir(dir);
+    }
+  } catch {}
+  // before 0.4 the scratch folders lived in the data folder
+  try {
+    const old = join(config.dataDir, 'ssh');
+    for (const name of readdirSync(old)) if (name.startsWith('tmp-')) rmSync(join(old, name), { recursive: true, force: true });
+  } catch {}
+}
+
+/**
+ * Set up the connections of a project / group session for one turn: null without any (or
+ * without OpenSSH). Throws when the setup can't be made — nothing is left running then.
+ */
 export function sessionSetup(owners: Owner[], sessionId: string): SessionSsh | null {
-  const list: SshBinding[] = [];
-  for (const o of owners) for (const b of sshBindings(o)) if (!list.some((x) => x.connection.id === b.connection.id)) list.push(b);
-  if (!list.length) return null;
+  const bound: SshBinding[] = [];
+  for (const o of owners) for (const b of sshBindings(o)) if (!bound.some((x) => x.connection.id === b.connection.id)) bound.push(b);
+  if (!bound.length) return null;
   const ssh = which('ssh');
   const agentBin = which('ssh-agent');
   const add = which('ssh-add');
   if (!ssh || !agentBin || !add) return null;
-  // a socket path must stay under ~108 bytes: a short folder in the runtime dir
-  const dir = join(runtimeBase(), sessionId.replace(/[^A-Za-z0-9]/g, '').slice(0, 12));
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(join(dir, 'bin'), { recursive: true, mode: 0o700 });
-  const sock = join(dir, 'agent.sock');
-  const known = join(dir, 'known_hosts');
-  const hosts = list.map((b) => b.connection.hostKeys.trim()).filter(Boolean).join('\n');
-  writeFileSync(known, hosts ? hosts + '\n' : '');
-  writeFileSync(join(dir, 'config'), sessionConfig(list, sock, known));
-  for (const [name, real] of [['ssh', ssh], ['scp', which('scp')], ['sftp', which('sftp')]] as const) {
-    if (!real) continue;
-    const w = join(dir, 'bin', name);
-    writeFileSync(w, `#!/bin/sh\nexec ${q(real)} -F ${q(join(dir, 'config'))} "$@"\n`);
-    chmodSync(w, 0o755);
-  }
-  // the session's own agent: the keys are usable through the socket, never readable
-  const agent: ChildProcess = spawn(agentBin, ['-D', '-a', sock], { env: childEnv(), stdio: 'ignore' });
-  const until = Date.now() + 2000;
-  while (!existsSync(sock) && Date.now() < until) spawnSync('sleep', ['0.04']);
-  const s = scratch();
+  // decrypt first: a key that can't be read fails here, before anything is started
+  const keys = bound.map((b) => privateKey(b.connection.id));
+
+  const dir = join(runtimeBase(), sessionId.replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'session');
+  // a previous turn of this session that never ended properly
   try {
-    list.forEach((b, i) => {
-      const key = s.write(`k${i}`, privateKey(b.connection.id));
-      spawnSync(add, ['-q', key], { env: { ...childEnv(), SSH_AUTH_SOCK: sock }, stdio: 'ignore' });
-      rmSync(key, { force: true });
-    });
-  } finally {
-    s.done();
-  }
-  return {
-    env: { SSH_AUTH_SOCK: sock, PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`, GIT_SSH_COMMAND: join(dir, 'bin', 'ssh') },
+    stopAgent(Number(readFileSync(join(dir, 'agent.pid'), 'utf8')));
+  } catch {}
+  removeDir(dir);
+  mkdirSync(dir, { mode: 0o700 });
+  const sock = join(dir, 'agent.sock');
+  let agent: ChildProcess | null = null;
+  const setup: SessionSsh = {
+    env: {},
     mount: dir,
-    context: sessionContext(list),
+    sock,
+    context: '',
+    failed: [],
     dispose() {
-      agent.kill();
-      rmSync(dir, { recursive: true, force: true });
+      live.delete(setup);
+      agent?.kill();
+      removeDir(dir);
     },
   };
+  live.add(setup);
+  try {
+    mkdirSync(join(dir, 'bin'), { mode: 0o700 });
+    mkdirSync(join(dir, 'keys'), { mode: 0o700 });
+    // the session's own agent: the keys are usable through the socket, never readable
+    agent = spawn(agentBin, ['-D', '-a', sock], { env: childEnv(), stdio: 'ignore' });
+    agent.on('error', () => {});
+    if (agent.pid) writeFileSync(join(dir, 'agent.pid'), String(agent.pid));
+    for (const until = Date.now() + 2000; !existsSync(sock) && Date.now() < until; ) sleepMs(10);
+    if (!existsSync(sock)) throw new Error('ssh-agent did not start');
+
+    const list = bound.filter((b, i) => {
+      // the key goes in over stdin: never a file
+      const r = spawnSync(add, ['-q', '-'], { input: keys[i], env: { ...childEnv(), SSH_AUTH_SOCK: sock }, stdio: ['pipe', 'ignore', 'ignore'] });
+      if (r.status !== 0) setup.failed.push(b.connection.name);
+      return r.status === 0;
+    });
+    if (!list.length) throw new Error(`ssh-add refused the key${setup.failed.length > 1 ? 's' : ''} of ${setup.failed.join(', ')}`);
+
+    for (const { connection: c } of list) writeFileSync(join(dir, 'keys', `${c.name}.pub`), `${c.publicKey}\n`);
+    const hosts = list.map((b) => b.connection.hostKeys.trim()).filter(Boolean).join('\n');
+    writeFileSync(join(dir, 'known_hosts'), hosts ? hosts + '\n' : '');
+    writeFileSync(join(dir, 'config'), sessionConfig(list, dir));
+    for (const [name, real] of [['ssh', ssh], ['scp', which('scp')], ['sftp', which('sftp')]] as const) {
+      if (!real) continue;
+      const w = join(dir, 'bin', name);
+      writeFileSync(w, `#!/bin/sh\nexec ${sh(real)} -F ${sh(join(dir, 'config'))} "$@"\n`);
+      chmodSync(w, 0o755);
+    }
+    setup.env = { PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`, GIT_SSH_COMMAND: sh(join(dir, 'bin', 'ssh')) };
+    setup.context = sessionContext(list);
+    return setup;
+  } catch (e) {
+    setup.dispose();
+    throw e;
+  }
 }

@@ -4,7 +4,7 @@
 mod draw;
 mod help;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
@@ -74,6 +74,9 @@ pub struct App {
     /// A count typed before a motion (`5j`).
     count: Option<usize>,
     modal: Option<(ScreenId, Modal, TextInput)>,
+    /// Modals asked for while another one was open (an answer to a background request
+    /// arrived mid-typing): shown one by one as the open one closes, never over it.
+    queued: VecDeque<(ScreenId, Modal, TextInput)>,
     sidebar: bool,
     /// The sign-in screen of a hub with accounts (takes over the whole terminal).
     login: Option<LoginForm>,
@@ -126,6 +129,7 @@ impl App {
             pending: vec![],
             count: None,
             modal: None,
+            queued: VecDeque::new(),
             sidebar: true,
             login,
             user,
@@ -205,6 +209,7 @@ impl App {
         self.ctx.screen = APP;
         self.ctx.close_stream("global");
         self.modal = None;
+        self.queued.clear();
         self.overlay = Overlay::None;
         self.help = None;
         let user = self.user.take().or_else(|| crate::hubs::stored(&url).1);
@@ -342,17 +347,48 @@ impl App {
         Some(r)
     }
 
+    /// Is the screen the one on display (the app itself always is)?
+    fn visible(&self, id: ScreenId) -> bool {
+        id == APP || self.screens.get(&self.route).is_some_and(|s| s.id == id)
+    }
+
+    /// A modal from a screen the user has left: a message becomes a status line, a question
+    /// about something they are no longer looking at is dropped.
+    fn modal_of_hidden(&mut self, m: Modal) {
+        if let Modal::Message { title, text } = m {
+            let first = text.lines().next().unwrap_or_default();
+            self.ctx.info(if first.is_empty() { title } else { format!("{title}: {first}") });
+        }
+    }
+
+    /// Show the next queued modal once nothing is open.
+    fn next_modal(&mut self) {
+        while self.modal.is_none() {
+            let Some((owner, m, input)) = self.queued.pop_front() else { return };
+            if self.visible(owner) {
+                self.modal = Some((owner, m, input));
+            } else {
+                self.modal_of_hidden(m);
+            }
+        }
+    }
+
     fn apply_requests(&mut self) {
         let requests = std::mem::take(&mut self.ctx.requests);
         let from = self.ctx.screen;
         for r in requests {
+            // an answer to a background request may arrive after the user moved on: a screen
+            // that is not on display neither navigates nor puts a popup over another screen
+            let shown = self.visible(from);
             match r {
+                Request::Go(_) | Request::Back if !shown => {}
                 Request::Go(route) => self.go(route),
                 Request::Back => {
                     if let Some(prev) = self.history.pop() {
                         self.show(prev);
                     }
                 }
+                Request::Modal(m) if !shown => self.modal_of_hidden(m),
                 Request::Modal(m) => {
                     let input = match &m {
                         Modal::Input { value, secret, multiline, .. } => {
@@ -363,7 +399,12 @@ impl App {
                         }
                         _ => TextInput::default(),
                     };
-                    self.modal = Some((from, m, input));
+                    // never over an open modal (what is typed there would be lost): it waits
+                    if self.modal.is_some() {
+                        self.queued.push_back((from, m, input));
+                    } else {
+                        self.modal = Some((from, m, input));
+                    }
                 }
                 Request::OpenUrl(url) => open_url(&url, &mut self.ctx),
                 Request::SwitchHub(url) => self.switch_hub(url),
@@ -404,13 +445,7 @@ impl App {
                 self.sign_out(Some("Signed out".into()));
             }
             AppEvent::Input(Event::Key(k)) if k.kind != KeyEventKind::Release => self.on_key(k),
-            AppEvent::Input(Event::Paste(text)) => {
-                if let Some((_, Modal::Input { .. }, input)) = &mut self.modal {
-                    input.paste(&text);
-                } else {
-                    self.with_screen(|s, ctx| s.on_paste(&text, ctx));
-                }
-            }
+            AppEvent::Input(Event::Paste(text)) => self.on_paste(&text),
             AppEvent::Input(Event::Mouse(m)) => self.on_mouse(m),
             AppEvent::Input(_) => {}
             AppEvent::Task { screen: APP, key, result } => self.on_shared(&key, result),
@@ -431,6 +466,27 @@ impl App {
                 self.with_screen_id(screen, |s, ctx| s.on_stream(&key, serde_json::json!({ "type": "__ended", "error": error }), ctx));
             }
             AppEvent::Global(msg) => self.on_global(&msg),
+        }
+    }
+
+    /// Pasted text goes where the keys go: into the open prompt or the picker's filter, into
+    /// the help's filter while it is typed — never to the screen under a popup.
+    fn on_paste(&mut self, text: &str) {
+        let one_line = || text.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+        match &mut self.modal {
+            Some((_, Modal::Input { .. }, input)) => input.paste(text),
+            Some((_, Modal::Pick { filter, selected, .. }, _)) => {
+                filter.push_str(&one_line());
+                *selected = 0;
+            }
+            Some(_) => {}
+            None => {
+                if let Some(h) = &mut self.help {
+                    h.on_paste(&one_line());
+                } else if matches!(self.overlay, Overlay::None) {
+                    self.with_screen(|s, ctx| s.on_paste(text, ctx));
+                }
+            }
         }
     }
 
@@ -902,6 +958,12 @@ impl App {
     }
 
     fn on_modal_key(&mut self, k: KeyEvent) {
+        self.modal_key(k);
+        // the modal closed (and its answer opened no other): the next waiting one
+        self.next_modal();
+    }
+
+    fn modal_key(&mut self, k: KeyEvent) {
         let Some((owner, modal, mut input)) = self.modal.take() else { return };
         let mut answer: Option<(String, Value)> = None;
         let mut keep = None;
@@ -1080,6 +1142,127 @@ fn open_url(url: &str, ctx: &mut Ctx) {
 mod tests {
     use super::*;
 
+    /// An app on a hub that isn't there (requests fail in the background), with the runtime
+    /// its screens start tasks on.
+    fn app() -> (tokio::runtime::Runtime, App) {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let app = {
+            let _guard = rt.enter();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            App::new(hubness_client::Client::new("http://127.0.0.1:1", None).unwrap(), tx, None, None)
+        };
+        (rt, app)
+    }
+
+    fn key(code: KeyCode) -> AppEvent {
+        AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+    }
+
+    fn visible_id(app: &App) -> ScreenId {
+        app.screens[&app.route].id
+    }
+
+    #[test]
+    fn a_modal_never_replaces_an_open_one() {
+        let (rt, mut app) = app();
+        let _guard = rt.enter();
+        app.ctx.screen = visible_id(&app);
+        app.ctx.prompt("name", "Name", "typed so far");
+        app.apply_requests();
+        // an answer to a background request arrives while the prompt is open
+        app.ctx.screen = visible_id(&app);
+        app.ctx.message("prod: can't connect", "timeout");
+        app.ctx.confirm("sure", "Sure?", "…", false);
+        app.apply_requests();
+        assert!(matches!(&app.modal, Some((_, Modal::Input { key, .. }, input)) if key == "name" && input.value() == "typed so far"));
+        assert_eq!(app.queued.len(), 2);
+        // closing the prompt shows the waiting ones, in order
+        app.handle(key(KeyCode::Esc));
+        assert!(matches!(&app.modal, Some((_, Modal::Message { title, .. }, _)) if title == "prod: can't connect"));
+        app.handle(key(KeyCode::Enter));
+        assert!(matches!(&app.modal, Some((_, Modal::Confirm { key, .. }, _)) if key == "sure"));
+        app.handle(key(KeyCode::Esc));
+        assert!(app.modal.is_none() && app.queued.is_empty());
+    }
+
+    #[test]
+    fn a_screen_the_user_left_neither_navigates_nor_pops_up() {
+        let (rt, mut app) = app();
+        let _guard = rt.enter();
+        let home = visible_id(&app);
+        app.go(Route::Projects);
+        assert_eq!(app.route, Route::Projects);
+        // the chats screen's request finishes now
+        app.ctx.screen = home;
+        app.ctx.go(Route::Chat("s1".into()));
+        app.ctx.back();
+        app.ctx.message("Created", "the session is ready\nmore");
+        app.ctx.prompt("title", "Title", "");
+        app.apply_requests();
+        assert_eq!(app.route, Route::Projects, "the user stays where they are");
+        assert_eq!(app.history, vec![Route::Home]);
+        assert!(app.modal.is_none(), "no popup over another screen");
+        assert_eq!(app.ctx.status, Some(("Created: the session is ready".into(), false)), "a message becomes a status line");
+
+        // queued while its screen was shown, then the user left before it came up
+        app.ctx.screen = visible_id(&app);
+        app.ctx.prompt("a", "A", "");
+        app.ctx.message("Later", "text");
+        app.apply_requests();
+        assert_eq!(app.queued.len(), 1);
+        app.queued[0].0 = home;
+        app.handle(key(KeyCode::Esc));
+        assert!(app.modal.is_none());
+        assert_eq!(app.ctx.status, Some(("Later: text".into(), false)));
+
+        // the screen on display and the app itself still navigate
+        app.ctx.screen = visible_id(&app);
+        app.ctx.go(Route::Settings(None));
+        app.apply_requests();
+        assert_eq!(app.route, Route::Settings(None));
+    }
+
+    #[test]
+    fn a_paste_goes_where_the_keys_go() {
+        let (rt, mut app) = app();
+        let _guard = rt.enter();
+        let paste = |app: &mut App, text: &str| app.handle(AppEvent::Input(Event::Paste(text.into())));
+
+        // the picker: into its filter, as one line
+        app.open_palette();
+        paste(&mut app, "  quit\n");
+        let Some((_, Modal::Pick { filter, selected, items, .. }, _)) = &app.modal else { panic!("the palette is open") };
+        assert_eq!((filter.as_str(), *selected), ("quit", 0));
+        assert_eq!(filtered(items, filter)[0].0.0, "cmd:quit");
+        app.handle(key(KeyCode::Esc));
+
+        // a prompt: into its input, newlines and all for a multi-line one
+        app.ctx.screen = visible_id(&app);
+        app.ctx.prompt_multiline("text", "Text", "");
+        app.apply_requests();
+        paste(&mut app, "one\ntwo");
+        assert!(matches!(&app.modal, Some((_, Modal::Input { .. }, input)) if input.value() == "one\ntwo"));
+        app.handle(key(KeyCode::Esc));
+
+        // a message, the help and the leader menu swallow it: nothing reaches the screen below
+        app.ctx.screen = visible_id(&app);
+        app.ctx.message("Done", "ok");
+        app.apply_requests();
+        paste(&mut app, "x");
+        assert!(matches!(&app.modal, Some((_, Modal::Message { .. }, _))));
+        app.handle(key(KeyCode::Enter));
+        app.open_help();
+        paste(&mut app, "refresh");
+        assert_eq!(app.help.as_ref().map(|h| h.filter.as_str()), Some(""));
+        app.handle(key(KeyCode::Char('/')));
+        paste(&mut app, "refresh");
+        assert_eq!(app.help.as_ref().map(|h| h.filter.as_str()), Some("refresh"));
+        app.help = None;
+        app.overlay = Overlay::Leader(Menu::Root);
+        paste(&mut app, "c");
+        assert!(app.overlay == Overlay::Leader(Menu::Root) && app.route == Route::Home, "a paste is not a leader key");
+    }
+
     #[test]
     fn live_filters_by_key() {
         assert!(is_live_filter("filter"));
@@ -1087,6 +1270,11 @@ mod tests {
         assert!(is_live_filter("tab0:import-filter"));
         assert!(!is_live_filter("filter:rename"));
         assert!(!is_live_filter("rename"));
+        // only the key's own last part counts, and only the whole word
+        assert!(is_live_filter("tab1:tab2:log-filter"));
+        for other in ["filters", "prefilter", "tab2:filter:name", "tab0:filter-name", "", "tab1:"] {
+            assert!(!is_live_filter(other), "{other}");
+        }
     }
 
     #[test]

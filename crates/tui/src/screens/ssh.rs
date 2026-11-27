@@ -36,6 +36,32 @@ pub fn authorized_keys_line(public_key: &str) -> String {
     format!("mkdir -p ~/.ssh && echo '{}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys", public_key.trim())
 }
 
+/// The port typed into the form: empty is 22; anything but 1–65535 is refused (it was once
+/// silently replaced with 22).
+pub fn parse_port(text: &str) -> Option<u16> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Some(22);
+    }
+    t.parse::<u16>().ok().filter(|p| *p > 0)
+}
+
+/// Where the connection `id` is in the list.
+fn position_of(items: &[Value], id: &str) -> Option<usize> {
+    items.iter().position(|c| c["id"].as_str() == Some(id))
+}
+
+/// The bindings as they will be once `list` (connection id, note) is saved: shown at once, so
+/// the next change builds on this one and not on an answer that is still on its way.
+fn bindings_after(current: &[Value], all: &[Value], list: &[(String, String)]) -> Vec<Value> {
+    list.iter()
+        .filter_map(|(id, note)| {
+            let connection = current.iter().map(|b| &b["connection"]).chain(all.iter()).find(|c| c["id"].as_str() == Some(id))?;
+            Some(json!({ "connection": connection, "note": note }))
+        })
+        .collect()
+}
+
 fn env_style(t: &Theme, env: &str) -> Style {
     match env.to_ascii_lowercase().as_str() {
         "prod" | "production" | "live" => Style::default().fg(t.danger),
@@ -78,9 +104,16 @@ pub struct Connections {
     list: ListState,
     items: Vec<Value>,
     loaded: bool,
-    /// The form being filled: the id when editing, the answers so far.
+    /// The form being filled: the id when editing, the answers so far. It stays until the
+    /// hub accepts it: a refused request brings it back with what was typed.
     form: Option<(Option<String>, Map<String, Value>)>,
     step: usize,
+    /// The private key pasted for an import, kept with the form.
+    key: Option<String>,
+    /// Why the form is asked again (a refused request, a bad port), shown in the prompt.
+    problem: Option<String>,
+    /// The connection to select once the list is reloaded (the one just created).
+    select: Option<String>,
 }
 
 impl Connections {
@@ -102,14 +135,23 @@ impl Connections {
         }
         self.form = Some((id, answers));
         self.step = 0;
+        self.key = None;
+        self.problem = None;
         self.ask(ctx);
+    }
+
+    fn drop_form(&mut self) {
+        self.form = None;
+        self.key = None;
+        self.problem = None;
     }
 
     fn ask(&mut self, ctx: &mut Ctx) {
         let Some((id, answers)) = &self.form else { return };
         let Some((key, title)) = STEPS.get(self.step) else {
-            if id.is_some() {
-                self.submit(None, ctx);
+            // an edit has no key step; a key pasted before a refused request is used again
+            if id.is_some() || self.key.is_some() {
+                self.submit(ctx);
             } else {
                 ctx.pick(
                     "keychoice",
@@ -129,7 +171,10 @@ impl Connections {
             _ => String::new(),
         };
         let what = if id.is_some() { "Edit the connection" } else { "New SSH connection" };
-        let title = format!("{what} · {title}");
+        let title = match self.problem.take() {
+            Some(problem) => format!("{problem} · {title}"),
+            None => format!("{what} · {title}"),
+        };
         if *key == "description" {
             ctx.prompt_multiline("field", title, current);
         } else {
@@ -137,14 +182,20 @@ impl Connections {
         }
     }
 
-    fn submit(&mut self, private_key: Option<String>, ctx: &mut Ctx) {
-        let Some((id, mut body)) = self.form.take() else { return };
-        let port = body.get("port").and_then(|p| p.as_str().map(|s| s.trim().parse::<u64>().ok()).unwrap_or(p.as_u64())).unwrap_or(22);
+    /// Send the form. It is kept until the answer: an error returns to it (`on_task`).
+    fn submit(&mut self, ctx: &mut Ctx) {
+        let Some((id, mut body)) = self.form.clone() else { return };
+        // the port step checked it; an edit keeps the number it had
+        let port = match body.get("port") {
+            Some(Value::String(s)) => parse_port(s).unwrap_or(22),
+            Some(p) => p.as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(22),
+            None => 22,
+        };
         body.insert("port".into(), json!(port));
         match id {
             Some(id) => ctx.send("saved", Method::PATCH, format!("/ssh/{}", super::session::enc(&id)), Value::Object(body)),
             None => {
-                if let Some(k) = private_key {
+                if let Some(k) = &self.key {
                     body.insert("privateKey".into(), json!(k));
                 }
                 ctx.info("creating the connection…");
@@ -218,7 +269,23 @@ impl Screen for Connections {
     fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
         // a cancelled prompt drops the form
         if matches!(key, "field" | "keychoice" | "privatekey") && matches!(result, Ok(Value::Null)) {
-            self.form = None;
+            self.drop_form();
+            return;
+        }
+        // the hub refused the form (a name that is taken, a key it can't read): back to it,
+        // with everything that was typed
+        if matches!(key, "created" | "saved")
+            && let Err(e) = &result
+            && self.form.is_some()
+        {
+            let problem = e.to_string();
+            if problem.contains("privateKey") {
+                self.key = None;
+            }
+            ctx.error(&problem);
+            self.problem = Some(format!("Not saved — {problem}"));
+            self.step = 0;
+            self.ask(ctx);
             return;
         }
         let Some(v) = ctx.ok(result) else { return };
@@ -226,29 +293,43 @@ impl Screen for Connections {
             "list" => {
                 self.items = v.as_array().cloned().unwrap_or_default();
                 self.loaded = true;
+                // the connection just created: `t`, `c` and `y` act on the selected one
+                if let Some(i) = self.select.take().and_then(|id| position_of(&self.items, &id)) {
+                    self.list.select(Some(i));
+                }
                 clamp(&mut self.list, self.items.len());
             }
             "field" => {
                 let Some((name, _)) = STEPS.get(self.step) else { return };
+                let text = v.as_str().unwrap_or_default().trim().to_string();
+                if *name == "port" && parse_port(&text).is_none() {
+                    // ask again instead of quietly using 22
+                    self.problem = Some(format!("“{text}” is not a port (1–65535)"));
+                    self.ask(ctx);
+                    return;
+                }
                 if let Some((_, answers)) = &mut self.form {
-                    answers.insert((*name).into(), json!(v.as_str().unwrap_or_default().trim()));
+                    answers.insert((*name).into(), json!(text));
                 }
                 self.step += 1;
                 self.ask(ctx);
             }
             "keychoice" => match v.as_str() {
                 Some("import") => ctx.prompt_multiline("privatekey", "Paste the private key (-----BEGIN OPENSSH PRIVATE KEY----- …)", ""),
-                _ => self.submit(None, ctx),
+                _ => self.submit(ctx),
             },
             "privatekey" => {
                 let k = v.as_str().unwrap_or_default().trim().to_string();
                 if k.is_empty() {
-                    self.form = None;
+                    self.drop_form();
                 } else {
-                    self.submit(Some(k), ctx);
+                    self.key = Some(k);
+                    self.submit(ctx);
                 }
             }
             "created" => {
+                self.drop_form();
+                self.select = v["id"].as_str().map(String::from);
                 let public = v["publicKey"].as_str().unwrap_or_default();
                 ctx.message(
                     format!("{} is ready", v["name"].as_str().unwrap_or_default()),
@@ -260,6 +341,7 @@ impl Screen for Connections {
                 self.reload(ctx);
             }
             "saved" => {
+                self.drop_form();
                 ctx.info("connection saved");
                 self.reload(ctx);
             }
@@ -354,6 +436,8 @@ pub struct Bindings {
     loaded: bool,
     /// The connection being attached, waiting for its note.
     adding: Option<String>,
+    /// Saves on their way to the hub: until the last one answers, the list shown is ours.
+    saving: usize,
 }
 
 impl Bindings {
@@ -366,7 +450,15 @@ impl Bindings {
     }
 
     fn new(base: String) -> Self {
-        Self { base, list: ListState::default().with_selected(Some(0)), bindings: vec![], all: vec![], loaded: false, adding: None }
+        Self {
+            base,
+            list: ListState::default().with_selected(Some(0)),
+            bindings: vec![],
+            all: vec![],
+            loaded: false,
+            adding: None,
+            saving: 0,
+        }
     }
 
     fn reload(&self, ctx: &mut Ctx) {
@@ -374,10 +466,14 @@ impl Bindings {
         ctx.get("all", "/ssh");
     }
 
-    /// Save the list as `(connection id, note)` pairs.
-    fn save(&self, list: Vec<(String, String)>, ctx: &mut Ctx) {
+    /// Save the list as `(connection id, note)` pairs. The list on screen changes at once:
+    /// a second change made before the hub answers builds on the first, not on the old list.
+    fn save(&mut self, list: Vec<(String, String)>, ctx: &mut Ctx) {
+        self.bindings = bindings_after(&self.bindings, &self.all, &list);
+        clamp(&mut self.list, self.bindings.len());
+        self.saving += 1;
         let bindings: Vec<Value> = list.into_iter().map(|(id, note)| json!({ "connectionId": id, "note": note })).collect();
-        ctx.send("bindings", Method::PUT, format!("/{}/ssh", self.base), json!({ "bindings": bindings }));
+        ctx.send("saved", Method::PUT, format!("/{}/ssh", self.base), json!({ "bindings": bindings }));
     }
 
     fn current(&self) -> Vec<(String, String)> {
@@ -465,9 +561,18 @@ impl Screen for Bindings {
     }
 
     fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
+        if key == "saved" {
+            self.saving = self.saving.saturating_sub(1);
+            if result.is_err() && self.saving == 0 {
+                // what is shown was never saved: back to what the hub has
+                self.reload(ctx);
+            }
+        }
         let Some(v) = ctx.ok(result) else { return };
         match key {
-            "bindings" => {
+            // an answer older than a save still on its way would bring back the old list
+            "bindings" | "saved" if self.saving > 0 => {}
+            "bindings" | "saved" => {
                 self.bindings = v.as_array().cloned().unwrap_or_default();
                 self.loaded = true;
                 clamp(&mut self.list, self.bindings.len());
@@ -542,6 +647,133 @@ impl Screen for Bindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ports() {
+        assert_eq!(parse_port(""), Some(22));
+        assert_eq!(parse_port("  "), Some(22));
+        assert_eq!(parse_port(" 2222 "), Some(2222));
+        assert_eq!(parse_port("65535"), Some(65535));
+        for bad in ["0", "65536", "22o2", "-22", "2 2", "22.0", "ssh", "１２"] {
+            assert_eq!(parse_port(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_command_for_the_server_takes_the_key_as_one_word() {
+        let line = authorized_keys_line("  ssh-ed25519 AAAAC3Nza hubness:prod-api\n");
+        assert!(line.contains("echo 'ssh-ed25519 AAAAC3Nza hubness:prod-api' >> ~/.ssh/authorized_keys"), "trimmed, in single quotes");
+        assert!(line.starts_with("mkdir -p ~/.ssh && ") && line.ends_with("chmod 600 ~/.ssh/authorized_keys"));
+        // no environment, the default port
+        assert_eq!(describe(&json!({ "name": "box", "username": "root", "host": "h" })), "box — root@h:22");
+    }
+
+    fn conn(id: &str) -> Value {
+        json!({ "id": id, "name": id, "username": "u", "host": "h", "port": 22, "publicKey": format!("ssh-ed25519 KEY-{id}") })
+    }
+
+    #[test]
+    fn the_new_connection_is_selected_and_the_form_survives_a_refusal() {
+        let mut ctx = crate::core::test_ctx();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _guard = rt.enter();
+        let mut s = Connections::default();
+        s.on_task("list", Ok(json!([conn("alpha"), conn("zeta")])), &mut ctx);
+        s.list.select(Some(0));
+
+        // fill the form: a bad port is asked again, not replaced with 22
+        s.on_action("n", &mut ctx);
+        for answer in ["beta", "example.com", "deploy"] {
+            s.on_task("field", Ok(json!(answer)), &mut ctx);
+        }
+        s.on_task("field", Ok(json!("22o2")), &mut ctx);
+        assert_eq!(s.step, 3, "still on the port");
+        assert!(
+            matches!(ctx.requests.last(), Some(crate::core::Request::Modal(crate::core::Modal::Input { title, .. })) if title.contains("is not a port"))
+        );
+        for answer in ["2222", "prod", "API"] {
+            s.on_task("field", Ok(json!(answer)), &mut ctx);
+        }
+        s.on_task("keychoice", Ok(json!("import")), &mut ctx);
+        s.on_task("privatekey", Ok(json!("-----BEGIN OPENSSH PRIVATE KEY-----")), &mut ctx);
+
+        // the hub refuses it: the form comes back with everything that was typed
+        ctx.requests.clear();
+        s.on_task("created", Err(anyhow::anyhow!("409: An SSH connection named beta exists")), &mut ctx);
+        let (_, answers) = s.form.as_ref().expect("the form is kept");
+        assert_eq!(
+            (answers["name"].as_str(), answers["host"].as_str(), answers["port"].as_str()),
+            (Some("beta"), Some("example.com"), Some("2222"))
+        );
+        assert!(s.key.is_some(), "and the pasted key");
+        assert_eq!(s.step, 0);
+        assert!(
+            matches!(ctx.requests.last(), Some(crate::core::Request::Modal(crate::core::Modal::Input { title, value, .. })) if title.starts_with("Not saved — 409") && value == "beta")
+        );
+        // a key the hub can't read is asked for again
+        s.on_task("created", Err(anyhow::anyhow!("400: privateKey: not an OpenSSH private key")), &mut ctx);
+        assert!(s.key.is_none() && s.form.is_some());
+
+        // accepted: the form is gone and the new connection is the selected one
+        s.on_task("created", Ok(conn("beta")), &mut ctx);
+        assert!(s.form.is_none());
+        s.on_task("list", Ok(json!([conn("alpha"), conn("beta"), conn("zeta")])), &mut ctx);
+        assert_eq!(s.selected().and_then(|c| c["id"].as_str()), Some("beta"), "t / c / y act on the new connection");
+        // a later reload keeps the user's selection
+        s.list.select(Some(2));
+        s.on_task("list", Ok(json!([conn("alpha"), conn("beta"), conn("zeta")])), &mut ctx);
+        assert_eq!(s.list.selected(), Some(2));
+        // the list shrank under the selection
+        s.on_task("list", Ok(json!([conn("alpha")])), &mut ctx);
+        assert_eq!(s.list.selected(), Some(0));
+        assert_eq!(position_of(&s.items, "missing"), None);
+
+        // Esc in a prompt drops the form
+        s.on_action("n", &mut ctx);
+        s.on_task("field", Ok(Value::Null), &mut ctx);
+        assert!(s.form.is_none());
+    }
+
+    #[test]
+    fn a_second_change_builds_on_the_first_before_the_hub_answers() {
+        let mut ctx = crate::core::test_ctx();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _guard = rt.enter();
+        let bound =
+            |ids: &[&str]| Value::Array(ids.iter().map(|id| json!({ "connection": conn(id), "note": format!("note {id}") })).collect());
+        let ids = |s: &Bindings| s.current().into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        let mut s = Bindings::project("p1");
+        s.on_task("all", Ok(json!([conn("a"), conn("b"), conn("c"), conn("d")])), &mut ctx);
+        s.on_task("bindings", Ok(bound(&["a", "b", "c"])), &mut ctx);
+
+        // x, j, x quickly: the second detach must not bring the first connection back
+        s.list.select(Some(0));
+        s.on_action("x", &mut ctx);
+        assert_eq!(ids(&s), ["b", "c"], "shown at once");
+        s.list.select(Some(1));
+        s.on_action("x", &mut ctx);
+        assert_eq!(ids(&s), ["b"]);
+        assert_eq!(s.saving, 2);
+        // the first answer (and a reload that started earlier) are older than the second save
+        s.on_task("saved", Ok(bound(&["b", "c"])), &mut ctx);
+        s.on_task("bindings", Ok(bound(&["a", "b", "c"])), &mut ctx);
+        assert_eq!(ids(&s), ["b"]);
+        s.on_task("saved", Ok(bound(&["b"])), &mut ctx);
+        assert_eq!((ids(&s), s.saving), (vec!["b".to_string()], 0));
+
+        // attaching takes the connection from the registry, with its note
+        s.on_task("attach", Ok(json!("d")), &mut ctx);
+        s.on_task("addnote", Ok(json!(" deploys ")), &mut ctx);
+        assert_eq!(s.current(), [("b".to_string(), "note b".to_string()), ("d".to_string(), "deploys".to_string())]);
+        assert_eq!(s.bindings[1]["connection"]["publicKey"], "ssh-ed25519 KEY-d");
+        // an id that is nowhere is left out rather than shown empty
+        assert_eq!(bindings_after(&s.bindings, &s.all, &[("ghost".into(), String::new())]), Vec::<Value>::new());
+        // a failed save: the next answer from the hub is taken again
+        s.on_task("saved", Err(anyhow::anyhow!("500: boom")), &mut ctx);
+        assert_eq!(s.saving, 0);
+        s.on_task("bindings", Ok(bound(&["b"])), &mut ctx);
+        assert_eq!(ids(&s), ["b"]);
+    }
 
     #[test]
     fn lines() {

@@ -9,7 +9,7 @@ export const UNAUTHORIZED_EVENT = 'hubness:unauthorized';
 /** The first-account form was skipped on this browser (the hub stays open to its own machine). */
 const SKIP_SETUP_KEY = 'hubness.skipSetup';
 
-type State = 'checking' | 'open' | 'login' | 'setup';
+type State = 'checking' | 'open' | 'login' | 'setup' | 'unreachable';
 
 interface Auth {
   /** The signed-in user; `null` on a hub without accounts. */
@@ -43,18 +43,23 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>('checking');
   const [status, setStatus] = useState<AuthStatus | null>(null);
 
+  // the hub didn't answer: an app that is already open stays (its own requests show errors)
+  const lost = (cur: State): State => (cur === 'open' ? cur : 'unreachable');
+
   const refresh = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/status');
-      // 404: a server without accounts
-      if (!res.ok) return setState('open');
+      // 404: a server without accounts (the TypeScript dev server)
+      if (res.status === 404) return setState('open');
+      // anything else that is not an answer says nothing about accounts: don't guess "open"
+      if (!res.ok) return setState(lost);
       const s = (await res.json()) as AuthStatus;
       setStatus(s);
       if (s.user || (!s.required && !s.setup)) setState('open');
       else if (s.setup) setState(skipped() ? 'open' : 'setup');
       else setState('login');
     } catch {
-      setState('open');
+      setState(lost);
     }
   }, []);
 
@@ -92,6 +97,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div className="flex h-app items-center justify-center bg-bg text-muted">
         <Spinner />
+      </div>
+    );
+  if (state === 'unreachable')
+    return (
+      <div className="flex h-app flex-col items-center justify-center gap-3 bg-bg px-4 text-center">
+        <div className="text-sm text-muted">{t('auth.unreachable')}</div>
+        <Button
+          onClick={() => {
+            setState('checking');
+            void refresh();
+          }}
+        >
+          {t('common.retry')}
+        </Button>
       </div>
     );
   if (state === 'open')

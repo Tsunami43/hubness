@@ -1,3 +1,4 @@
+import { gitMark } from '../lib/gitMark';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { ArrowDown, ArrowUp, Bot, ChevronLeft, ChevronRight, File, Folder, GitBranch, LayoutPanelLeft, Loader2, MessagesSquare, RefreshCw, Smartphone } from 'lucide-react';
@@ -120,7 +121,7 @@ function ChangesTab({ repos, git, refresh, onAsk }: { repos: Repo[]; git: Record
   const [showClean, setShowClean] = useState(false);
 
   if (open?.file) return <FileDiff repo={open.repo} file={open.file} onBack={() => setOpen({ repo: open.repo })} />;
-  if (open) return <RepoChanges repo={open.repo} status={git[open.repo.id] ?? null} single={repos.length === 1} refresh={refresh} onAsk={onAsk} onFile={(file) => setOpen({ repo: open.repo, file })} onBack={() => setOpen(null)} />;
+  if (open) return <RepoChanges repo={open.repo} status={git[open.repo.id]} single={repos.length === 1} refresh={refresh} onAsk={onAsk} onFile={(file) => setOpen({ repo: open.repo, file })} onBack={() => setOpen(null)} />;
 
   const busy = repos.filter((r) => git[r.id] === undefined);
   const dirty = repos.filter((r) => {
@@ -178,7 +179,7 @@ function RepoSummary({ repo, status }: { repo: Repo; status: GitStatus }) {
       <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
         <span className="inline-flex min-w-0 items-center gap-1 font-mono">
           <GitBranch className="size-3 shrink-0" />
-          <span className="truncate">{status.branch ?? 'detached'}</span>
+          <span className="truncate">{status.branch ?? t('gitline.detached')}</span>
         </span>
         {status.ahead ? (
           <span className="inline-flex items-center gap-0.5">
@@ -198,17 +199,6 @@ function RepoSummary({ repo, status }: { repo: Repo; status: GitStatus }) {
   );
 }
 
-/** Letter and colour of a file's change. */
-function mark(f: GitFile): { letter: string; cls: string } {
-  if (f.conflicted) return { letter: '!', cls: 'text-danger' };
-  if (f.untracked) return { letter: 'U', cls: 'text-ok' };
-  const x = f.worktree !== ' ' ? f.worktree : f.index;
-  if (x === 'A') return { letter: 'A', cls: 'text-ok' };
-  if (x === 'D') return { letter: 'D', cls: 'text-danger' };
-  if (x === 'R') return { letter: 'R', cls: 'text-warn' };
-  return { letter: 'M', cls: 'text-warn' };
-}
-
 function RepoChanges({
   repo,
   status,
@@ -219,7 +209,8 @@ function RepoChanges({
   onBack,
 }: {
   repo: Repo;
-  status: GitStatus | null;
+  /** `undefined` — still loading; `null` — git could not be asked. */
+  status: GitStatus | null | undefined;
   single: boolean;
   refresh: () => void;
   onAsk: (text: string) => void;
@@ -255,7 +246,11 @@ function RepoChanges({
         </button>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {status ? (
+        {status === undefined ? (
+          <div className="flex justify-center p-6">
+            <Spinner />
+          </div>
+        ) : status?.isRepo ? (
           <>
             <div className="flex items-center gap-2 px-4 py-3">
               <RepoSummary repo={repo} status={status} />
@@ -266,7 +261,7 @@ function RepoChanges({
             {status.files.length ? (
               <ul className="divide-y divide-line border-y border-line">
                 {status.files.map((f) => {
-                  const m = mark(f);
+                  const m = gitMark(f, 'any');
                   const slash = f.path.lastIndexOf('/');
                   return (
                     <li key={f.path}>
@@ -293,10 +288,10 @@ function RepoChanges({
               ) : null}
               <div className="grid grid-cols-2 gap-2">
                 <Button className="justify-center" disabled={busy !== null} onClick={() => void op('pull')}>
-                  {busy === 'pull' ? <Loader2 className="size-4 animate-spin" /> : <ArrowDown className="size-4" />} Pull
+                  {busy === 'pull' ? <Loader2 className="size-4 animate-spin" /> : <ArrowDown className="size-4" />} {t('git.pull')}
                 </Button>
                 <Button className="justify-center" disabled={busy !== null} onClick={() => void op('push')}>
-                  {busy === 'push' ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />} Push
+                  {busy === 'push' ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />} {t('git.push')}
                 </Button>
               </div>
               {auth ? <GitAuthNotice problem={auth} onSignIn={() => setLogin(true)} /> : null}
@@ -310,7 +305,8 @@ function RepoChanges({
             </div>
           </>
         ) : (
-          <ErrorLine error={t('mobile.noGit')} />
+          // not a repository (or git can't be asked): nothing to pull or push
+          <p className="px-4 py-6 text-center text-sm text-muted">{t('mobile.noGit')}</p>
         )}
       </div>
       <GitLoginSheet

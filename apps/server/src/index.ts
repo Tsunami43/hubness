@@ -12,6 +12,7 @@ import { handleAsk, system } from './routes/system.ts';
 import { ensureHomeProject } from './system/ask.ts';
 import { stopAll } from './runtime.ts';
 import { shutdownBrowser } from './browser.ts';
+import { disposeAllSsh, sweepSshRuntime } from './ssh.ts';
 import { killAllJobs } from './terminal.ts';
 
 const app = new Hono();
@@ -41,12 +42,17 @@ if (existsSync(config.webDist)) {
 
 ensureHomeProject();
 
+// agents and key scratch folders left by a crashed run
+sweepSshRuntime();
+
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
   console.log(`hubness: http://${info.address}:${info.port}  (data: ${config.dataDir})`);
 });
 
 const shutdown = () => {
   stopAll();
+  // the turns' ssh-agents hold decrypted keys: they never outlive the hub
+  disposeAllSsh();
   shutdownBrowser();
   killAllJobs();
   server.close();

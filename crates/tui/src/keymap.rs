@@ -120,6 +120,18 @@ pub fn token(k: &KeyEvent) -> Option<String> {
     })
 }
 
+/// Is a key the app's own in NORMAL mode, so a screen action bound to it would never run?
+/// The app looks a key up before the screen's actions: a key that runs a command or starts a
+/// longer sequence (`g`) is taken, and a digit starts a count. Keys the screen sees first
+/// (`Esc`, `q`) are free for it to handle in `on_key`. The tests hold every screen to it.
+#[cfg(test)]
+pub fn reserved(key: &str) -> bool {
+    if key.len() == 1 && key.as_bytes()[0].is_ascii_digit() && key != "0" {
+        return true;
+    }
+    NORMAL.iter().filter(|b| !b.screen_first).flat_map(|b| b.seqs.iter()).any(|seq| seq.split(' ').next() == Some(key))
+}
+
 /// The result of looking up the keys typed so far.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Lookup {
@@ -240,6 +252,52 @@ mod tests {
     }
 
     #[test]
+    fn reserved_keys() {
+        for k in ["j", "k", "h", "l", "g", "G", ":", "?", "Space", "5", "C-p", "C-w"] {
+            assert!(reserved(k), "{k} is the app's");
+        }
+        // screen-first keys and plain letters are the screen's to use
+        for k in ["Esc", "q", "x", "o", "L", "/", "0", "Enter", "]"] {
+            assert!(!reserved(k), "{k} is free");
+        }
+    }
+
+    /// Every `Action::new("<key>", …)` in the crate's sources.
+    fn action_keys(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                action_keys(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (i, _) in text.match_indices("Action::new(\"") {
+                    let rest = &text[i + "Action::new(\"".len()..];
+                    if let Some(end) = rest.find('"') {
+                        out.push((rest[..end].to_string(), path.display().to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    /// A screen action on a key the app takes first never runs when the key is pressed
+    /// (Settings → Account once had `l` for "log out": `l` is "right"). Checked over the
+    /// sources, as a screen's actions depend on its state.
+    #[test]
+    fn no_screen_action_sits_on_an_app_key() {
+        let mut found = vec![];
+        action_keys(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut found);
+        assert!(found.len() > 50, "the scan finds the screens' actions, got {}", found.len());
+        for (key, file) in found {
+            // this file's own examples
+            if file.ends_with("keymap.rs") {
+                continue;
+            }
+            assert!(!reserved(&key), "the action `{key}` in {file} is on an app key: it would never run");
+        }
+    }
+
+    #[test]
     fn no_sequence_is_bound_twice() {
         let mut seen = std::collections::HashSet::new();
         for b in NORMAL {
@@ -272,6 +330,11 @@ mod tests {
         assert_eq!(k(KeyCode::Char(' '), KeyModifiers::NONE).as_deref(), Some("Space"));
         assert_eq!(k(KeyCode::Left, KeyModifiers::ALT).as_deref(), Some("M-Left"));
         assert_eq!(k(KeyCode::Enter, KeyModifiers::NONE), None);
+        // Ctrl wins over Alt; Shift is in the character itself
+        assert_eq!(k(KeyCode::Char('w'), KeyModifiers::CONTROL | KeyModifiers::ALT).as_deref(), Some("C-w"));
+        assert_eq!(k(KeyCode::Char('1'), KeyModifiers::ALT).as_deref(), Some("M-1"));
+        assert_eq!(k(KeyCode::Esc, KeyModifiers::NONE).as_deref(), Some("Esc"));
+        assert_eq!(k(KeyCode::Tab, KeyModifiers::ALT), None);
     }
 
     #[test]

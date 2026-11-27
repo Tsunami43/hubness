@@ -31,7 +31,7 @@ import { createManifest, manifestResponse } from '../manifest.ts';
 import { stopProjectProcesses } from '../runs.ts';
 import { stopContainer } from '../environments.ts';
 import { deleteGitCredential, ghLogin, listGitCredentials, setGitCredential } from '../git-auth.ts';
-import { createSsh, deleteSsh, listSsh, setSshBindings, sshBindings, testSsh, updateSsh } from '../ssh.ts';
+import { createSsh, deleteSsh, listSsh, setSshBindings, SshBindings, sshBindings, SshCreate, SshPatch, testSsh, updateSsh } from '../ssh.ts';
 import { HttpError } from '../errors.ts';
 import { isActive } from '../runtime.ts';
 import { parseBody, PermissionModeSchema, shortText, TermSizeSchema } from './http.ts';
@@ -132,17 +132,9 @@ projectRoutes.put('/git-credentials/:host', async (c) => c.json(setGitCredential
 projectRoutes.delete('/git-credentials/:host', (c) => c.json(deleteGitCredential(c.req.param('host'))));
 // ---------- SSH connections (Settings → SSH) and their project / group bindings ----------
 
-const jsonBody = async (c: { req: { json: () => Promise<unknown> } }) => {
-  try {
-    return await c.req.json();
-  } catch {
-    throw new HttpError(400, 'Invalid JSON body');
-  }
-};
-const record = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 projectRoutes.get('/ssh', (c) => c.json(listSsh()));
-projectRoutes.post('/ssh', async (c) => c.json(createSsh(record(await jsonBody(c))), 201));
-projectRoutes.patch('/ssh/:id', async (c) => c.json(updateSsh(c.req.param('id'), record(await jsonBody(c)))));
+projectRoutes.post('/ssh', async (c) => c.json(createSsh(await parseBody(c, SshCreate)), 201));
+projectRoutes.patch('/ssh/:id', async (c) => c.json(updateSsh(c.req.param('id'), await parseBody(c, SshPatch))));
 projectRoutes.delete('/ssh/:id', (c) => {
   deleteSsh(c.req.param('id'));
   return c.json({ ok: true });
@@ -154,7 +146,7 @@ projectRoutes.get('/projects/:id/ssh', (c) => {
 });
 projectRoutes.put('/projects/:id/ssh', async (c) => {
   projectOr404(c.req.param('id'));
-  return c.json(setSshBindings({ project: c.req.param('id') }, await jsonBody(c)));
+  return c.json(setSshBindings({ project: c.req.param('id') }, await parseBody(c, SshBindings)));
 });
 projectRoutes.get('/groups/:id/ssh', (c) => {
   if (!groups.get(c.req.param('id'))) throw new HttpError(404, 'Group not found');
@@ -162,7 +154,7 @@ projectRoutes.get('/groups/:id/ssh', (c) => {
 });
 projectRoutes.put('/groups/:id/ssh', async (c) => {
   if (!groups.get(c.req.param('id'))) throw new HttpError(404, 'Group not found');
-  return c.json(setSshBindings({ group: c.req.param('id') }, await jsonBody(c)));
+  return c.json(setSshBindings({ group: c.req.param('id') }, await parseBody(c, SshBindings)));
 });
 
 projectRoutes.post('/git-credentials/:host/gh-login', async (c) => c.json(ghLogin(c.req.param('host'), await parseBody(c, TermSizeSchema, { lenient: true })), 201));

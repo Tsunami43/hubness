@@ -25,11 +25,35 @@ const DEFAULT_TITLES: &[&str] = &["New session", "New chat", "Новая сес�
 #[derive(Default, Clone)]
 pub struct Runtime {
     active: Arc<Mutex<HashMap<String, Arc<dyn RunHandle>>>>,
+    /// Sessions whose turn is being set up (between the "is it busy?" check and the agent's
+    /// start): a second message in that window is refused like one to a running turn.
+    starting: Arc<Mutex<std::collections::HashSet<String>>>,
+}
+
+/// A session reserved for a turn that is starting; released when dropped.
+struct Starting {
+    set: Arc<Mutex<std::collections::HashSet<String>>>,
+    id: String,
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        self.set.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+    }
 }
 
 impl Runtime {
     pub fn is_active(&self, session_id: &str) -> bool {
         self.active.lock().expect("runtime lock").contains_key(session_id)
+    }
+
+    /// Reserve the session for a new turn: `None` while one runs or is starting.
+    fn reserve(&self, session_id: &str) -> Option<Starting> {
+        let mut starting = self.starting.lock().unwrap_or_else(|e| e.into_inner());
+        if self.is_active(session_id) || !starting.insert(session_id.to_string()) {
+            return None;
+        }
+        Some(Starting { set: self.starting.clone(), id: session_id.to_string() })
     }
 
     fn handle(&self, session_id: &str) -> Option<Arc<dyn RunHandle>> {
@@ -246,16 +270,26 @@ fn now_ms() -> i64 {
     jiff::Timestamp::now().as_millisecond()
 }
 
+/// Run blocking work (processes, short waits) so that an async worker isn't held up by it.
+fn off_the_async_threads<T>(f: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
+        _ => f(),
+    }
+}
+
 /// Start a turn: record the user message, launch the agent, return the updated session.
 pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments: Vec<hubness_core::Attachment>) -> ApiResult<Session> {
     let rt = &state.runtime;
-    let (turn, session, ssh) = {
+    // what the turn is made of, gathered under the database lock; the SSH setup (processes,
+    // waiting) happens after it is released
+    let (session, parts, ssh_plan, starting) = {
         let db = state.db()?;
         let cfg = state.config();
         let mut session = repo::get(&db, session_id)?.ok_or_else(|| HttpError::not_found("Session not found"))?;
-        if rt.is_active(session_id) {
+        let Some(starting) = rt.reserve(session_id) else {
             return Err(HttpError::new(409, "The agent is still working — wait for it or stop it"));
-        }
+        };
         if text.trim().is_empty() && attachments.is_empty() {
             return Err(HttpError::bad_request("Empty message"));
         }
@@ -312,16 +346,8 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
             }
             _ => vec![],
         };
-        let ssh = crate::ssh::session_setup(&db, cfg, &owners, session_id)?;
-        let scope_ctx = match (&ssh, scope_ctx) {
-            (Some(s), Some(c)) => Some(format!("{c}\n\n{}", s.context)),
-            (Some(s), None) => Some(s.context.clone()),
-            (None, c) => c,
-        };
-        let mut env = env;
-        if let Some(s) = &ssh {
-            env.extend(s.env.iter().cloned());
-        }
+        // a broken setup (an unreadable key) costs the turn its SSH, not the turn
+        let ssh_plan = crate::ssh::plan(&db, cfg, &owners, session_id).map_err(|e| e.message);
         let hub_instructions = catalog::settings(&db, cfg)?.session_instructions;
         let wrap = match (&project, &group) {
             (Some(p), _) if environments::project_sandbox(&db, p)? => {
@@ -333,37 +359,61 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
             }
             _ => Wrap::default(),
         };
-        // the sandbox hides the hub's folders: show it the session's ssh folder, read-only
-        let wrap = match (wrap, &ssh) {
-            (Wrap { bwrap: Some(mut args) }, Some(s)) => {
-                args.extend(["--ro-bind".to_string(), s.mount.clone(), s.mount.clone()]);
-                Wrap { bwrap: Some(args) }
-            }
-            (w, _) => w,
-        };
-        let turn = Arc::new(Turn {
-            state: state.clone(),
-            session: Mutex::new(session.clone()),
-            // the agent is told where attached files are; images also go to the model directly
-            prompt: match handoff {
-                Some(h) => format!("{h}\n{text}"),
-                None => text.to_string(),
-            } + &crate::attachments::note(&attachments),
-            attachments: attachments.clone(),
-            cwd,
-            // a group session sees exactly the member repositories (real paths, not symlinks)
-            extra_dirs: members.iter().map(|p| p.path.clone()).collect(),
-            system_prompt: context::session_system_prompt(&hub_instructions, scope_ctx),
-            wrap,
-            env,
-            mcp_servers: state.self_url.get().and_then(|url| crate::mcp::hub_mcp(url, session_id)).into_iter().collect(),
-            seq: Mutex::new(repo::next_seq(&db, session_id)?),
-            cache: Mutex::default(),
-            log: Mutex::default(),
-            log_path: Path::new(&cfg.logs_dir).join(format!("{session_id}.jsonl")),
-        });
-        (turn, session, ssh)
+        let prompt = match handoff {
+            Some(h) => format!("{h}\n{text}"),
+            None => text.to_string(),
+        } + &crate::attachments::note(&attachments);
+        let parts = (prompt, cwd, members, scope_ctx, hub_instructions, wrap, env, repo::next_seq(&db, session_id)?);
+        (session, parts, ssh_plan, starting)
     };
+    let (prompt, cwd, members, scope_ctx, hub_instructions, wrap, mut env, seq) = parts;
+
+    let (ssh, ssh_problem) = match ssh_plan {
+        Ok(None) => (None, None),
+        Ok(Some(plan)) => match off_the_async_threads(|| crate::ssh::start(plan)) {
+            Ok(s) if s.failed.is_empty() => (Some(s), None),
+            Ok(s) => {
+                let problem = format!("SSH: the key of {} could not be loaded — not available in this turn.", s.failed.join(", "));
+                (Some(s), Some(problem))
+            }
+            Err(e) => (None, Some(format!("SSH connections are not available in this turn: {e}"))),
+        },
+        Err(e) => (None, Some(format!("SSH connections are not available in this turn: {e}"))),
+    };
+    let scope_ctx = match (&ssh, scope_ctx) {
+        (Some(s), Some(c)) => Some(format!("{c}\n\n{}", s.context)),
+        (Some(s), None) => Some(s.context.clone()),
+        (None, c) => c,
+    };
+    // the sandbox hides the hub's folders: show it the session's ssh folder, read-only
+    let wrap = match (wrap, &ssh) {
+        (Wrap { bwrap: Some(mut args) }, Some(s)) => {
+            args.extend(["--ro-bind".to_string(), s.mount.clone(), s.mount.clone()]);
+            Wrap { bwrap: Some(args) }
+        }
+        (w, _) => w,
+    };
+    if let Some(s) = &ssh {
+        env.extend(s.env.iter().cloned());
+    }
+    let turn = Arc::new(Turn {
+        state: state.clone(),
+        session: Mutex::new(session.clone()),
+        // the agent is told where attached files are; images also go to the model directly
+        prompt,
+        attachments: attachments.clone(),
+        cwd,
+        // a group session sees exactly the member repositories (real paths, not symlinks)
+        extra_dirs: members.iter().map(|p| p.path.clone()).collect(),
+        system_prompt: context::session_system_prompt(&hub_instructions, scope_ctx),
+        wrap,
+        env,
+        mcp_servers: state.self_url.get().and_then(|url| crate::mcp::hub_mcp(url, session_id)).into_iter().collect(),
+        seq: Mutex::new(seq),
+        cache: Mutex::default(),
+        log: Mutex::default(),
+        log_path: Path::new(&state.config().logs_dir).join(format!("{session_id}.jsonl")),
+    });
 
     let mut user = json!({ "kind": "user", "text": text });
     if !attachments.is_empty() {
@@ -372,6 +422,9 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
     turn.put(&format!("u:{}", now_ms()), user, true);
     let paths: Vec<&str> = attachments.iter().map(|a| a.path.as_str()).collect();
     turn.raw(&json!({ "hub": "user", "ts": db::now(), "text": text, "attachments": paths }).to_string());
+    if let Some(problem) = ssh_problem {
+        turn.put(&format!("ssh:{}", now_ms()), json!({ "kind": "notice", "level": "error", "text": problem }), true);
+    }
     set_status(state, session_id, SessionStatus::Running);
 
     match agents::start(&session.agent.kind, turn.clone()) {
@@ -381,6 +434,8 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
         }
         Ok((handle, done)) => {
             rt.active.lock().expect("runtime lock").insert(session_id.to_string(), handle);
+            // the turn runs: the reservation has done its job
+            drop(starting);
             let state = state.clone();
             let id = session_id.to_string();
             tokio::spawn(async move {

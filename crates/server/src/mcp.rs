@@ -189,24 +189,31 @@ async fn post_hub(hub_url: &str, path: &str, body: &Value) -> Result<(u16, Strin
     stream.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).await.map_err(|e| e.to_string())?;
-    let resp = String::from_utf8_lossy(&raw);
-    let (head, rest) = resp.split_once("\r\n\r\n").unwrap_or((&resp, ""));
+    // split on bytes: the body may be cut anywhere, also inside a character
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n");
+    let (head, rest) = match split {
+        Some(at) => (String::from_utf8_lossy(&raw[..at]).into_owned(), &raw[at + 4..]),
+        None => (String::from_utf8_lossy(&raw).into_owned(), &raw[raw.len()..]),
+    };
     let status: u16 = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     let chunked =
         head.lines().any(|l| l.to_ascii_lowercase().starts_with("transfer-encoding:") && l.to_ascii_lowercase().contains("chunked"));
-    Ok((status, if chunked { dechunk(rest) } else { rest.to_string() }))
+    let body = if chunked { dechunk(rest) } else { rest.to_vec() };
+    Ok((status, String::from_utf8_lossy(&body).into_owned()))
 }
 
-/// The body of a chunked response.
-fn dechunk(mut rest: &str) -> String {
-    let mut out = String::new();
-    while let Some((size, tail)) = rest.split_once("\r\n") {
+/// The body of a chunked response (sizes count bytes).
+fn dechunk(mut rest: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(at) = rest.windows(2).position(|w| w == b"\r\n") {
+        let size = String::from_utf8_lossy(&rest[..at]);
         let Ok(n) = usize::from_str_radix(size.split(';').next().unwrap_or("").trim(), 16) else { break };
+        let tail = &rest[at + 2..];
         if n == 0 || tail.len() < n {
             break;
         }
-        out.push_str(&tail[..n]);
-        rest = tail[n..].strip_prefix("\r\n").unwrap_or(&tail[n..]);
+        out.extend_from_slice(&tail[..n]);
+        rest = tail[n..].strip_prefix(b"\r\n").unwrap_or(&tail[n..]);
     }
     out
 }
@@ -277,15 +284,47 @@ pub async fn run_stdio() -> anyhow::Result<()> {
     let hub_url = std::env::var("HUB_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into());
     let session_id = std::env::var("HUB_SESSION_ID").unwrap_or_default();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    let mut out = tokio::io::stdout();
+    let out = std::sync::Arc::new(tokio::sync::Mutex::new(tokio::io::stdout()));
+    // every request is its own task: a browser action that takes its time (a slow page) does
+    // not hold back a ping or the next call
+    let mut calls = tokio::task::JoinSet::new();
     while let Some(line) = lines.next_line().await? {
+        while calls.try_join_next().is_some() {}
         let Ok(m) = serde_json::from_str::<Value>(&line) else { continue };
         if m.get("id").is_none() {
             continue; // notifications (initialized, etc.)
         }
-        let resp = handle(&hub_url, &session_id, &m).await;
-        out.write_all(format!("{resp}\n").as_bytes()).await?;
-        out.flush().await?;
+        let (hub_url, session_id, out) = (hub_url.clone(), session_id.clone(), out.clone());
+        calls.spawn(async move {
+            let resp = handle(&hub_url, &session_id, &m).await;
+            let mut out = out.lock().await;
+            let _ = out.write_all(format!("{resp}\n").as_bytes()).await;
+            let _ = out.flush().await;
+        });
     }
+    // stdin closed: the answers still on their way are written first
+    while calls.join_next().await.is_some() {}
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunked_bodies_are_put_together_by_bytes() {
+        // "жук" is 6 bytes; the chunk border falls inside a character
+        let raw = "жук — ok".as_bytes();
+        let mut wire = Vec::new();
+        for part in [&raw[..3], &raw[3..]] {
+            wire.extend_from_slice(format!("{:x};ext=1\r\n", part.len()).as_bytes());
+            wire.extend_from_slice(part);
+            wire.extend_from_slice(b"\r\n");
+        }
+        wire.extend_from_slice(b"0\r\n\r\n");
+        assert_eq!(dechunk(&wire), raw);
+        assert_eq!(dechunk(b"zz\r\nabc"), b"", "not a size: nothing");
+        assert_eq!(dechunk(b"ff\r\nshort"), b"", "a chunk cut off is dropped");
+        assert_eq!(dechunk(b""), b"");
+    }
 }

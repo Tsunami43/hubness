@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Play, Trash2 } from 'lucide-react';
+import { Play, RotateCw, Trash2 } from 'lucide-react';
 import { BrowserFrame } from './BrowserFrame';
 import type { RunState } from '@hubness/shared';
 import { api } from '../../lib/api';
@@ -19,7 +19,10 @@ export const previewUrl = (port: number, path = '/') => `${window.location.proto
 export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: string; runs: RunState[] | null; onStartRun: (r: RunState) => void }) {
   const live = (runs ?? []).filter((r) => isRunning(r) && r.previewPort);
   const [manual, setManual] = useLocalStorage<number[]>(`hub.preview.ports.${projectId}`, []);
-  const [manualPreview, setManualPreview] = useState<Record<number, number>>({});
+  // proxies of the manual ports, per project: a port of another project is another app
+  const [proxies, setProxies] = useState<{ projectId: string; ports: Record<number, number> }>({ projectId, ports: {} });
+  const manualPreview = proxies.projectId === projectId ? proxies.ports : {};
+  const [retry, setRetry] = useState(0);
   const targets = [
     ...live.map((r) => ({ key: `run:${r.id}`, label: `${r.name} :${r.activePort}`, port: r.activePort!, previewPort: r.previewPort! })),
     ...manual.filter((p) => !live.some((r) => r.activePort === p)).map((p) => ({ key: `port:${p}`, label: `:${p}`, port: p, previewPort: manualPreview[p] ?? null })),
@@ -32,10 +35,19 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
 
   // manual ports: the proxy is started on demand
   useEffect(() => {
+    let stale = false;
+    setError(null);
     for (const p of manual)
-      if (!manualPreview[p]) api.previewPort(projectId, p).then((r) => setManualPreview((m) => ({ ...m, [p]: r.previewPort })), (e) => setError((e as Error).message));
+      if (!manualPreview[p])
+        api.previewPort(projectId, p).then(
+          (r) => !stale && setProxies((cur) => ({ projectId, ports: { ...(cur.projectId === projectId ? cur.ports : {}), [p]: r.previewPort } })),
+          (e) => !stale && setError((e as Error).message),
+        );
+    return () => {
+      stale = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manual.join(','), projectId]);
+  }, [manual.join(','), projectId, retry]);
 
   const addPort = () => {
     const p = Number(portInput);
@@ -89,33 +101,42 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
       </div>
     );
   }
+  const toolbar = (
+    <>
+      <Select
+        size="sm"
+        value={adding ? '__add' : current.key}
+        onChange={(v) => (v === '__add' ? setAdding(true) : (setAdding(false), setPick(v)))}
+        options={[...targets.map((x) => ({ value: x.key, label: x.label })), { value: '__add', label: t('preview.otherPort') }]}
+        className="max-w-48"
+      />
+      {adding ? portForm : null}
+      {current.key.startsWith('port:') && !adding ? (
+        <IconButton label={t('preview.removePort')} onClick={() => setManual(manual.filter((p) => p !== current.port))} className="size-7">
+          <Trash2 className="size-3.5" />
+        </IconButton>
+      ) : null}
+    </>
+  );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {current.previewPort ? (
-        <BrowserFrame
-          projectId={projectId}
-          previewPort={current.previewPort}
-          appPort={current.port}
-          toolbar={
-            <>
-              <Select
-                size="sm"
-                value={adding ? '__add' : current.key}
-                onChange={(v) => (v === '__add' ? setAdding(true) : (setAdding(false), setPick(v)))}
-                options={[...targets.map((x) => ({ value: x.key, label: x.label })), { value: '__add', label: t('preview.otherPort') }]}
-                className="max-w-48"
-              />
-              {adding ? portForm : null}
-              {current.key.startsWith('port:') && !adding ? (
-                <IconButton label={t('preview.removePort')} onClick={() => setManual(manual.filter((p) => p !== current.port))} className="size-7">
-                  <Trash2 className="size-3.5" />
-                </IconButton>
-              ) : null}
-            </>
-          }
-        />
+        <BrowserFrame key={current.previewPort} projectId={projectId} previewPort={current.previewPort} appPort={current.port} toolbar={toolbar} />
       ) : (
-        <Spinner />
+        // no proxy (yet, or it could not be started): the target can still be changed or removed
+        <>
+          <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line px-1.5 py-1">{toolbar}</div>
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
+            {error ? (
+              <Button size="sm" onClick={() => setRetry((n) => n + 1)}>
+                <RotateCw className="size-3.5" />
+                {t('common.retry')}
+              </Button>
+            ) : (
+              <Spinner />
+            )}
+          </div>
+        </>
       )}
       <ErrorLine error={error} />
     </div>

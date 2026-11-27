@@ -14,7 +14,7 @@ import type { EventBody, McpServerSpec, RunContext, RunHandle } from './agents/t
 import { fileURLToPath } from 'node:url';
 import { agentWrap, runtimeOf } from './environments.ts';
 import { secretEnv } from './secrets.ts';
-import { sessionSetup, type Owner } from './ssh.ts';
+import { sessionSetup, type Owner, type SessionSsh } from './ssh.ts';
 
 const active = new Map<string, RunHandle>();
 
@@ -110,7 +110,15 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
 
   // SSH connections of the project (a group: its own and its repositories'), for this turn
   const owners: Owner[] = project ? [{ project: project.id }] : group ? [{ group: group.id }, ...groupProjects(group).map((p) => ({ project: p.id }))] : [];
-  const ssh = sessionSetup(owners, sessionId);
+  // a broken setup (an unreadable key, no runtime folder) costs the turn its SSH, not the turn
+  let ssh: SessionSsh | null = null;
+  let sshProblem: string | null = null;
+  try {
+    ssh = sessionSetup(owners, sessionId);
+    if (ssh?.failed.length) sshProblem = `SSH: the key of ${ssh.failed.join(', ')} could not be loaded — not available in this turn.`;
+  } catch (e) {
+    sshProblem = `SSH connections are not available in this turn: ${(e as Error).message}`;
+  }
   const scopeContext = project ? projectContext(project) : group ? groupAgentContext(group) : null;
   const baseWrap = agentWrap(project ? { kind: 'project', project } : group ? { kind: 'group', group, projects: groupProjects(group), cwd } : null);
   const ctx: RunContext = {
@@ -166,6 +174,7 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
 
   put(`u:${Date.now()}`, { kind: 'user', text, ...(attachments.length ? { attachments } : {}) });
   ctx.raw(JSON.stringify({ hub: 'user', ts: new Date().toISOString(), text, attachments: attachments.map((a) => a.path) }));
+  if (sshProblem) put(`ssh:${Date.now()}`, { kind: 'notice', level: 'error', text: sshProblem });
   setSessionStatus(sessionId, 'running');
 
   let handle: RunHandle;

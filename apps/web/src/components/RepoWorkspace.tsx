@@ -287,7 +287,9 @@ export function RepoWorkspace({
   }, [current?.key]);
 
   const openToolsKey = layout.groups.flatMap((g) => g.tabs.filter((x) => x.ref.kind === 'tool').map((x) => (x.ref as { id: string }).id)).sort().join(',');
-  useEffect(() => onOpenTools?.(openToolsKey ? openToolsKey.split(',') : []), [openToolsKey, onOpenTools]);
+  useEffect(() => {
+    onOpenTools?.(openToolsKey ? openToolsKey.split(',') : []);
+  }, [openToolsKey, onOpenTools]);
 
   const api_: WorkbenchApi = useMemo(
     () => ({
