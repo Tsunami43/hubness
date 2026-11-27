@@ -6,23 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-11-28
-
-The first published release of the 0.4 line: 0.4.0 was tagged, but its macOS build failed and
-nothing was published.
-
-### Fixed
-
-- The hub builds on macOS again (the agents' browser used a Linux-only call), and on macOS a
-  leftover ssh-agent of a crashed run is recognized without `/proc`.
-
-- The agents' browser says why Chromium didn't start (what it wrote itself) instead of a
-  bare "The browser closed", and names the way out when it is its sandbox: on Ubuntu 23.10+
-  and in containers set `HUBNESS_CHROME_ARGS=--no-sandbox` (extra browser arguments) for
-  the hub.
-- The agents' browser waits up to a minute for a cold start of Chromium (15 seconds were not
-  enough on a busy machine).
-
 ## [0.4.0] - 2026-11-28
 
 ### Added
@@ -40,7 +23,9 @@ nothing was published.
 - A browser for agents: `preview_open`, `preview_screenshot`, `preview_click`,
   `preview_type`, `preview_press`, `preview_eval` and `preview_console` drive a headless
   Chromium on the hub, so an agent looks at the app it builds — also at a phone size —
-  instead of asking. Needs Chromium or Chrome on the hub machine (`HUBNESS_CHROME`).
+  instead of asking. Needs Chromium or Chrome on the hub machine (`HUBNESS_CHROME`); where
+  its sandbox can't start (Ubuntu 23.10+, containers) set `HUBNESS_CHROME_ARGS=--no-sandbox`
+  — the error says so when that is the reason.
 - Four visual styles, each with its own palettes: Expressive (the default), Glass, Paper
   and Strict.
 - A git client in the web app: changes, staging, commits, branches and history as a
