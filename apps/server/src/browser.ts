@@ -24,6 +24,8 @@ import { AGENT_UA_MARK, previewKeyByPort, previewLogs } from './preview.ts';
 
 const BROWSER_IDLE_MS = 10 * 60_000;
 const NAV_TIMEOUT_MS = 20_000;
+/** A cold start on a busy machine (a CI runner, a small VPS) takes a while. */
+const START_TIMEOUT_MS = 60_000;
 const CANDIDATES = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'chrome', 'brave', 'brave-browser', 'microsoft-edge'];
 
 /** HUBNESS_CHROME, else the first Chromium-like browser on PATH. */
@@ -51,7 +53,7 @@ export function startupError(reason: string, stderr: string): string {
   const said = stderr
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l && !/^\[[^\]]*:(INFO|WARNING):/.test(l) && !l.includes('DevTools listening'))
+    .filter((l) => l && !/^\[[^\]]*:(INFO|WARNING):/.test(l) && !l.includes('DevTools listening') && !/dbus/i.test(l))
     .slice(-3)
     .join(' ')
     .slice(-600);
@@ -199,7 +201,7 @@ async function browser(): Promise<{ proc: ChildProcess; cdp: Cdp }> {
       await new Promise<void>((resolve, reject) => {
         proc.once('error', (e) => reject(new HttpError(503, startupError(e.message, said))));
         // a moment for stderr to arrive after the pipe closed
-        cdp.send('Browser.getVersion', {}, undefined, 15_000).then(() => resolve(), (e) => setTimeout(() => reject(new HttpError(503, startupError((e as Error).message, said))), 100));
+        cdp.send('Browser.getVersion', {}, undefined, START_TIMEOUT_MS).then(() => resolve(), (e) => setTimeout(() => reject(new HttpError(503, startupError((e as Error).message, said))), 100));
       });
     } catch (e) {
       proc.kill('SIGKILL');

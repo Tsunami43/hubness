@@ -30,6 +30,8 @@ use crate::error::{ApiResult, HttpError};
 use crate::preview::{self, AGENT_UA_MARK};
 
 const IDLE: Duration = Duration::from_secs(10 * 60);
+/// A cold start on a busy machine (a CI runner, a small VPS) takes a while.
+const START_TIMEOUT: Duration = Duration::from_secs(60);
 const NAV_TIMEOUT: Duration = Duration::from_secs(20);
 const CANDIDATES: [&str; 8] =
     ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "brave", "brave-browser", "microsoft-edge"];
@@ -226,8 +228,11 @@ pub fn startup_error(reason: &str, stderr: &str) -> String {
     static NOISE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^\[[^\]]*:(INFO|WARNING):").expect("a valid pattern"));
     static SANDBOX: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new(r"(?i)sandbox|namespace|setuid|as root").expect("a valid pattern"));
-    let lines: Vec<&str> =
-        stderr.lines().map(str::trim).filter(|l| !l.is_empty() && !NOISE.is_match(l) && !l.contains("DevTools listening")).collect();
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !NOISE.is_match(l) && !l.contains("DevTools listening") && !l.to_lowercase().contains("dbus"))
+        .collect();
     let said = lines[lines.len().saturating_sub(3)..].join(" ");
     let said: String = said.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
     let mut out = format!("Chromium didn't start: {reason}");
@@ -391,7 +396,7 @@ async fn browser(config: &Config) -> ApiResult<Arc<Cdp>> {
     let cdp = chrome.cdp.clone();
     let said = chrome.said.clone();
     *lock(&CHROME) = Some(chrome);
-    if let Err(e) = cdp.send_for("Browser.getVersion", json!({}), None, Duration::from_secs(15)).await {
+    if let Err(e) = cdp.send_for("Browser.getVersion", json!({}), None, START_TIMEOUT).await {
         // a moment for stderr to arrive after the pipe closed
         tokio::time::sleep(Duration::from_millis(100)).await;
         let said = lock(&said).clone();
@@ -1031,6 +1036,11 @@ mod tests {
             startup_error("The browser closed", "error while loading shared libraries: libnss3.so: cannot open shared object file\n");
         assert!(other.contains("libnss3.so") && !other.contains("HUBNESS_CHROME_ARGS"), "another cause gets no sandbox advice");
         assert!(startup_error("x", &"é".repeat(5000)).chars().count() < 700);
+        assert_eq!(
+            startup_error("Browser.getVersion timed out", "[1:2:3:ERROR:dbus/bus.cc:405] Failed to connect to the bus: x\n"),
+            "Chromium didn't start: Browser.getVersion timed out",
+            "the usual dbus complaints are not the reason"
+        );
         assert_eq!(chrome_args("  --no-sandbox   --disable-foo=1 "), ["--no-sandbox", "--disable-foo=1"]);
         assert!(chrome_args("").is_empty());
     }

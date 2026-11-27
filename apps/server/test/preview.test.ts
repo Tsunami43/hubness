@@ -300,6 +300,7 @@ test('agent browser: a failed start says why and what to do (the same text as br
   const other = startupError('The browser closed', 'error while loading shared libraries: libnss3.so: cannot open shared object file\n');
   assert.ok(other.includes('libnss3.so') && !other.includes('HUBNESS_CHROME_ARGS'), 'another cause gets no sandbox advice');
   assert.ok(startupError('x', 'é'.repeat(5000)).length < 700);
+  assert.equal(startupError('Browser.getVersion timed out', '[1:2:3:ERROR:dbus/bus.cc:405] Failed to connect to the bus: x\n'), "Chromium didn't start: Browser.getVersion timed out", 'the usual dbus complaints are not the reason');
   assert.deepEqual(chromeArgs('  --no-sandbox   --disable-foo=1 '), ['--no-sandbox', '--disable-foo=1']);
   assert.deepEqual(chromeArgs(''), []);
 });

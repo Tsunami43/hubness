@@ -20,6 +20,8 @@ nothing was published.
   bare "The browser closed", and names the way out when it is its sandbox: on Ubuntu 23.10+
   and in containers set `HUBNESS_CHROME_ARGS=--no-sandbox` (extra browser arguments) for
   the hub.
+- The agents' browser waits up to a minute for a cold start of Chromium (15 seconds were not
+  enough on a busy machine).
 
 ## [0.4.0] - 2026-11-28
 
