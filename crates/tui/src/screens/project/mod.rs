@@ -160,6 +160,10 @@ impl Screen for ProjectScreen {
         self.tabs.names()
     }
 
+    fn help(&self) -> Option<String> {
+        self.tabs.help()
+    }
+
     fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
         self.tabs.on_click(id, ctx);
     }

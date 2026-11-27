@@ -59,6 +59,10 @@ impl Screen for Sections {
         self.tabs.names()
     }
 
+    fn help(&self) -> Option<String> {
+        self.tabs.help()
+    }
+
     fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
         self.tabs.on_click(id, ctx);
     }
@@ -133,6 +137,35 @@ impl Nav {
         self.state.select(Some(next));
         true
     }
+}
+
+/// Rows `PageUp` / `PageDown` move (the app sends them for Ctrl+u / Ctrl+d).
+pub const PAGE: usize = 10;
+
+/// How far a jump key moves a selection: `Home` / `End` (sent for `gg` / `G`) and
+/// `PageUp` / `PageDown`. For screens that move with a `move_by(delta)` (clamped).
+pub fn motion_delta(k: &KeyEvent) -> Option<isize> {
+    match k.code {
+        KeyCode::Home => Some(-(isize::MAX / 2)),
+        KeyCode::End => Some(isize::MAX / 2),
+        KeyCode::PageDown => Some(PAGE as isize),
+        KeyCode::PageUp => Some(-(PAGE as isize)),
+        _ => None,
+    }
+}
+
+/// `delta` rows from `i` in a list of `n`, clamped to it.
+pub fn step(i: usize, delta: isize, n: usize) -> usize {
+    (i as isize).saturating_add(delta).clamp(0, n.saturating_sub(1) as isize) as usize
+}
+
+/// The jump keys of `motion_delta` on a list of `n` rows; `true` when the key was one.
+pub fn list_motion(state: &mut ListState, k: &KeyEvent, n: usize) -> bool {
+    let Some(delta) = motion_delta(k) else { return false };
+    if n > 0 {
+        state.select(Some(step(state.selected().unwrap_or(0), delta, n)));
+    }
+    true
 }
 
 /// Choosing several items with the picker: Enter on an item ticks / unticks it and the picker
@@ -573,5 +606,25 @@ mod tests {
         assert_eq!(n.selected(), Some(1));
         n.clamp(0);
         assert_eq!(n.selected(), None);
+    }
+
+    #[test]
+    fn jump_keys_on_lists() {
+        let mut s = ListState::default();
+        assert!(list_motion(&mut s, &KeyEvent::from(KeyCode::End), 25));
+        assert_eq!(s.selected(), Some(24));
+        list_motion(&mut s, &KeyEvent::from(KeyCode::PageUp), 25);
+        assert_eq!(s.selected(), Some(14));
+        list_motion(&mut s, &KeyEvent::from(KeyCode::Home), 25);
+        assert_eq!(s.selected(), Some(0));
+        list_motion(&mut s, &KeyEvent::from(KeyCode::PageDown), 5);
+        assert_eq!(s.selected(), Some(4));
+        assert!(!list_motion(&mut s, &KeyEvent::from(KeyCode::Char('x')), 5));
+        // an empty list takes the key but selects nothing
+        let mut e = ListState::default();
+        assert!(list_motion(&mut e, &KeyEvent::from(KeyCode::End), 0));
+        assert_eq!(e.selected(), None);
+        assert_eq!(step(3, isize::MAX / 2, 10), 9);
+        assert_eq!(step(3, -(isize::MAX / 2), 10), 0);
     }
 }

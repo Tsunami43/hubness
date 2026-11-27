@@ -15,6 +15,10 @@ goes back a screen.
 
 ## NORMAL mode
 
+The app-level keys live in one table, `src/keymap.rs` (`NORMAL`): the key handler resolves
+keys through it, and the `?` help and Settings → Keyboard are generated from it, so what is
+shown can't drift from what the keys do. A new app key is one row there.
+
 Motions work in every list, feed, tree and viewer:
 
 | Keys | Action |
@@ -27,10 +31,11 @@ Motions work in every list, feed, tree and viewer:
 | `Enter` | open / confirm |
 | `Ctrl+h` / `Ctrl+l`, `Ctrl+w h/j/k/l`, `Space w h/j/k/l` | focus another pane |
 | `gt` / `gT` | next / previous tab (also `Alt+1…9`) |
-| `/` | filter / search the current list |
+| `/` | filter the current list as you type (`Enter` keeps the filter, `Esc` restores it) |
 | `i` | start typing (the message box; `Enter` too in a feed) |
 | `:` | command palette: every action of the screen plus global commands |
-| `?` | which-key: the keys of this screen |
+| `Ctrl+p` | go to: a session, project, group or section (fuzzy) |
+| `?` | help: every key of this screen (actions, motions, panes, global, leader) |
 | `Space` | leader (global, below) |
 | `q` | back (quit on the first screen) |
 
@@ -41,9 +46,9 @@ Every other letter is a screen action, listed by `?` and in the palette. Screens
 
 | Keys | Action |
 | --- | --- |
-| `Space Space` | find a session |
+| `Space Space` | go to a session, project, group or section (same as `Ctrl+p`) |
 | `Space c` / `p` / `s` / `h` / `,` | chats / projects / system / agents / settings |
-| `Space a` | +actions: the keys of this screen (same as `?`) |
+| `Space a` | +actions: the actions of this screen |
 | `Space w` | +windows: `h j k l` focus the pane left / below / above / right, `w` next |
 | `Space t` | +tabs: `n` / `p` next / previous, `1…9` a tab by its name |
 | `Space e` | toggle the sidebar |
@@ -54,6 +59,24 @@ Every other letter is a screen action, listed by `?` and in the palette. Screens
 
 `Backspace` goes up a menu, `Esc` closes it. `Ctrl+g` opens the leader everywhere (also in
 INSERT, where `Space` types a space).
+
+## Help (`?`)
+
+A panel with every key of the current screen: its actions first, then motions, panes and
+tabs, global keys and the leader menu. `j` / `k`, `gg` / `G`, `Ctrl+d` / `Ctrl+u` move, `/`
+filters (`Esc` clears), `Enter` on an action — or the action's own key — closes the help and
+runs it; `Esc`, `q` or `?` close it.
+
+## Pickers, prompts and confirmations
+
+- Pickers (`:`, `Ctrl+p`, choices) filter fuzzily as you type: every word must appear in
+  order, word starts and runs rank first, matched letters are highlighted and the bottom
+  border counts the matches. `↑` / `↓`, `Ctrl+n` / `Ctrl+p`, `Ctrl+j` / `Ctrl+k` move,
+  `Ctrl+u` clears, `Ctrl+w` deletes a word.
+- A filter prompt (`/`, a modal key `filter` or `<what>-filter`) sits at the bottom of the
+  screen and updates the list on every key.
+- A confirmation of something that can't be undone takes `y` only; `Enter` confirms only
+  harmless ones. `n` / `Esc` cancel.
 
 ## Mouse
 
@@ -93,7 +116,11 @@ in the status line). `i` / `a` / `o` type, `Esc` stops typing, `:w` / `Ctrl+S` s
 
 - Open in NORMAL: no input or terminal takes the keys until `i` / `/` / `Enter`.
 - Pane titles are short names; key hints come from `actions()` (`?`, palette) and `hints()`
-  (the status line; defaults to the actions, an editor shows its own).
+  (the status line; defaults to the actions, an editor shows its own); `help()` explains the
+  screen in a line on top of `?`.
+- Lists handle `Home` / `End` (sent by `gg` / `G`) and `PageUp` / `PageDown` (sent by
+  `Ctrl+u` / `Ctrl+d`); `kit::list_motion` does it for a `ListState`.
+- Filters: `/` opens `ctx.prompt("filter", …)`; the screen gets the text on every key.
 - Clickable regions are registered while drawing with `Ctx::click` / `kit::click_list`.
 - Never bind `h j k l g G q : ?` or `Space` as actions; `/` is for filtering.
 - Terminals: typing goes to the job while focused, `Ctrl+]` leaves for NORMAL.

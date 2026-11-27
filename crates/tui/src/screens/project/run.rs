@@ -306,6 +306,7 @@ impl Screen for RunTab {
                     self.start(&r, ctx);
                 }
             }
+            _ if n > 0 && crate::screens::kit::list_motion(&mut self.list, &k, n) => self.follow_selected(ctx),
             _ => return Handled::No,
         }
         Handled::Yes

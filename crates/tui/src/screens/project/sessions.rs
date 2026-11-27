@@ -218,6 +218,7 @@ impl Screen for SessionsTab {
                 }
             }
             KeyCode::Tab => self.focus = Focus::Composer,
+            _ if crate::screens::kit::list_motion(&mut self.list, &k, n) => {}
             _ => return Handled::No,
         }
         Handled::Yes

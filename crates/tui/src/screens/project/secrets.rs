@@ -94,6 +94,7 @@ impl Screen for SecretsTab {
             KeyCode::Down | KeyCode::Char('j') if n > 0 => self.list.select(Some((self.list.selected().unwrap_or(0) + 1).min(n - 1))),
             KeyCode::Up | KeyCode::Char('k') => self.list.select(Some(self.list.selected().unwrap_or(0).saturating_sub(1))),
             KeyCode::Enter => self.on_action(if n > 0 { "e" } else { "n" }, ctx),
+            _ if crate::screens::kit::list_motion(&mut self.list, &k, n) => {}
             _ => return Handled::No,
         }
         Handled::Yes

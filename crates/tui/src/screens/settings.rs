@@ -922,7 +922,7 @@ impl Screen for Connection {
 
 // ---------- Keyboard ----------
 
-/// The keyboard reference: global keys, then per-screen keys.
+/// The keyboard reference after the app keys of `keymap` (modes, leader, per-screen keys).
 pub const KEYS: &[(&str, &[(&str, &str)])] = &[
     (
         "Modes (like Vim)",
@@ -930,31 +930,15 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("NORMAL", "browse: motions and single-letter actions"),
             ("INSERT", "typing in a box, prompt, filter or terminal — Esc back to NORMAL"),
             (":", "command palette: every action of the screen and global commands"),
-            ("?", "which-key: the keys of this screen"),
-        ],
-    ),
-    (
-        "Motions (NORMAL)",
-        &[
-            ("j k", "down / up (counts work: 5j)"),
-            ("h l", "left / right: fold, unfold, out of / into a folder"),
-            ("gg G", "first / last"),
-            ("Ctrl+d Ctrl+u", "half a page down / up"),
-            ("Ctrl+f Ctrl+b", "a page down / up"),
-            ("Ctrl+h Ctrl+l", "focus the pane to the left / right (also Ctrl+w h/j/k/l, Space w h/j/k/l)"),
-            ("gt gT", "next / previous tab (also Alt+1…9)"),
-            ("Enter", "open / confirm"),
-            ("/", "filter or search the list"),
-            ("i", "start typing (Enter in a feed)"),
-            ("q Esc", "back (q quits on the first screen)"),
+            ("?", "help: every key of this screen, filterable; Enter runs an action"),
         ],
     ),
     (
         "Leader: Space (Ctrl+G while typing)",
         &[
-            ("Space", "jump to a session"),
+            ("Space", "go to a session, project, group or section (also Ctrl+p)"),
             ("c p s h ,", "chats · projects · system · harness · settings"),
-            ("a", "+actions: the keys of this screen (also ?)"),
+            ("a", "+actions: the actions of this screen"),
             ("w h/j/k/l", "+windows: focus another pane (w cycles)"),
             ("t n/p/1…9", "+tabs: next / previous / a tab by name"),
             ("e", "toggle the sidebar"),
@@ -1012,7 +996,15 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("c", "Copy a command"),
         ],
     ),
-    ("Prompts and pickers", &[("Enter", "Confirm"), ("Esc", "Cancel"), ("type", "Filter a picker"), ("y / n", "Answer a confirmation")]),
+    (
+        "Prompts and pickers",
+        &[
+            ("Enter", "Confirm"),
+            ("Esc", "Cancel"),
+            ("type", "Filter a picker (fuzzy)"),
+            ("y / n", "Answer a confirmation (Enter never confirms a deletion)"),
+        ],
+    ),
     (
         "Terminals (jobs, shells)",
         &[("keys", "go to the terminal while it runs"), ("Ctrl+G w", "Close the terminal"), ("Esc", "Close once it has exited")],
@@ -1036,6 +1028,8 @@ impl Screen for Keyboard {
             KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
             KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
             KeyCode::Home | KeyCode::Char('g') => self.scroll = 0,
+            // clamped to the end while drawing
+            KeyCode::End | KeyCode::Char('G') => self.scroll = u16::MAX,
             _ => return Handled::No,
         }
         Handled::Yes
@@ -1044,19 +1038,23 @@ impl Screen for Keyboard {
     fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
         let t = Theme::get();
         let mut lines = vec![];
-        for (title, keys) in KEYS {
+        // the app keys straight from the key table the app handles them with
+        let sections = [crate::keymap::Group::Motion, crate::keymap::Group::Panes, crate::keymap::Group::Global]
+            .map(|g| (crate::keymap::group_title(g).to_string(), crate::keymap::rows(g)));
+        let fixed = KEYS.iter().map(|(t, keys)| (t.to_string(), keys.iter().map(|(k, l)| (k.to_string(), l.to_string())).collect()));
+        let mut all: Vec<(String, Vec<(String, String)>)> = fixed.collect();
+        all.splice(1..1, sections);
+        for (title, keys) in &all {
             lines.push(Line::styled(title.to_string(), t.accent_style()));
             for (k, label) in keys.iter() {
-                lines.push(Line::from(vec![Span::styled(format!("  {k:<16}"), t.bold()), Span::raw(label.to_string())]));
+                lines.push(Line::from(vec![Span::styled(format!("  {k:<22}"), t.bold()), Span::raw(label.to_string())]));
             }
             lines.push(Line::raw(""));
         }
         let max = (lines.len() as u16).saturating_sub(area.height.saturating_sub(2));
         self.scroll = self.scroll.min(max);
         f.render_widget(
-            Paragraph::new(lines)
-                .scroll((self.scroll, 0))
-                .block(block("Keyboard — the leader panel always lists the current screen's keys", false)),
+            Paragraph::new(lines).scroll((self.scroll, 0)).block(block("Keyboard — ? lists the current screen's keys", false)),
             area,
         );
     }
