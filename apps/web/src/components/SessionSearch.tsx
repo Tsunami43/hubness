@@ -31,10 +31,10 @@ export const SessionSearch = forwardRef<HTMLInputElement, { value: string; onCha
         }}
         placeholder={t('sessions.search')}
         aria-label={t('sessions.search')}
-        className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none placeholder:text-muted/70 [&::-webkit-search-cancel-button]:hidden"
+        className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none pointer-coarse:py-2.5 pointer-coarse:text-[15px] placeholder:text-muted/70 [&::-webkit-search-cancel-button]:hidden"
       />
       {value ? (
-        <button type="button" onClick={() => onChange('')} aria-label={t('sessions.searchClear')} title={t('sessions.searchClear')} className="text-muted hover:text-fg">
+        <button type="button" onClick={() => onChange('')} aria-label={t('sessions.searchClear')} title={t('sessions.searchClear')} className="tap -mr-2 inline-flex items-center justify-center text-muted hover:text-fg">
           <X className="size-3.5" />
         </button>
       ) : null}

@@ -18,6 +18,7 @@ import { GitStatusLine } from './GitStatusLine';
 import { useSideRight } from '../lib/editorPrefs';
 import { SearchView } from './SearchView';
 import { Empty, TopBar } from './ui';
+import { usePhoneFullscreen } from './Layout';
 import { JumpLabel } from './LeaderOverlay';
 import { useKeyActions, type KeyAction } from '../lib/keys';
 import { useDragging } from '../lib/dnd';
@@ -661,6 +662,11 @@ export function RepoWorkspace({
   ];
   useKeyActions('workbench', keyActions);
 
+  // phone: an open session takes the whole screen like a chat (its own header with «back»):
+  // no project bar, tab strip or bottom navigation around it
+  const sessionFull = !desktop && mobileView === 'editor' && focused.tabs.find((x) => x.key === focused.active)?.ref.kind === 'session';
+  usePhoneFullscreen(sessionFull);
+
   const ctx = (
     <ContextMenu
       menu={menu}
@@ -680,8 +686,8 @@ export function RepoWorkspace({
       <WorkbenchContext.Provider value={api_}>
         <AskContext.Provider value={ask}>
           <div className="flex min-h-0 flex-1 flex-col">
-            <TopBar title={<Title title={title} badge={badge} />} subtitle={subtitle} back="/projects" actions={actions} />
-            <nav className="flex shrink-0 items-stretch border-b border-line bg-surface">
+            {sessionFull ? null : <TopBar title={<Title title={title} badge={badge} />} subtitle={subtitle} back="/projects" actions={actions} />}
+            <nav className={`shrink-0 items-stretch border-b border-line bg-surface ${sessionFull ? 'hidden' : 'flex'}`}>
               {sideViews.map((v) => (
                 <button
                   key={v.id}
@@ -689,9 +695,9 @@ export function RepoWorkspace({
                   title={v.label}
                   aria-label={v.label}
                   onClick={() => setMobileView(v.id)}
-                  className={`relative inline-flex w-10 shrink-0 items-center justify-center border-b-2 ${mobileView === v.id ? 'border-accent text-accent' : 'border-transparent text-muted'}`}
+                  className={`relative inline-flex w-10 shrink-0 items-center justify-center border-b-2 pointer-coarse:w-12 ${mobileView === v.id ? 'border-accent text-accent' : 'border-transparent text-muted'}`}
                 >
-                  <v.icon className="size-4" style={{ color: ICON_COLOR[v.id] }} />
+                  <v.icon className="size-4 pointer-coarse:size-5" style={{ color: ICON_COLOR[v.id] }} />
                   {v.badge ? <span className="absolute top-1 right-0.5 text-[10px] text-warn">{v.badge}</span> : null}
                 </button>
               ))}
@@ -710,23 +716,23 @@ export function RepoWorkspace({
                           setLayout((l) => L.activate(l, g.id, tab.key));
                           setMobileView('editor');
                         }}
-                        className={`flex items-center gap-1.5 py-2 pl-2.5 text-[13px] whitespace-nowrap ${tab.preview ? 'italic' : ''}`}
+                        className={`flex max-w-[60vw] items-center gap-1.5 py-2 pl-2.5 text-[13px] whitespace-nowrap pointer-coarse:py-3.5 ${tab.preview ? 'italic' : ''}`}
                       >
                         {lb.icon}
-                        {lb.name}
+                        <span className="truncate">{lb.name}</span>
                         <ToolBadge b={lb.badge} />
                         {dirty.has(tab.key) ? <span className="size-1.5 rounded-full bg-fg" /> : null}
                       </button>
-                      <button type="button" aria-label={t('tabs.close')} onClick={() => setLayout((l) => L.close(l, g.id, tab.key))} className="px-1.5 py-2 text-muted">
-                        <X className="size-3.5" />
+                      <button type="button" aria-label={t('tabs.close')} onClick={() => setLayout((l) => L.close(l, g.id, tab.key))} className="tap inline-flex items-center justify-center px-1.5 py-2 text-muted">
+                        <X className="size-3.5 pointer-coarse:size-4" />
                       </button>
                     </div>
                   );
                 })}
               </div>
               <div className="relative shrink-0">
-                <button type="button" aria-label={t('tabs.openTool')} title={t('tabs.openTool')} onClick={() => setToolMenu(!toolMenu)} className="inline-flex h-full w-10 items-center justify-center text-muted">
-                  <Plus className="size-4" />
+                <button type="button" aria-label={t('tabs.openTool')} title={t('tabs.openTool')} onClick={() => setToolMenu(!toolMenu)} className="inline-flex h-full w-10 items-center justify-center text-muted pointer-coarse:w-12">
+                  <Plus className="size-4 pointer-coarse:size-5" />
                 </button>
                 {toolMenu ? (
                   <>
@@ -740,7 +746,7 @@ export function RepoWorkspace({
                             setToolMenu(false);
                             api_.openTool(x.id);
                           }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-sunken"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-sunken pointer-coarse:py-3.5 pointer-coarse:text-[15px]"
                         >
                           <x.icon className="size-4 text-muted" /> {x.label} <ToolBadge b={x.badge} />
                         </button>

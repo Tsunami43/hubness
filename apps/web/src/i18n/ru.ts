@@ -12,6 +12,7 @@ export const ru: Record<MessageKey, string> = {
   'archive.tabActive': 'Активные',
   'archive.tabArchive': 'Архив',
   'archive.move': 'В архив',
+  'archive.swipeHint': 'Смахните сессию влево, чтобы отправить в архив',
   'archive.restore': 'Восстановить',
   'archive.count': 'В архиве: {n}',
   'archive.empty': 'Удалить все',

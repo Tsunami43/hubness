@@ -116,7 +116,7 @@ export function AttachButton({ onPick, className = '' }: { onPick: (files: FileL
         onClick={() => input.current?.click()}
         title={t('attach.add')}
         aria-label={t('attach.add')}
-        className={`inline-flex size-8 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg ${className}`}
+        className={`tap inline-flex size-8 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg ${className}`}
       >
         <Paperclip className="size-4" />
       </button>
