@@ -1,7 +1,7 @@
 import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, House, LogOut, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
-import { useAuth } from './AuthGate';
+import { useAccess, useAuth } from './AuthGate';
 import type { Session } from '@hubness/shared';
 import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
@@ -344,8 +344,11 @@ export function Layout() {
   useEffect(() => setDrawer(false), [pathname]);
   const nav = useNavigate();
   const auth = useAuth();
+  const access = useAccess();
+  // System and Harness only for accounts that have them
+  const navItems = NAV.filter((n) => (n.to === '/system' ? access.can('system') : n.to === '/harness' ? access.can('harness') : true));
   useKeyActions('nav', [
-    ...NAV.map((n) => ({ key: n.key, label: t(n.label), section: t('keys.navigate'), run: () => nav(n.to) })),
+    ...navItems.map((n) => ({ key: n.key, label: t(n.label), section: t('keys.navigate'), run: () => nav(n.to) })),
     { key: 'H', label: t('history.title'), section: t('keys.navigate'), run: toggleHistory },
     { key: '?', label: t('keys.settings'), section: t('keys.navigate'), run: () => nav('/settings/keyboard') },
   ]);
@@ -413,7 +416,7 @@ export function Layout() {
             ) : null}
           </div>
           <div className={`space-y-px pt-2 ${expanded ? 'px-0' : 'px-0'}`}>
-            {NAV.map(({ to, label, icon: Icon, key }) => (
+            {navItems.map(({ to, label, icon: Icon, key }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -451,7 +454,7 @@ export function Layout() {
           {/* Phone: bottom navigation */}
           {!full ? (
             <nav className="hide-on-kb pb-safe grid shrink-0 grid-cols-5 border-t border-line bg-surface lg:hidden">
-              {NAV.map(({ to, label, icon: Icon }) => (
+              {navItems.map(({ to, label, icon: Icon }) => (
                 <NavLink
                   key={to}
                   to={to}

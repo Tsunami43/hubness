@@ -25,7 +25,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json};
-use hubness_core::{AuthStatus, LoginResponse, User};
+use hubness_core::{AuthStatus, LoginResponse, Permissions, Role, User};
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::json;
@@ -76,14 +76,14 @@ pub struct Caller {
 }
 
 impl Caller {
-    fn user(&self) -> Option<&User> {
+    pub fn user(&self) -> Option<&User> {
         match &self.principal {
             Some(Principal::User { user, .. }) => Some(user),
             _ => None,
         }
     }
 
-    fn token(&self) -> Option<&str> {
+    pub fn token(&self) -> Option<&str> {
         match &self.principal {
             Some(Principal::User { token, .. }) => Some(token),
             _ => None,
@@ -93,6 +93,11 @@ impl Caller {
 
 fn db() -> Option<std::sync::MutexGuard<'static, Connection>> {
     DB.get().map(|d| d.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// The accounts database (`None` until `init`).
+pub fn db_conn() -> Option<std::sync::MutexGuard<'static, Connection>> {
+    db()
 }
 
 fn eq(a: &str, b: &str) -> bool {
@@ -203,6 +208,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/users", get(list_users).post(create_user))
         .route("/users/{id}", delete(delete_user))
         .route("/users/{id}/password", put(change_password))
+        .route("/users/{id}/access", put(change_access))
 }
 
 fn with_db<T>(f: impl FnOnce(&Connection) -> ApiResult<T>) -> ApiResult<T> {
@@ -330,14 +336,42 @@ async fn list_users() -> ApiResult<Json<Vec<User>>> {
     with_db(|db| Ok(users::list(db)?)).map(Json)
 }
 
-async fn create_user(JsonBody(b): JsonBody<Credentials>) -> ApiResult<Json<User>> {
+#[derive(Deserialize)]
+struct NewUser {
+    username: String,
+    password: String,
+    #[serde(default)]
+    role: Role,
+    #[serde(default)]
+    permissions: Option<Permissions>,
+}
+
+async fn create_user(JsonBody(b): JsonBody<NewUser>) -> ApiResult<Json<User>> {
     let username = users::check_username(&b.username)?;
     users::check_password(&b.password)?;
     if with_db(|db| Ok(users::find(db, &username)?))?.is_some() {
         return Err(HttpError::new(409, format!("The username {username} is taken")));
     }
     let hash = hash(b.password).await?;
-    with_db(|db| users::create(db, &username, &hash)).map(Json)
+    with_db(|db| users::create_with(db, &username, &hash, b.role, b.permissions)).map(Json)
+}
+
+#[derive(Deserialize)]
+struct AccessBody {
+    role: Role,
+    #[serde(default)]
+    permissions: Option<Permissions>,
+}
+
+/// An account's role and permissions (admins only, see `permissions.rs`).
+async fn change_access(Path(id): Path<String>, JsonBody(b): JsonBody<AccessBody>) -> ApiResult<Json<User>> {
+    if let Some(p) = &b.permissions {
+        let long = |l: &Option<Vec<String>>| l.as_ref().is_some_and(|l| l.len() > 10_000 || l.iter().any(|v| v.len() > 200));
+        if long(&p.projects) || long(&p.agents) || long(&p.models) {
+            return Err(HttpError::bad_request("permissions: lists too long"));
+        }
+    }
+    with_db(|db| users::set_access(db, &id, b.role, b.permissions)).map(Json)
 }
 
 async fn delete_user(Path(id): Path<String>) -> ApiResult<Json<serde_json::Value>> {

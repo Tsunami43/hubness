@@ -62,7 +62,7 @@ enum Command {
         after_help = "Examples:\n  hubness server start\n  hubness server start --data-dir ~/old-hub/.data\n  hubness server logs -f\n  hubness server config port 9000 && hubness server restart"
     )]
     Server(service::ServerCommand),
-    /// Manage hub accounts: add | passwd | rm | list
+    /// Manage hub accounts: add | passwd | rm | role | list
     #[cfg(feature = "server")]
     #[command(subcommand)]
     User(UserCommand),
@@ -94,12 +94,18 @@ enum Command {
 #[command(after_help = "Passwords are asked for (hidden), or read from stdin when it is not a terminal.\n\
                         Works on the service's data folder (or HUBNESS_DATA_DIR), also while the hub runs.")]
 enum UserCommand {
-    /// Create an account (the first one turns sign-in on)
+    /// Create an admin account (the first one turns sign-in on)
     Add { name: String },
     /// Set a new password (signs the account out everywhere)
     Passwd { name: String },
     /// Delete an account
     Rm { name: String },
+    /// Make an account an admin or a member (a member's permissions are set in the web app)
+    Role {
+        name: String,
+        #[arg(value_parser = ["admin", "member"])]
+        role: String,
+    },
     /// List the accounts
     List,
 }
@@ -157,6 +163,7 @@ fn user(cmd: UserCommand) -> anyhow::Result<()> {
         UserCommand::Add { name } => vec!["add".into(), name],
         UserCommand::Passwd { name } => vec!["passwd".into(), name],
         UserCommand::Rm { name } => vec!["rm".into(), name],
+        UserCommand::Role { name, role } => vec!["role".into(), name, role],
         UserCommand::List => vec!["list".into()],
     };
     // accounts live where the service keeps its data, unless HUBNESS_DATA_DIR says otherwise
