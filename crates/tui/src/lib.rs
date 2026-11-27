@@ -20,6 +20,7 @@ pub mod ui;
 // the file editor (edtui) is used by the project Files tab
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, EventStream, KeyEventKind,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use edtui as _;
@@ -51,16 +52,6 @@ enum Target {
 /// hub; without either the connect screen asks for one. A hub with accounts gets the
 /// sign-in screen unless a stored session is still valid (`user` prefills the username).
 pub async fn run(url: Option<&str>, user: Option<&str>) -> anyhow::Result<()> {
-    let (itx, mut input) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        let mut events = EventStream::new();
-        while let Some(Ok(e)) = events.next().await {
-            if itx.send(e).is_err() {
-                break;
-            }
-        }
-    });
-
     let mut target = match url.map(str::trim).filter(|u| !u.is_empty()) {
         Some(u) if u.starts_with("http://") || u.starts_with("https://") => Target::Hub(hubs::key(u)),
         Some(u) => Target::Connect { address: u.to_string(), error: None, back: None, auto: true },
@@ -77,6 +68,23 @@ pub async fn run(url: Option<&str>, user: Option<&str>) -> anyhow::Result<()> {
     if mouse {
         let _ = execute!(std::io::stdout(), EnableMouseCapture);
     }
+    // the kitty keyboard protocol where the terminal has it (kitty, foot, WezTerm, Ghostty,
+    // Alacritty…): Alt+Shift+Tab and other modified keys arrive as one key instead of Esc +
+    // the key. Asked before the event stream starts, which would otherwise eat the answer;
+    // it lives on the alternate screen, so even a crash leaves the shell's keys alone.
+    let enhanced = matches!(crossterm::terminal::supports_keyboard_enhancement(), Ok(true));
+    if enhanced {
+        let _ = execute!(std::io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+    }
+    let (itx, mut input) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut events = EventStream::new();
+        while let Some(Ok(e)) = events.next().await {
+            if itx.send(e).is_err() {
+                break;
+            }
+        }
+    });
     let mut user = user.map(String::from);
     let result = async {
         loop {
@@ -89,6 +97,9 @@ pub async fn run(url: Option<&str>, user: Option<&str>) -> anyhow::Result<()> {
         anyhow::Ok(())
     }
     .await;
+    if enhanced {
+        let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    }
     let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
     ratatui::restore();
     result

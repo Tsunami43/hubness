@@ -94,7 +94,8 @@ pub const SCREEN_KEYS: &[(&str, &str, Group)] = &[
     ("Enter", "open / confirm", Group::Motion),
     ("/", "filter the list as you type (Enter keeps, Esc restores)", Group::Motion),
     ("i", "start typing (the message box)", Group::Motion),
-    ("Tab / Shift+Tab", "next / previous pane; next / previous tab on a screen without panes", Group::Panes),
+    ("Tab", "next pane", Group::Panes),
+    ("Alt+Tab / Alt+Shift+Tab", "next / previous tab (also Alt+→ / Alt+←)", Group::Panes),
     ("Alt+1…9", "a tab by its number", Group::Panes),
 ];
 

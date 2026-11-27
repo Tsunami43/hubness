@@ -30,7 +30,7 @@ Motions work in every list, feed, tree and viewer:
 | `Ctrl+f` / `Ctrl+b` | a page down / up |
 | `Enter` | open / confirm |
 | `Ctrl+h` / `Ctrl+l`, `Ctrl+w h/j/k/l`, `Space w h/j/k/l` | focus another pane |
-| `gt` / `gT` | next / previous tab (also `Alt+1…9`; `Tab` / `Shift+Tab` when the screen has no panes) |
+| `gt` / `gT` | next / previous tab (also `Alt+1…9`, `Alt+←/→`, `Alt+Tab` / `Alt+Shift+Tab`) |
 | `/` | filter the current list as you type (`Enter` keeps the filter, `Esc` restores it) |
 | `i` | start typing (the message box; `Enter` too in a feed) |
 | `:` | command palette: every action of the screen plus global commands |
