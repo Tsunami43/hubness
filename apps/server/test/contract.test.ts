@@ -2648,7 +2648,7 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
     assert.match(hit.body, /name="file"; filename="recording\.ogg"/);
     assert.match(hit.body, /voice-bytes/);
     assert.match(hit.body, /name="model"\r\n\r\nwhisper-large-v3-turbo\r\n/);
-    assert.match(hit.body, /name="response_format"\r\n\r\njson\r\n/);
+    assert.doesNotMatch(hit.body, /name="response_format"/, 'JSON is the default everywhere; Mistral does not list the field');
     assert.doesNotMatch(hit.body, /name="language"/, 'auto sends no language');
     s = (await call('PUT', '/voice', { apiKey: null, provider: 'off' })).json;
     assert.equal(s.api.hasKey, false);

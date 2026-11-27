@@ -19,8 +19,7 @@ const RECOMMENDED_MODEL = 'large-v3-turbo-q5_0';
 /** OpenAI-compatible services: one click fills the URL and the model. */
 const PRESETS = [
   { name: 'Groq', url: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo' },
-  { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-transcribe' },
-  { name: 'speaches', url: 'http://127.0.0.1:8000/v1', model: 'Systran/faster-whisper-large-v3' },
+  { name: 'Mistral', url: 'https://api.mistral.ai/v1', model: 'voxtral-mini-latest' },
 ];
 
 /**
