@@ -95,11 +95,12 @@ export function TabStrip({
               onAuxClick={(e) => e.button === 1 && setLayout((l) => L.close(l, group.id, tab.key))}
               onMouseDown={(e) => e.button === 1 && e.preventDefault()}
               onContextMenu={(e) => onMenu(e, tab.key)}
-              className={`group relative flex max-w-56 shrink-0 cursor-pointer items-center gap-1.5 border-r border-line pr-1 pl-2.5 text-[13px] select-none ${
+              aria-current={active ? 'page' : undefined}
+              className={`ui-etab group relative flex max-w-56 shrink-0 cursor-pointer items-center gap-1.5 border-r border-line pr-1 pl-2.5 text-[13px] select-none ${
                 active ? `bg-bg text-fg ${focused ? '' : 'text-fg/80'}` : 'text-muted hover:bg-sunken hover:text-fg'
               } ${over === i ? 'shadow-[inset_2px_0_0_var(--color-accent)]' : ''} ${over === i + 1 && i === group.tabs.length - 1 ? 'shadow-[inset_-2px_0_0_var(--color-accent)]' : ''}`}
             >
-              {active ? <span className={`absolute inset-x-0 top-0 h-0.5 ${focused ? 'bg-accent' : 'bg-muted/50'}`} /> : null}
+              {active ? <span className={`ui-etab-bar absolute inset-x-0 top-0 h-0.5 ${focused ? 'bg-accent' : 'bg-muted/50'}`} /> : null}
               <JumpLabel k={focused && i < 9 ? String(i + 1) : undefined} className="top-1 left-0.5" />
               {lb.icon}
               <span className={`truncate ${tab.preview ? 'italic' : ''}`}>{lb.name}</span>

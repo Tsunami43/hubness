@@ -518,3 +518,38 @@ html[data-style='paper'] .ui-tab[aria-current='page'] {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+
+/* ---------- desktop tab strips and the navigation rail ---------- */
+/*
+ * Tabs everywhere (open places, editor tabs, Explorer / Search / Git, repository switcher)
+ * mark the current one with an underline (.border-b-2 + .border-accent), the rail with a left
+ * bar (.border-l-2). The smooth styles turn that into a rounded tonal backing instead.
+ */
+html:is([data-style='glass'], [data-style='expressive']) :is(.border-b-2, .border-l-2):not(.border-danger, .ui-tab) {
+  border-color: transparent !important;
+  border-radius: 10px;
+  margin: 3px 2px;
+}
+html[data-style='expressive'] :is(.border-b-2, .border-l-2):not(.border-danger, .ui-tab) {
+  border-radius: 999px;
+}
+html:is([data-style='glass'], [data-style='expressive']) :is(.border-b-2, .border-l-2).border-accent:not(.border-danger, .ui-tab) {
+  background-color: color-mix(in srgb, var(--color-accent) 20%, transparent) !important;
+  color: var(--color-fg);
+}
+
+/* editor tabs: no separators or top bar, the current tab sits on a rounded backing */
+html:is([data-style='glass'], [data-style='expressive']) .ui-etab {
+  border-right-color: transparent;
+  border-radius: 10px;
+  margin: 3px 1px;
+}
+html[data-style='expressive'] .ui-etab {
+  border-radius: 999px;
+}
+html:is([data-style='glass'], [data-style='expressive']) .ui-etab[aria-current='page'] {
+  background-color: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+html:is([data-style='glass'], [data-style='expressive']) .ui-etab-bar {
+  display: none;
+}
