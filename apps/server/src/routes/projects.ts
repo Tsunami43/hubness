@@ -30,7 +30,7 @@ import {
 import { createManifest, manifestResponse } from '../manifest.ts';
 import { stopProjectProcesses } from '../runs.ts';
 import { stopContainer } from '../environments.ts';
-import { deleteGitCredential, listGitCredentials, setGitCredential } from '../git-auth.ts';
+import { deleteGitCredential, ghLogin, listGitCredentials, setGitCredential } from '../git-auth.ts';
 import { HttpError } from '../errors.ts';
 import { isActive } from '../runtime.ts';
 import { parseBody, PermissionModeSchema, shortText, TermSizeSchema } from './http.ts';
@@ -129,3 +129,4 @@ projectRoutes.post('/projects/:id/manifest', async (c) => {
 projectRoutes.get('/git-credentials', (c) => c.json(listGitCredentials()));
 projectRoutes.put('/git-credentials/:host', async (c) => c.json(setGitCredential(c.req.param('host'), await parseBody(c, GitCredential))));
 projectRoutes.delete('/git-credentials/:host', (c) => c.json(deleteGitCredential(c.req.param('host'))));
+projectRoutes.post('/git-credentials/:host/gh-login', async (c) => c.json(ghLogin(c.req.param('host'), await parseBody(c, TermSizeSchema, { lenient: true })), 201));

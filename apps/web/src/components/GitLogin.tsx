@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink } from 'lucide-react';
-import type { GitAuthProblem, GitCredentialInfo, GitCredentialKind } from '@hubness/shared';
+import { Check, CircleAlert, Copy, ExternalLink } from 'lucide-react';
+import { ProviderIcon } from './ProviderIcon';
+import type { GitAuthProblem, GitCredentialInfo, GitCredentialKind, JobInfo } from '@hubness/shared';
 import { api } from '../lib/api';
 import { t } from '../i18n';
 import { Button, ErrorLine, Field, inputCls, Sheet } from './ui';
+import { sheetTermSize } from './Terminal';
+import { plainTail, useJobFollow } from '../lib/jobFollow';
 
 /** The host part of what was typed: `https://gitlab.example.com/group/repo` → `gitlab.example.com`. */
 export function hostOf(input: string): string {
@@ -120,6 +123,12 @@ export function GitLoginSheet({
 
   const h = hostOf(fixedHost ?? host);
   const pages = tokenPages(h);
+  const github = hostingOf(h) === 'github';
+  const [ghJob, setGhJob] = useState<JobInfo | null>(null);
+  const signInWithGh = () => {
+    setError(null);
+    api.ghLogin(h, sheetTermSize(24)).then(setGhJob, (e) => setError((e as Error).message));
+  };
   const ready = h && username.trim() && secret;
 
   const save = async () => {
@@ -187,6 +196,16 @@ export function GitLoginSheet({
             ))}
           </div>
         ) : null}
+        {github ? (
+          // the easiest way: a one-time code approved on GitHub, the token is saved by itself
+          <div className="space-y-2">
+            <Button variant="primary" className="w-full justify-center" onClick={signInWithGh}>
+              <ProviderIcon provider="github" className="size-4" /> {t('gitauth.ghSignIn')}
+            </Button>
+            <p className="text-xs text-muted">{t('gitauth.ghHint')}</p>
+            <p className="pt-1 text-center text-xs text-muted">{t('gitauth.ghOr')}</p>
+          </div>
+        ) : null}
         <div className="flex border border-line" role="radiogroup" aria-label={t('gitauth.method')}>
           {(['token', 'password'] as const).map((k) => (
             <button
@@ -240,7 +259,95 @@ export function GitLoginSheet({
         <ErrorLine error={error} />
         <button type="submit" hidden />
       </form>
+      {ghJob ? (
+        <GhLoginOverlay
+          job={ghJob}
+          host={h}
+          onClose={() => setGhJob(null)}
+          onSaved={(list) => {
+            setGhJob(null);
+            onSaved(list);
+          }}
+        />
+      ) : null}
     </Sheet>
+  );
+}
+
+/**
+ * The GitHub CLI sign-in: the one-time code to copy and the device page to open, while the
+ * hub waits for the approval; the new login when it comes, the log when it fails.
+ */
+function GhLoginOverlay({ job, host, onClose, onSaved }: { job: JobInfo; host: string; onClose: () => void; onSaved: (list: GitCredentialInfo[]) => void }) {
+  const { output, exit } = useJobFollow(job.id);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const plain = plainTail(output, 40).join('\n');
+  const code = plain.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4})\b/)?.[1] ?? null;
+  const url = plain.match(/https:\/\/\S+\/login\/device\S*/)?.[0] ?? `https://${host}/login/device`;
+
+  useEffect(() => {
+    if (exit === undefined) return;
+    if (exit !== 0) return setFailed(plainTail(output, 14).join('\n'));
+    api.gitCredentials().then(
+      (list) => (list.some((c) => c.host === host) ? onSaved(list) : setFailed(t('gitauth.ghNoToken'))),
+      (e) => setFailed((e as Error).message),
+    );
+  }, [exit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={t('gitauth.ghSignIn')}>
+      <div className="w-full max-w-md space-y-4 border border-line bg-surface p-5">
+        {failed !== null ? (
+          <>
+            <p className="flex items-center gap-2 font-semibold text-danger">
+              <CircleAlert className="size-5" /> {t('gitauth.ghFailed')}
+            </p>
+            {failed ? <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed}</pre> : null}
+            <Button variant="primary" onClick={onClose}>
+              {t('common.close')}
+            </Button>
+          </>
+        ) : code ? (
+          <>
+            <p className="font-semibold">{t('gitauth.ghEnterCode')}</p>
+            <div className="flex items-center gap-2">
+              <span className="flex-1 border border-line bg-bg py-3 text-center font-mono text-2xl tracking-widest select-all">{code}</span>
+              <Button
+                size="sm"
+                onClick={() =>
+                  void navigator.clipboard?.writeText(code).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  })
+                }
+              >
+                {copied ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
+                {copied ? t('harness.copied') : t('harness.copy')}
+              </Button>
+            </div>
+            <a href={url} target="_blank" rel="noreferrer" className="btn-accent flex items-center justify-center gap-2 px-3 py-2 text-sm">
+              <ExternalLink className="size-4" /> {t('gitauth.ghOpen')}
+            </a>
+            <p className="flex items-center gap-2 text-xs text-muted">
+              <span aria-hidden className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-line border-t-accent" />
+              {t('gitauth.ghWaiting')}
+            </p>
+            <Button size="sm" variant="ghost" onClick={() => void api.jobKill(job.id).then(onClose, onClose)}>
+              {t('common.cancel')}
+            </Button>
+          </>
+        ) : (
+          <div className="flex items-center gap-4">
+            <span aria-hidden className="size-10 shrink-0 animate-spin rounded-full border-4 border-line border-t-accent" />
+            <div className="min-w-0">
+              <p className="font-semibold">{t('gitauth.ghPreparing')}</p>
+              <p className="truncate font-mono text-xs text-muted">{plainTail(output, 1)[0] ?? ''}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

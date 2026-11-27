@@ -1,9 +1,14 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { GitAuthProblem, GitCredentialInfo, GitCredentialKind } from '@hubness/shared';
 import { gitCredentialRows } from './db/index.ts';
 import { HttpError } from './errors.ts';
 import { parseRemote } from './git-providers.ts';
 import { decrypt, encrypt } from './secrets.ts';
+import { childEnv, config } from './config.ts';
+import { shq as qsh, startJob } from './terminal.ts';
 
 /**
  * Git logins per host (token or login + password over https) for the hub's own git
@@ -107,4 +112,85 @@ export function authProblem(output: string, remoteHosts: string[]): GitAuthProbl
     return { host, protocol: 'ssh', reason: 'hostkey' };
   }
   return null;
+}
+
+// ---------- sign-in with the GitHub CLI ----------
+
+/** The gh the hub downloads when the host has none (GitHub's release archives). */
+const GH_VERSION = '2.83.1';
+/** `<data>/gh`: the downloaded gh (`bin/gh`) and a throwaway config for one sign-in. */
+const ghRoot = () => join(config.dataDir, 'gh');
+
+/**
+ * The sign-in as a shell script (the same text as `gh_login_script` in `git_auth.rs`):
+ * `gh auth login --web` prints a one-time code and the device page, then waits for the
+ * approval. The config is a throwaway folder and the token is kept in it (not the system
+ * keyring); `ssh` + `--skip-ssh-key` keeps gh away from the git config.
+ */
+export function ghLoginScript(root: string, host: string): string {
+  const bin = `${root}/bin/gh`;
+  const dl = `${root}/dl`;
+  const base = `https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_`;
+  return [
+    'set -e',
+    'fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL "$1"; else wget -qO- "$1"; fi; }',
+    'if command -v gh >/dev/null 2>&1; then GH=gh; else',
+    `  GH=${qsh(bin)}`,
+    '  if [ ! -x "$GH" ]; then',
+    '    case "$(uname -s)-$(uname -m)" in',
+    '      Linux-x86_64) A=linux_amd64 ;; Linux-aarch64|Linux-arm64) A=linux_arm64 ;; Darwin-arm64) A=macOS_arm64 ;; Darwin-x86_64) A=macOS_amd64 ;;',
+    "      *) echo 'No GitHub CLI for this platform: install gh'; exit 1 ;;",
+    '    esac',
+    `    echo "Downloading the GitHub CLI ${GH_VERSION}…"`,
+    `    rm -rf ${qsh(dl)} && mkdir -p ${qsh(dl)} ${qsh(`${root}/bin`)}`,
+    '    case "$A" in',
+    `      macOS*) fetch "${base}$A.zip" > ${qsh(`${dl}/gh.zip`)} && (cd ${qsh(dl)} && unzip -q gh.zip) ;;`,
+    `      *) fetch "${base}$A.tar.gz" | tar -xz -C ${qsh(dl)} ;;`,
+    '    esac',
+    `    cp ${qsh(dl)}/gh_${GH_VERSION}_"$A"/bin/gh "$GH"`,
+    `    rm -rf ${qsh(dl)}`,
+    '  fi',
+    'fi',
+    `export GH_CONFIG_DIR=${qsh(`${root}/config`)}`,
+    'rm -rf "$GH_CONFIG_DIR"',
+    `BROWSER=true GH_BROWSER=true "$GH" auth login --hostname ${qsh(host)} --git-protocol ssh --skip-ssh-key --web --scopes workflow --insecure-storage </dev/null`,
+  ].join('\n');
+}
+
+/** After a successful sign-in: the token and the account name from gh, saved as the host's login. */
+function ghCollect(host: string) {
+  const cfg = join(ghRoot(), 'config');
+  const own = join(ghRoot(), 'bin', 'gh');
+  const gh = existsSync(own) ? own : 'gh';
+  const run = (args: string[]) => {
+    const r = spawnSync(gh, args, { env: { ...childEnv(), GH_CONFIG_DIR: cfg }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = (r.stdout ?? '').trim();
+    return r.status === 0 && out ? out : null;
+  };
+  const token = run(['auth', 'token', '--hostname', host]);
+  const login = run(['api', '--hostname', host, 'user', '--jq', '.login']);
+  rmSync(cfg, { recursive: true, force: true });
+  if (!token) throw new Error('gh signed in but gave no token');
+  setGitCredential(host, { username: login ?? 'git', kind: 'token', secret: token });
+}
+
+/** Sign in to a GitHub host with the GitHub CLI (a terminal job); on success the token becomes the host's login. */
+export function ghLogin(hostInput: string, size: { cols?: number; rows?: number }) {
+  const host = normalizeHost(hostInput);
+  if (!host) throw new HttpError(400, 'host: a domain like github.com');
+  return startJob({
+    title: `gh · ${host}`,
+    command: ghLoginScript(ghRoot(), host),
+    display: `gh auth login --hostname ${host} --web`,
+    cols: size.cols,
+    rows: size.rows,
+    onExit: (code) => {
+      if (code !== 0) return rmSync(join(ghRoot(), 'config'), { recursive: true, force: true });
+      try {
+        ghCollect(host);
+      } catch (e) {
+        console.error(`hubness: gh sign-in for ${host}: ${(e as Error).message}`);
+      }
+    },
+  });
 }

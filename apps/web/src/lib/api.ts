@@ -257,6 +257,8 @@ export const api = {
   setGitCredential: (host: string, body: { username: string; kind: GitCredentialKind; secret: string }) =>
     req<GitCredentialInfo[]>('PUT', `/git-credentials/${encodeURIComponent(host)}`, body),
   deleteGitCredential: (host: string) => req<GitCredentialInfo[]>('DELETE', `/git-credentials/${encodeURIComponent(host)}`),
+  /** Sign in to a GitHub host with the GitHub CLI: a terminal job that prints a one-time code. */
+  ghLogin: (host: string, body: { cols?: number; rows?: number } = {}) => req<JobInfo>('POST', `/git-credentials/${encodeURIComponent(host)}/gh-login`, body),
   voice: () => req<VoiceSettings>('GET', '/voice'),
   saveVoice: (patch: VoiceSettingsInput) => req<VoiceSettings>('PUT', '/voice', patch),
   voiceInstall: (body: { cols?: number; rows?: number } = {}) => req<JobInfo>('POST', '/voice/install', body),
