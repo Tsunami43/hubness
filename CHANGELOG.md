@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-28
+
 ### Added
 
 - Git logins show whether they still work: Settings → Git access asks the host who the login
