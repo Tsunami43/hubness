@@ -25,7 +25,8 @@ export function Button({
   children,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md'; loading?: boolean }) {
-  const sz = size === 'sm' ? 'h-7 px-2 text-[13px] gap-1.5' : 'h-9 px-3 gap-2';
+  // touch screens: finger-sized heights (the desktop keeps the dense TUI sizes)
+  const sz = size === 'sm' ? 'h-7 px-2 text-[13px] gap-1.5 pointer-coarse:h-10 pointer-coarse:px-3' : 'h-9 px-3 gap-2 pointer-coarse:h-11';
   return (
     <button
       {...rest}
@@ -49,7 +50,7 @@ export function IconButton({
       {...rest}
       aria-label={label}
       title={label}
-      className={`inline-flex size-9 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg disabled:opacity-40 ${className}`}
+      className={`tap inline-flex size-9 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg disabled:opacity-40 ${className}`}
     >
       {children}
     </button>
@@ -74,10 +75,10 @@ export function TopBar({
   const { pathname } = useLocation();
   const inPlace = places.some((p) => pathname === p.path || pathname.startsWith(`${p.path}/`));
   return (
-    <header className="sticky top-0 z-20 flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface px-2">
+    <header className="sticky top-0 z-20 flex h-11 shrink-0 items-center gap-2 border-b border-line bg-surface px-2 pointer-coarse:h-[52px] pointer-coarse:gap-1 pointer-coarse:px-1">
       {back ? (
-        <Link to={back} aria-label={t('common.back')} className="inline-flex size-8 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg">
-          <ChevronLeft className="size-4" />
+        <Link to={back} aria-label={t('common.back')} className="tap inline-flex size-8 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg">
+          <ChevronLeft className="size-4 pointer-coarse:size-5" />
         </Link>
       ) : (
         <span className="w-1" />
@@ -89,7 +90,7 @@ export function TopBar({
       {/* open projects / groups / chats, like browser tabs (desktop) */}
       <PlacesStrip />
       <span className="hidden flex-1 lg:block" />
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-0">
         {actions}
         <HistoryButton open={historyOpen} onClick={toggleHistory} />
       </div>
@@ -100,14 +101,14 @@ export function TopBar({
 /** Header inside a panel (session in a project tab): back, title, subtitle, actions. */
 export function PanelHeader({ title, subtitle, onBack, actions }: { title: ReactNode; subtitle?: ReactNode; onBack?: () => void; actions?: ReactNode }) {
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface pr-1 pl-1">
+    <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface pr-1 pl-1 pointer-coarse:h-[52px] pointer-coarse:gap-1 pointer-coarse:px-1">
       {onBack ? (
-        <button type="button" onClick={onBack} aria-label={t('common.back')} className="inline-flex size-7 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg">
-          <ChevronLeft className="size-4" />
+        <button type="button" onClick={onBack} aria-label={t('common.back')} className="tap inline-flex size-7 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg">
+          <ChevronLeft className="size-4 pointer-coarse:size-5" />
         </button>
       ) : null}
       <div className="flex min-w-0 flex-1 items-baseline gap-2 pl-1">
-        <span className="min-w-0 shrink truncate text-[13px] font-semibold">{title}</span>
+        <span className="min-w-0 shrink truncate text-[13px] font-semibold pointer-coarse:text-[15px]">{title}</span>
         {subtitle ? <span className="min-w-0 shrink truncate text-xs text-muted">{subtitle}</span> : null}
       </div>
       {actions}
@@ -124,7 +125,7 @@ export function HistoryButton({ open, onClick, className = '' }: { open: boolean
       aria-label={t('history.title')}
       aria-pressed={open}
       title={t('history.title')}
-      className={`inline-flex size-9 shrink-0 items-center justify-center hover:bg-sunken ${open ? 'text-accent' : 'text-muted hover:text-fg'} ${className}`}
+      className={`tap inline-flex size-9 shrink-0 items-center justify-center hover:bg-sunken ${open ? 'text-accent' : 'text-muted hover:text-fg'} ${className}`}
     >
       <PanelRight className="size-4" />
     </button>

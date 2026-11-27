@@ -334,7 +334,7 @@ export function Explorer({
               dropInto(root, e.path);
             }}
             style={{ paddingLeft: 8 + depth * 14 }}
-            className={`group flex w-full items-center gap-1.5 py-[5px] pr-2 text-left text-[13.5px] lg:py-[3px] ${
+            className={`group flex w-full items-center gap-1.5 py-[5px] pr-2 text-left text-[13.5px] pointer-coarse:py-[10px] lg:py-[3px] ${
               dropKey === key ? 'bg-accent/25 outline outline-1 outline-accent' : active ? 'bg-accent/15 text-fg' : cursor?.root === root && cursor.path === e.path ? 'bg-sunken' : 'hover:bg-sunken'
             } ${e.ignored ? 'opacity-50' : ''}`}
           >

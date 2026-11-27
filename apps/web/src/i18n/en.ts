@@ -11,6 +11,7 @@ export const en = {
   'archive.tabActive': 'Active',
   'archive.tabArchive': 'Archive',
   'archive.move': 'Move to archive',
+  'archive.swipeHint': 'Swipe a session to the left to archive it',
   'archive.restore': 'Restore',
   'archive.count': '{n} in the archive',
   'archive.empty': 'Delete all',

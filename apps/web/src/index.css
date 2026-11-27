@@ -150,6 +150,17 @@ button:disabled {
   padding-bottom: var(--safe-b);
 }
 
+/*
+ * Finger-sized hit area on touch screens (Apple HIG: 44pt). The desktop keeps its dense TUI
+ * sizes; on a coarse pointer the control grows to at least 44×44px around its icon.
+ */
+@utility tap {
+  @media (pointer: coarse) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* height of the visible app area: the screen above the on-screen keyboard on touch devices */
 @utility h-app {
   height: var(--app-h, 100dvh);
