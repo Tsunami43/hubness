@@ -249,7 +249,119 @@ use crate::AppState;
 use crate::http::JsonBody;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/git-credentials", get(list_route)).route("/git-credentials/{host}", put(set_route).delete(delete_route))
+    Router::new()
+        .route("/git-credentials", get(list_route))
+        .route("/git-credentials/{host}", put(set_route).delete(delete_route))
+        .route("/git-credentials/{host}/gh-login", axum::routing::post(gh_login_route))
+}
+
+// ---------- sign-in with the GitHub CLI ----------
+
+/// The gh the hub downloads when the host has none (GitHub's release archives).
+const GH_VERSION: &str = "2.83.1";
+
+/// `<data>/gh`: the downloaded gh (`bin/gh`) and a throwaway config for one sign-in.
+fn gh_root(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("gh")
+}
+
+/// The sign-in as a shell script (the same text as `ghLoginScript` in `git-auth.ts`):
+/// `gh auth login --web` prints a one-time code and the device page, then waits for the
+/// approval. The config is a throwaway folder and the token is kept in it (not the system
+/// keyring); `ssh` + `--skip-ssh-key` keeps gh away from the git config.
+pub fn gh_login_script(root: &str, host: &str) -> String {
+    use crate::terminal::shq;
+    let bin = format!("{root}/bin/gh");
+    let dl = format!("{root}/dl");
+    let base = format!("https://github.com/cli/cli/releases/download/v{GH_VERSION}/gh_{GH_VERSION}_");
+    [
+        "set -e".to_string(),
+        "fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL \"$1\"; else wget -qO- \"$1\"; fi; }".into(),
+        "if command -v gh >/dev/null 2>&1; then GH=gh; else".into(),
+        format!("  GH={}", shq(&bin)),
+        "  if [ ! -x \"$GH\" ]; then".into(),
+        "    case \"$(uname -s)-$(uname -m)\" in".into(),
+        "      Linux-x86_64) A=linux_amd64 ;; Linux-aarch64|Linux-arm64) A=linux_arm64 ;; Darwin-arm64) A=macOS_arm64 ;; Darwin-x86_64) A=macOS_amd64 ;;".into(),
+        "      *) echo 'No GitHub CLI for this platform: install gh'; exit 1 ;;".into(),
+        "    esac".into(),
+        format!("    echo \"Downloading the GitHub CLI {GH_VERSION}…\""),
+        format!("    rm -rf {d} && mkdir -p {d} {b}", d = shq(&dl), b = shq(&format!("{root}/bin"))),
+        "    case \"$A\" in".into(),
+        format!("      macOS*) fetch \"{base}$A.zip\" > {z} && (cd {d} && unzip -q gh.zip) ;;", z = shq(&format!("{dl}/gh.zip")), d = shq(&dl)),
+        format!("      *) fetch \"{base}$A.tar.gz\" | tar -xz -C {} ;;", shq(&dl)),
+        "    esac".into(),
+        format!("    cp {}/gh_{GH_VERSION}_\"$A\"/bin/gh \"$GH\"", shq(&dl)),
+        format!("    rm -rf {}", shq(&dl)),
+        "  fi".into(),
+        "fi".into(),
+        format!("export GH_CONFIG_DIR={}", shq(&format!("{root}/config"))),
+        "rm -rf \"$GH_CONFIG_DIR\"".into(),
+        format!(
+            "BROWSER=true GH_BROWSER=true \"$GH\" auth login --hostname {} --git-protocol ssh --skip-ssh-key --web --scopes workflow --insecure-storage </dev/null",
+            shq(host)
+        ),
+    ]
+    .join("\n")
+}
+
+/// After a successful sign-in: the token and the account name from gh, saved as the host's
+/// login; the throwaway gh config is removed either way.
+fn gh_collect(db: &Connection, data_dir: &Path, host: &str) -> ApiResult<()> {
+    let root = gh_root(data_dir);
+    let config = root.join("config");
+    let own = root.join("bin").join("gh");
+    let gh = if own.is_file() { own } else { std::path::PathBuf::from("gh") };
+    let run = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new(&gh)
+            .args(args)
+            .env_clear()
+            .envs(crate::config::child_env())
+            .env("GH_CONFIG_DIR", &config)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (out.status.success() && !text.is_empty()).then_some(text)
+    };
+    let token = run(&["auth", "token", "--hostname", host]);
+    let login = run(&["api", "--hostname", host, "user", "--jq", ".login"]);
+    let _ = std::fs::remove_dir_all(&config);
+    let token = token.ok_or_else(|| HttpError::new(502, "gh signed in but gave no token"))?;
+    set(db, data_dir, host, login.as_deref().unwrap_or("git"), GitCredentialKind::Token, &token).map(|_| ())
+}
+
+/// Sign in to a GitHub host with the GitHub CLI (a terminal job); on success the token
+/// becomes the host's login.
+async fn gh_login_route(
+    State(s): State<AppState>,
+    UrlPath(host): UrlPath<String>,
+    crate::http::LenientBody(size): crate::http::LenientBody<crate::runs::TermSize>,
+) -> ApiResult<(axum::http::StatusCode, Json<hubness_core::JobInfo>)> {
+    let host = normalize_host(&host).ok_or_else(|| HttpError::bad_request("host: a domain like github.com"))?;
+    let data_dir = s.config().data_dir.clone();
+    let root = gh_root(&data_dir).to_string_lossy().into_owned();
+    let db = s.db.clone();
+    let h = host.clone();
+    let on_exit: crate::terminal::ExitFn = Box::new(move |code| {
+        if code != Some(0) {
+            let _ = std::fs::remove_dir_all(gh_root(&data_dir).join("config"));
+            return;
+        }
+        let db = db.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = gh_collect(&db, &data_dir, &h) {
+            eprintln!("hubness: gh sign-in for {h}: {}", e.message);
+        }
+    });
+    let job = crate::terminal::start_job(crate::terminal::JobOpts {
+        title: format!("gh · {host}"),
+        command: gh_login_script(&root, &host),
+        display: Some(format!("gh auth login --hostname {host} --web")),
+        cols: size.cols,
+        rows: size.rows,
+        on_exit: Some(on_exit),
+        ..Default::default()
+    });
+    Ok((axum::http::StatusCode::CREATED, Json(job)))
 }
 
 async fn list_route(State(s): State<AppState>) -> ApiResult<Json<Vec<GitCredentialInfo>>> {
@@ -283,6 +395,16 @@ async fn delete_route(State(s): State<AppState>, UrlPath(host): UrlPath<String>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gh_login_keeps_away_from_the_keyring_and_git_config() {
+        let s = gh_login_script("/d/gh", "github.com");
+        assert!(s.contains("--insecure-storage") && s.contains("--git-protocol ssh --skip-ssh-key"));
+        assert!(s.contains("gh_2.83.1_"));
+        if let Ok(out) = std::env::var("HUBNESS_PRINT_GH_SCRIPT") {
+            std::fs::write(out, &s).unwrap();
+        }
+    }
 
     #[test]
     fn normalizes_hosts() {
