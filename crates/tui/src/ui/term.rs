@@ -71,7 +71,8 @@ impl JobTerm {
 
     /// The pty size to request when starting a job in this area.
     pub fn size_for(area: Rect) -> (u16, u16) {
-        (area.width.saturating_sub(2).max(20), area.height.saturating_sub(2).max(5))
+        // the frame and its one-column padding on each side
+        (area.width.saturating_sub(4).max(20), area.height.saturating_sub(2).max(5))
     }
 
     /// Bytes a key sends to a terminal (`None` for keys the TUI keeps).

@@ -674,7 +674,7 @@ impl Screen for Users {
         let text = if open {
             "No accounts yet: the hub is open to this machine only. The first account turns sign-in on — for the web app, this TUI and every other client."
         } else {
-            "Everyone with an account has the same rights. A password change or a deleted account ends its sessions."
+            "Admins can do everything, including accounts; members see only what an admin gives them. A password change or a deleted account ends its sessions."
         };
         let mut lines: Vec<Line> = wrap_words(text, area.width.saturating_sub(2) as usize)
             .into_iter()
