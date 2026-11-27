@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-11-27
+
+### Added
+
+- Sign in to GitHub with a one-time code: for a GitHub host the git login form offers
+  "Sign in with GitHub" — the hub shows a code and a link to github.com/login/device,
+  waits for the approval and saves the token as the login, also with two-factor auth. It
+  runs the GitHub CLI (downloaded by the hub when the host has none) in a throwaway config,
+  away from the system keyring and the git config.
+
 ## [0.3.6] - 2026-11-27
 
 ### Fixed
