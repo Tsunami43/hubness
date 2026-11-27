@@ -27,6 +27,27 @@ const isEditable = (el: Element | null): boolean => {
   return el instanceof HTMLElement && el.isContentEditable;
 };
 
+/**
+ * Scroll the focused field's nearest scrolling container (a sheet's body, a page) so the field
+ * is fully visible, with a little room around it. Only that container moves — never the
+ * document, which iOS would shift as a whole.
+ */
+function revealInScroller(el: Element | null) {
+  if (!(el instanceof HTMLElement)) return;
+  let box = el.parentElement;
+  while (box && box !== document.body) {
+    const oy = getComputedStyle(box).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && box.scrollHeight > box.clientHeight) break;
+    box = box.parentElement;
+  }
+  if (!box || box === document.body) return;
+  const r = el.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  const room = 12;
+  if (r.bottom > b.bottom - room) box.scrollTop += r.bottom - b.bottom + room;
+  else if (r.top < b.top + room) box.scrollTop -= b.top + room - r.top;
+}
+
 function start() {
   const vv = window.visualViewport;
   const root = document.documentElement;
@@ -36,6 +57,8 @@ function start() {
   // the tallest visible height seen in the current orientation = height without the keyboard
   let full = vv.height;
   let frame = 0;
+  // what was last brought into view, and at which visible height
+  let shown: { el: Element | null; h: number } = { el: null, h: 0 };
 
   const update = () => {
     frame = 0;
@@ -47,6 +70,13 @@ function start() {
     root.style.setProperty('--app-top', `${Math.round(Math.max(0, vv.offsetTop))}px`);
     if (keyboard) root.dataset.kb = '';
     else delete root.dataset.kb;
+    // the screen just shrank above the keyboard (or focus moved): the focused field may now sit
+    // under a sticky footer or the keyboard — scroll its own container to it, after the layout
+    const el = document.activeElement;
+    if (keyboard && (el !== shown.el || Math.round(vv.height) !== shown.h)) {
+      shown = { el, h: Math.round(vv.height) };
+      requestAnimationFrame(() => revealInScroller(el));
+    } else if (!keyboard) shown = { el: null, h: 0 };
     // iOS scrolls the (fixed, non-scrollable) document to reveal a field: undo it
     if (!keyboard && (window.scrollY || window.scrollX)) window.scrollTo(0, 0);
   };
