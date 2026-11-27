@@ -581,14 +581,14 @@ fn sh(p: &Path) -> String {
 
 /// The ssh config of a session in `dir` (the same text as `sessionConfig` in ssh.ts). Each
 /// alias offers only its own key (`IdentitiesOnly` + the public key file): with many
-/// connections a server would otherwise refuse after the first few wrong keys.
+/// connections a server would otherwise refuse after the first few wrong keys. Host keys are
+/// always checked: only tested connections (pinned by "Test") get here.
 pub fn session_config(list: &[SshBinding], dir: &Path) -> String {
     let mut out = String::from("# hubness: the SSH connections of this session; the keys stay in the hub's agent\n");
     for b in list {
         let c = &b.connection;
-        let strict = if c.host_keys.trim().is_empty() { "accept-new" } else { "yes" };
         out.push_str(&format!(
-            "\nHost {}\n  HostName {}\n  Port {}\n  User {}\n  IdentityAgent {}\n  IdentityFile {}\n  IdentitiesOnly yes\n  UserKnownHostsFile {}\n  StrictHostKeyChecking {strict}\n",
+            "\nHost {}\n  HostName {}\n  Port {}\n  User {}\n  IdentityAgent {}\n  IdentityFile {}\n  IdentitiesOnly yes\n  UserKnownHostsFile {}\n  StrictHostKeyChecking yes\n",
             c.name,
             c.host,
             c.port,
@@ -634,9 +634,8 @@ pub struct Plan {
     add: PathBuf,
 }
 
-/// The connections of a project / group session with their keys: `None` without any (or
-/// without OpenSSH). Nothing is started here — a key that can't be read fails first.
-pub fn plan(db: &Connection, config: &Config, owners: &[Owner], session_id: &str) -> ApiResult<Option<Plan>> {
+/// The connections of the owners, each once, in order.
+fn bound_to(db: &Connection, owners: &[Owner]) -> ApiResult<Vec<SshBinding>> {
     let mut list: Vec<SshBinding> = vec![];
     for o in owners {
         for b in bindings(db, *o)? {
@@ -645,6 +644,34 @@ pub fn plan(db: &Connection, config: &Config, owners: &[Owner], session_id: &str
             }
         }
     }
+    Ok(list)
+}
+
+fn tested(b: &SshBinding) -> bool {
+    !b.connection.host_keys.trim().is_empty()
+}
+
+/// Bound connections an agent does not get yet: "Test" has not pinned their host keys. The
+/// person sees the first connection work (and whose server it is), not the agent mid-turn.
+pub fn untested(db: &Connection, owners: &[Owner]) -> ApiResult<Vec<String>> {
+    Ok(bound_to(db, owners)?.into_iter().filter(|b| !tested(b)).map(|b| b.connection.name).collect())
+}
+
+/// What the person is told (a notice in the feed) about bound connections not tested yet.
+pub fn untested_notice(names: &[String]) -> String {
+    let many = names.len() > 1;
+    format!(
+        "SSH: {} {} not tested yet — press Test in System → SSH to let the agent use {}.",
+        names.join(", "),
+        if many { "are" } else { "is" },
+        if many { "them" } else { "it" }
+    )
+}
+
+/// The tested connections of a project / group session with their keys: `None` without any
+/// (or without OpenSSH). Nothing is started here — a key that can't be read fails first.
+pub fn plan(db: &Connection, config: &Config, owners: &[Owner], session_id: &str) -> ApiResult<Option<Plan>> {
+    let list: Vec<SshBinding> = bound_to(db, owners)?.into_iter().filter(tested).collect();
     if list.is_empty() {
         return Ok(None);
     }
@@ -896,7 +923,8 @@ mod tests {
         assert!(cfg.contains(
             "Host prod-api\n  HostName 10.0.0.5\n  Port 2222\n  User deploy\n  IdentityAgent \"/d/agent.sock\"\n  IdentityFile \"/d/keys/prod-api.pub\"\n  IdentitiesOnly yes\n  UserKnownHostsFile \"/d/known_hosts\"\n  StrictHostKeyChecking yes\n"
         ));
-        assert!(cfg.contains("Host dev-api\n") && cfg.contains("StrictHostKeyChecking accept-new"));
+        assert!(cfg.contains("Host dev-api\n"));
+        assert!(!cfg.contains("accept-new"), "host keys are always checked: untested connections never get here");
         assert!(cfg.trim_end().ends_with("Include ~/.ssh/config"), "the include comes last: the hub's aliases win");
         assert!(!session_config(&[], Path::new("/d")).contains("Host "));
         let ctx = session_context(&list);
@@ -977,9 +1005,18 @@ mod tests {
         crate::db::projects::create(db, "p", &crate::paths::to_string(&repo), hubness_core::ProjectKind::Normal).unwrap().id
     }
 
+    /// What a successful "Test" does: pin the host keys. Only then is a connection an agent's.
+    fn pin(db: &Connection, ids: &[&str]) {
+        for id in ids {
+            db.execute("UPDATE ssh_connections SET host_keys = 'host.example ssh-ed25519 AAAA' WHERE id = ?", [id]).unwrap();
+        }
+    }
+
+    /// Bind tested connections to the project.
     fn bind(db: &Connection, project: &str, ids: &[&str]) {
         let list: Vec<_> = ids.iter().map(|id| json!({ "connectionId": id })).collect();
         set_bindings(db, Owner::Project(project), serde_json::from_value(json!(list)).unwrap()).unwrap();
+        pin(db, ids);
     }
 
     fn ssh_add_l(sock: &str) -> (bool, String) {
@@ -1105,6 +1142,18 @@ mod tests {
         let missing = set_bindings(&db, owner[0], serde_json::from_value(json!([{ "connectionId": "missing" }])).unwrap());
         assert_eq!(missing.unwrap_err().status.as_u16(), 404);
         assert_eq!(bindings(&db, owner[0]).unwrap().len(), 1, "a refused list changes nothing");
+        assert!(session_setup(&db, &cfg, &owner, "sess-untested").unwrap().is_none(), "not tested yet: not for the agent");
+        assert_eq!(untested(&db, &owner).unwrap(), ["turn-prod"]);
+        assert_eq!(
+            untested_notice(&["turn-prod".into()]),
+            "SSH: turn-prod is not tested yet — press Test in System → SSH to let the agent use it."
+        );
+        assert_eq!(
+            untested_notice(&["a".into(), "b".into()]),
+            "SSH: a, b are not tested yet — press Test in System → SSH to let the agent use them."
+        );
+        pin(&db, &[&c.id]);
+        assert!(untested(&db, &owner).unwrap().is_empty());
 
         let s = session_setup(&db, &cfg, &owner, "sess-0001-abcd-efgh").unwrap().expect("a setup");
         let env: HashMap<_, _> = s.env.iter().cloned().collect();
@@ -1132,7 +1181,7 @@ mod tests {
             "user deploy".into(),
             "port 2222".into(),
             format!("identityagent {}", s.sock),
-            "stricthostkeychecking accept-new".into(),
+            "stricthostkeychecking true".into(),
             "identitiesonly yes".into(),
             format!("identityfile {}/keys/turn-prod.pub", s.mount),
         ] {
@@ -1287,5 +1336,37 @@ mod tests {
         drop(kept);
         assert!(no_agents(&base.0), "the leftover agent is stopped");
         assert!(entries(&base.0).is_empty());
+    }
+
+    #[test]
+    fn the_agent_gets_the_tested_connections_and_the_rest_are_named_for_the_person() {
+        if !have_openssh() {
+            return;
+        }
+        let (tmp, cfg, db) = hub();
+        let base = base(&cfg);
+        let project = project(&tmp, &db);
+        let owner = [Owner::Project(&project)];
+        let ready = create(&db, &cfg, input(json!({ "name": "mix-ready", "host": "a.example", "username": "u" }))).unwrap();
+        let fresh = create(&db, &cfg, input(json!({ "name": "mix-fresh", "host": "b.example", "username": "u" }))).unwrap();
+        let list = json!([{ "connectionId": fresh.id }, { "connectionId": ready.id }]);
+        set_bindings(&db, owner[0], serde_json::from_value(list).unwrap()).unwrap();
+        pin(&db, &[&ready.id]);
+        assert_eq!(untested(&db, &owner).unwrap(), ["mix-fresh"]);
+
+        let s = session_setup(&db, &cfg, &owner, "sess-mix").unwrap().unwrap();
+        let config = std::fs::read_to_string(Path::new(&s.mount).join("config")).unwrap();
+        assert!(config.contains("Host mix-ready\n") && !config.contains("mix-fresh"));
+        assert!(s.context.contains("`mix-ready`") && !s.context.contains("mix-fresh"), "the agent is not told about what it can't use");
+        assert_eq!(entries(&Path::new(&s.mount).join("keys")), ["mix-ready.pub"]);
+        assert_eq!(ssh_add_l(&s.sock).1.trim().lines().count(), 1, "only its key is loaded");
+        assert_eq!(std::fs::read_to_string(Path::new(&s.mount).join("known_hosts")).unwrap(), "host.example ssh-ed25519 AAAA\n");
+        drop(s);
+
+        // a new address unpins: back to waiting for a test
+        update(&db, &ready.id, serde_json::from_value(json!({ "host": "c.example" })).unwrap()).unwrap();
+        assert_eq!(untested(&db, &owner).unwrap(), ["mix-fresh", "mix-ready"]);
+        assert!(session_setup(&db, &cfg, &owner, "sess-mix-2").unwrap().is_none());
+        assert!(no_agents(&base.0));
     }
 }

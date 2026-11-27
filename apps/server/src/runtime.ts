@@ -14,7 +14,7 @@ import type { EventBody, McpServerSpec, RunContext, RunHandle } from './agents/t
 import { fileURLToPath } from 'node:url';
 import { agentWrap, runtimeOf } from './environments.ts';
 import { secretEnv } from './secrets.ts';
-import { sessionSetup, type Owner, type SessionSsh } from './ssh.ts';
+import { sessionSetup, untestedSsh, type Owner, type SessionSsh } from './ssh.ts';
 
 const active = new Map<string, RunHandle>();
 
@@ -113,7 +113,9 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
   // a broken setup (an unreadable key, no runtime folder) costs the turn its SSH, not the turn
   let ssh: SessionSsh | null = null;
   let sshProblem: string | null = null;
+  let sshUntested: string[] = [];
   try {
+    sshUntested = untestedSsh(owners);
     ssh = sessionSetup(owners, sessionId);
     if (ssh?.failed.length) sshProblem = `SSH: the key of ${ssh.failed.join(', ')} could not be loaded — not available in this turn.`;
   } catch (e) {
@@ -175,6 +177,12 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
   put(`u:${Date.now()}`, { kind: 'user', text, ...(attachments.length ? { attachments } : {}) });
   ctx.raw(JSON.stringify({ hub: 'user', ts: new Date().toISOString(), text, attachments: attachments.map((a) => a.path) }));
   if (sshProblem) put(`ssh:${Date.now()}`, { kind: 'notice', level: 'error', text: sshProblem });
+  if (sshUntested.length)
+    put(`ssh-untested:${Date.now()}`, {
+      kind: 'notice',
+      level: 'info',
+      text: `SSH: ${sshUntested.join(', ')} ${sshUntested.length > 1 ? 'are' : 'is'} not tested yet — press Test in System → SSH to let the agent use ${sshUntested.length > 1 ? 'them' : 'it'}.`,
+    });
   setSessionStatus(sessionId, 'running');
 
   let handle: RunHandle;

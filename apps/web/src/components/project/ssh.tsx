@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { KeyRound, Plus, X } from 'lucide-react';
+import { KeyRound, Plug, Plus, X } from 'lucide-react';
 import type { SshBinding, SshConnection } from '@hubness/shared';
 import { api } from '../../lib/api';
 import { t } from '../../i18n';
@@ -18,6 +18,8 @@ export function SshBindingsPanel({ scope }: { scope: Scope }) {
   const [list, setList] = useState<{ connectionId: string; note: string }[] | null>(null);
   const [saved, setSaved] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [tested, setTested] = useState<{ id: string; ok: boolean; output: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const key = 'projectId' in scope ? scope.projectId : scope.groupId;
 
@@ -59,6 +61,21 @@ export function SshBindingsPanel({ scope }: { scope: Scope }) {
     }
   };
 
+  // "Test" right here: the connection becomes the agent's without a trip to System → SSH
+  const test = async (id: string) => {
+    setTesting(id);
+    setError(null);
+    try {
+      const r = await api.testSsh(id);
+      setTested({ id, ok: r.ok, output: r.output });
+      setAll((cur) => cur?.map((c) => (c.id === id ? r.connection : c)) ?? cur);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTesting(null);
+    }
+  };
+
   if (!all || !list)
     return (
       <div className="p-3">
@@ -92,6 +109,15 @@ export function SshBindingsPanel({ scope }: { scope: Scope }) {
                     </IconButton>
                   </div>
                   {c.description ? <p className="text-xs text-muted">{c.description}</p> : null}
+                  {!c.hostKeys ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-warn/10 px-2.5 py-1.5 text-xs text-warn">
+                      <span className="min-w-0 flex-1">{tested?.id === c.id && !tested.ok ? tested.output || t('git.failed') : t('ssh.notTestedBind')}</span>
+                      <Button size="sm" loading={testing === c.id} onClick={() => void test(c.id)}>
+                        <Plug className="size-3.5" />
+                        {t('ssh.test')}
+                      </Button>
+                    </div>
+                  ) : null}
                   <input
                     className={`${inputCls} text-sm`}
                     value={b.note}

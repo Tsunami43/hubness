@@ -283,7 +283,7 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
     let rt = &state.runtime;
     // what the turn is made of, gathered under the database lock; the SSH setup (processes,
     // waiting) happens after it is released
-    let (session, parts, ssh_plan, starting) = {
+    let (session, parts, (ssh_plan, ssh_untested), starting) = {
         let db = state.db()?;
         let cfg = state.config();
         let mut session = repo::get(&db, session_id)?.ok_or_else(|| HttpError::not_found("Session not found"))?;
@@ -348,6 +348,8 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
         };
         // a broken setup (an unreadable key) costs the turn its SSH, not the turn
         let ssh_plan = crate::ssh::plan(&db, cfg, &owners, session_id).map_err(|e| e.message);
+        // bound but not tested yet: not for the agent — the person is told
+        let ssh_untested = crate::ssh::untested(&db, &owners).unwrap_or_default();
         let hub_instructions = catalog::settings(&db, cfg)?.session_instructions;
         let wrap = match (&project, &group) {
             (Some(p), _) if environments::project_sandbox(&db, p)? => {
@@ -364,7 +366,7 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
             None => text.to_string(),
         } + &crate::attachments::note(&attachments);
         let parts = (prompt, cwd, members, scope_ctx, hub_instructions, wrap, env, repo::next_seq(&db, session_id)?);
-        (session, parts, ssh_plan, starting)
+        (session, parts, (ssh_plan, ssh_untested), starting)
     };
     let (prompt, cwd, members, scope_ctx, hub_instructions, wrap, mut env, seq) = parts;
 
@@ -424,6 +426,10 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
     turn.raw(&json!({ "hub": "user", "ts": db::now(), "text": text, "attachments": paths }).to_string());
     if let Some(problem) = ssh_problem {
         turn.put(&format!("ssh:{}", now_ms()), json!({ "kind": "notice", "level": "error", "text": problem }), true);
+    }
+    if !ssh_untested.is_empty() {
+        let text = crate::ssh::untested_notice(&ssh_untested);
+        turn.put(&format!("ssh-untested:{}", now_ms()), json!({ "kind": "notice", "level": "info", "text": text }), true);
     }
     set_status(state, session_id, SessionStatus::Running);
 

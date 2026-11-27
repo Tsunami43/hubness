@@ -148,6 +148,15 @@ writeFileSync(
   join(voiceBin, 'gh'),
   '#!/bin/sh\ncase "$1 $2" in\n"auth login") echo "$@" > "$(dirname "$0")/gh-args"; echo "! One-time code (ABCD-1234) copied to clipboard"; echo "Open this URL to continue in your web browser: https://github.com/login/device"; mkdir -p "$GH_CONFIG_DIR"; echo gho_fake > "$GH_CONFIG_DIR/token" ;;\n"auth token") cat "$GH_CONFIG_DIR/token" ;;\n"api --hostname") echo octocat ;;\n*) exit 1 ;;\nesac\n',
 );
+// SSH "Test" without a server: a fake ssh that refuses port 1 and otherwise connects, pinning
+// a host key the way `StrictHostKeyChecking=accept-new` does
+writeFileSync(
+  join(voiceBin, 'ssh'),
+  '#!/bin/sh\nknown=""; port=""; prev=""\nfor a; do case "$a" in UserKnownHostsFile=*) known="${a#UserKnownHostsFile=}";; esac; [ "$prev" = "-p" ] && port="$a"; prev="$a"; done\n' +
+    '[ "$port" = "1" ] && { echo "ssh: connect to host 127.0.0.1 port 1: Connection refused" >&2; exit 255; }\n' +
+    '[ -n "$known" ] && [ ! -s "$known" ] && echo "[203.0.113.7]:$port ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyOfTheTests" >> "$known"\nexit 0\n',
+);
+chmodSync(join(voiceBin, 'ssh'), 0o755);
 chmodSync(join(voiceBin, 'gh'), 0o755);
 chmodSync(join(voiceBin, 'ffmpeg'), 0o755);
 chmodSync(join(voiceBin, 'whisper-cli'), 0o755);
@@ -1294,7 +1303,19 @@ test('SSH connections in a turn: the agent process gets the wrappers and the con
   assert.equal(plain.GIT_SSH_COMMAND, undefined);
   assert.ok(!readFileSync(join(tmp, 'claude-last-args'), 'utf8').includes('## SSH connections'));
 
+  // bound but not tested: the agent does not get it yet, the person is told what to do
   await call('PUT', `/projects/${project.id}/ssh`, { bindings: [{ connectionId: conn.id, note: 'read only' }] });
+  const early = await turn();
+  assert.equal(lastEnv().GIT_SSH_COMMAND, undefined, 'an untested connection is not handed to the agent');
+  assert.ok(!readFileSync(join(tmp, 'claude-last-args'), 'utf8').includes('turn-box'));
+  const told = (await feed(early)).filter((e: any) => e.kind === 'notice');
+  assert.deepEqual(told.map((e: any) => [e.level, e.text]), [['info', 'SSH: turn-box is not tested yet — press Test in System → SSH to let the agent use it.']]);
+
+  // "Test" connects once and pins the host key; from then on the agent has the connection
+  const tested = await call('POST', `/ssh/${conn.id}/test`, {});
+  assert.deepEqual([tested.json.ok, tested.json.output], [true, 'Connected']);
+  assert.match(tested.json.connection.hostKeys, /^\[203\.0\.113\.7\]:2200 ssh-ed25519 /);
+  assert.equal((await call('POST', `/ssh/${conn.id}/test`, {})).json.connection.hostKeys, tested.json.connection.hostKeys, 'pinned once');
   const sid = await turn();
   const env = lastEnv();
   const bin = env.PATH!.split(':')[0]!;
@@ -1308,7 +1329,12 @@ test('SSH connections in a turn: the agent process gets the wrappers and the con
   assert.ok(!dump.includes('PRIVATE KEY'), 'no key in the environment or the arguments');
   for (const name of Object.keys(env)) assert.ok(!/^HUBNESS_(SECRET|DATA|HOME|PORT|HOST)/.test(name), `${name} is the hub's own setting`);
   assert.equal(existsSync(bin), false, 'the session folder is gone when the turn ends');
-  assert.ok(!(await feed(sid)).some((e: any) => e.kind === 'notice' && e.level === 'error'), 'no complaints');
+  assert.ok(!(await feed(sid)).some((e: any) => e.kind === 'notice'), 'nothing to say');
+
+  // another address is another server: test again
+  assert.equal((await call('PATCH', `/ssh/${conn.id}`, { port: 2201 })).json.hostKeys, '');
+  await turn();
+  assert.equal(lastEnv().GIT_SSH_COMMAND, undefined, 'unpinned: not for the agent until it is tested again');
 
   await call('DELETE', `/ssh/${conn.id}`);
   await turn();

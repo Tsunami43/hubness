@@ -7,7 +7,10 @@ import { join } from 'node:path';
 import type { SshBinding } from '@hubness/shared';
 import { db, projects } from '../src/db/index.ts';
 import { encrypt } from '../src/secrets.ts';
-import { checkHost, checkName, createSsh, deleteSsh, disposeAllSsh, listSsh, normalizeKey, runtimeBase, sessionConfig, sessionContext, sessionSetup, setSshBindings, sshBindings, sweepSshRuntime, updateSsh } from '../src/ssh.ts';
+import { checkHost, checkName, createSsh, deleteSsh, disposeAllSsh, listSsh, normalizeKey, runtimeBase, sessionConfig, sessionContext, sessionSetup, setSshBindings, sshBindings, sweepSshRuntime, untestedSsh, updateSsh } from '../src/ssh.ts';
+
+/** What a successful "Test" does: pin the host keys. Only then is a connection an agent's. */
+const pin = (...ids: string[]) => ids.forEach((id) => db.prepare("UPDATE ssh_connections SET host_keys = 'host.example ssh-ed25519 AAAA' WHERE id = ?").run(id));
 
 const status = (fn: () => unknown) => {
   try {
@@ -40,7 +43,8 @@ test('ssh: the session config pins tested hosts and keeps the user’s own hosts
       'Host prod-api\n  HostName 10.0.0.5\n  Port 2222\n  User deploy\n  IdentityAgent "/d/agent.sock"\n  IdentityFile "/d/keys/prod-api.pub"\n  IdentitiesOnly yes\n  UserKnownHostsFile "/d/known_hosts"\n  StrictHostKeyChecking yes\n',
     ),
   );
-  assert.ok(cfg.includes('Host dev-api\n') && cfg.includes('StrictHostKeyChecking accept-new'));
+  assert.ok(cfg.includes('Host dev-api\n'));
+  assert.ok(!cfg.includes('accept-new'), 'host keys are always checked: untested connections never get here');
   assert.ok(cfg.trimEnd().endsWith('Include ~/.ssh/config'), 'the include comes last: the hub’s aliases win');
   assert.equal(sessionConfig([], '/d').includes('Host '), false);
 });
@@ -107,6 +111,10 @@ test('ssh: an agent turn gets an ssh-agent with the keys, aliases and wrappers; 
   const p = projects.create('ssh-turn', join(tmp, 'ssh-turn'));
   assert.equal(sessionSetup([{ project: p.id }], 'sess-none'), null, 'no bindings: nothing is started');
   setSshBindings({ project: p.id }, { bindings: [{ connectionId: c.id, note: 'read only' }] });
+  assert.equal(sessionSetup([{ project: p.id }], 'sess-untested'), null, 'not tested yet: not for the agent');
+  assert.deepEqual(untestedSsh([{ project: p.id }, { project: p.id }]), ['turn-prod']);
+  pin(c.id);
+  assert.deepEqual(untestedSsh([{ project: p.id }]), []);
 
   const s = sessionSetup([{ project: p.id }, { project: p.id }], 'sess-0001-abcd-efgh')!;
   try {
@@ -129,7 +137,8 @@ test('ssh: an agent turn gets an ssh-agent with the keys, aliases and wrappers; 
     assert.match(resolved, /^user deploy$/m);
     assert.match(resolved, /^port 2222$/m);
     assert.match(resolved, new RegExp(`^identityagent ${sock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
-    assert.match(resolved, /^stricthostkeychecking accept-new$/m, 'not tested yet: the first connection pins the host');
+    assert.match(resolved, /^stricthostkeychecking (yes|true)$/m, 'the pinned host key is insisted on');
+    assert.equal(readFileSync(join(s.mount, 'known_hosts'), 'utf8'), 'host.example ssh-ed25519 AAAA\n');
     assert.match(resolved, /^identitiesonly yes$/m, 'each alias offers only its own key');
     assert.match(resolved, new RegExp(`^identityfile ${join(s.mount, 'keys', 'turn-prod.pub').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
     assert.equal(readFileSync(join(s.mount, 'keys', 'turn-prod.pub'), 'utf8').trim(), c.publicKey);
@@ -156,6 +165,7 @@ test('ssh: a setup that fails leaves no agent and no folder; a bad key costs onl
   const bad = createSsh({ name: 'fail-bad', host: 'b.example', username: 'u' });
   const p = projects.create('ssh-fail', join(tmp, 'ssh-fail'));
   setSshBindings({ project: p.id }, { bindings: [{ connectionId: bad.id }, { connectionId: good.id }] });
+  pin(good.id, bad.id);
   const sealed = (id: string) => (db.prepare('SELECT private_key FROM ssh_connections WHERE id = ?').get(id) as { private_key: string }).private_key;
   const original = sealed(bad.id);
 
@@ -201,6 +211,7 @@ test('ssh: an imported key with CRLF line ends is stored as OpenSSH reads it and
   assert.equal(c.publicKey.split(' ').slice(0, 2).join(' '), readFileSync(join(tmp, 'crlf-key.pub'), 'utf8').split(' ').slice(0, 2).join(' '));
   const p = projects.create('ssh-crlf', join(tmp, 'ssh-crlf'));
   setSshBindings({ project: p.id }, { bindings: [{ connectionId: c.id }] });
+  pin(c.id);
   const s = sessionSetup([{ project: p.id }], 'sess-crlf')!;
   try {
     assert.deepEqual(s.failed, [], 'the agent took the key');
@@ -220,6 +231,7 @@ test('ssh: many connections — each alias offers one key; hub exit and the next
   const p = projects.create('ssh-many', join(tmp, 'ssh-many'));
   const made = Array.from({ length: 8 }, (_, i) => createSsh({ name: `many-${i}`, host: `h${i}.example`, username: 'u' }));
   setSshBindings({ project: p.id }, { bindings: made.map((c) => ({ connectionId: c.id })) });
+  pin(...made.map((c) => c.id));
   const s = sessionSetup([{ project: p.id }], 'sess-many')!;
   assert.equal(execFileSync('ssh-add', ['-l'], { env: { ...process.env, SSH_AUTH_SOCK: s.sock }, encoding: 'utf8' }).trim().split('\n').length, 8);
   const resolved = execFileSync('sh', ['-c', `${s.env.GIT_SSH_COMMAND} -G many-7`], { encoding: 'utf8' });
@@ -239,4 +251,30 @@ test('ssh: many connections — each alias offers one key; hub exit and the next
   assert.deepEqual(readdirSync(runtimeBase()), []);
   crashed.dispose();
   made.forEach((c) => deleteSsh(c.id));
+});
+
+test('ssh: of several bound connections the agent gets the tested ones; the rest are named for the person', (t) => {
+  if (!existsSync('/proc/self/comm')) return t.skip('needs /proc');
+  const ready = createSsh({ name: 'mix-ready', host: 'a.example', username: 'u' });
+  const fresh = createSsh({ name: 'mix-fresh', host: 'b.example', username: 'u' });
+  const p = projects.create('ssh-mix', join(tmp, 'ssh-mix'));
+  setSshBindings({ project: p.id }, { bindings: [{ connectionId: fresh.id }, { connectionId: ready.id }] });
+  pin(ready.id);
+  assert.deepEqual(untestedSsh([{ project: p.id }]), ['mix-fresh']);
+  const s = sessionSetup([{ project: p.id }], 'sess-mix')!;
+  try {
+    const cfg = readFileSync(join(s.mount, 'config'), 'utf8');
+    assert.ok(cfg.includes('Host mix-ready\n') && !cfg.includes('mix-fresh'));
+    assert.ok(s.context.includes('`mix-ready`') && !s.context.includes('mix-fresh'), 'the agent is not told about what it can’t use');
+    assert.deepEqual(readdirSync(join(s.mount, 'keys')), ['mix-ready.pub']);
+    assert.equal(execFileSync('ssh-add', ['-l'], { env: { ...process.env, SSH_AUTH_SOCK: s.sock }, encoding: 'utf8' }).trim().split('\n').length, 1, 'only its key is loaded');
+  } finally {
+    s.dispose();
+  }
+  // a new address unpins: back to waiting for a test
+  updateSsh(ready.id, { host: 'c.example' });
+  assert.deepEqual(untestedSsh([{ project: p.id }]), ['mix-fresh', 'mix-ready']);
+  assert.equal(sessionSetup([{ project: p.id }], 'sess-mix-2'), null);
+  deleteSsh(ready.id);
+  deleteSsh(fresh.id);
 });
