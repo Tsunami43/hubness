@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import type { AddressInfo } from 'node:net';
+import { chromeArgs, startupError } from '../src/browser.ts';
 import { addPreviewLog, clearPreviewLogs, closePreview, ensurePreview, injectHtml, injectPoint, previewKeyByPort, previewLogs } from '../src/preview.ts';
 
 const TAG = '<script src="/__hubness/preview.js"></script>';
@@ -287,4 +288,19 @@ test('preview: when the ports run out, the ad-hoc preview used longest ago gives
   } finally {
     made.forEach(closePreview);
   }
+});
+
+test('agent browser: a failed start says why and what to do (the same text as browser.rs)', () => {
+  assert.equal(startupError('The browser closed', ''), "Chromium didn't start: The browser closed");
+  const ubuntu = '[1:1:1128/1.0:WARNING:x.cc(1)] noise\n[2:2:1128/1.0:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox! If you are running on Ubuntu 23.10+ …\n';
+  const msg = startupError('The browser closed', ubuntu);
+  assert.ok(msg.startsWith("Chromium didn't start: The browser closed — [2:2:1128/1.0:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox!"), msg);
+  assert.ok(!msg.includes('noise'), 'warnings are not the reason');
+  assert.ok(msg.endsWith('set HUBNESS_CHROME_ARGS=--no-sandbox for the hub to run the agents’ browser without it.'));
+  const other = startupError('The browser closed', 'error while loading shared libraries: libnss3.so: cannot open shared object file\n');
+  assert.ok(other.includes('libnss3.so') && !other.includes('HUBNESS_CHROME_ARGS'), 'another cause gets no sandbox advice');
+  assert.ok(startupError('x', 'é'.repeat(5000)).length < 700);
+  assert.equal(startupError('Browser.getVersion timed out', '[1:2:3:ERROR:dbus/bus.cc:405] Failed to connect to the bus: x\n'), "Chromium didn't start: Browser.getVersion timed out", 'the usual dbus complaints are not the reason');
+  assert.deepEqual(chromeArgs('  --no-sandbox   --disable-foo=1 '), ['--no-sandbox', '--disable-foo=1']);
+  assert.deepEqual(chromeArgs(''), []);
 });

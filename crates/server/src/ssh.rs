@@ -504,9 +504,20 @@ impl Drop for SessionSsh {
     }
 }
 
+/// The command name of a process: /proc on Linux, `ps` elsewhere (macOS has no /proc).
+fn process_name(pid: u32) -> Option<String> {
+    if let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+        return Some(comm.trim().to_string());
+    }
+    let out = Command::new("ps").args(["-p", &pid.to_string(), "-o", "comm="]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // `ps` may print the whole path
+    (out.status.success() && !name.is_empty()).then(|| name.rsplit('/').next().unwrap_or_default().to_string())
+}
+
 /// Stop a leftover agent by pid — only ever an ssh-agent: the pid may have been reused.
 fn stop_agent(pid: u32) {
-    let is_agent = std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "ssh-agent");
+    let is_agent = process_name(pid).is_some_and(|c| c == "ssh-agent");
     if is_agent && let Ok(pid) = libc::pid_t::try_from(pid) {
         // SAFETY: a plain signal to a process of this user
         unsafe { libc::kill(pid, libc::SIGTERM) };

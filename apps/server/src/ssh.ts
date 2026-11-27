@@ -424,10 +424,22 @@ function removeDir(dir: string) {
 
 const sleepMs = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+/** The command name of a process: /proc on Linux, `ps` elsewhere (macOS has no /proc). */
+function processName(pid: number): string | null {
+  try {
+    return readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+  } catch {}
+  const r = spawnSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const name = (r.stdout ?? '').trim();
+  // `ps` may print the whole path
+  return r.status === 0 && name ? name.split('/').pop()! : null;
+}
+
 function stopAgent(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 1) return;
   try {
     // only ever an ssh-agent: the pid may have been reused since a crash
-    if (readFileSync(`/proc/${pid}/comm`, 'utf8').trim() === 'ssh-agent') process.kill(pid);
+    if (processName(pid) === 'ssh-agent') process.kill(pid);
   } catch {}
 }
 

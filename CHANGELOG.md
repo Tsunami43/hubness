@@ -23,7 +23,9 @@ All notable changes to this project are documented here. The format follows
 - A browser for agents: `preview_open`, `preview_screenshot`, `preview_click`,
   `preview_type`, `preview_press`, `preview_eval` and `preview_console` drive a headless
   Chromium on the hub, so an agent looks at the app it builds — also at a phone size —
-  instead of asking. Needs Chromium or Chrome on the hub machine (`HUBNESS_CHROME`).
+  instead of asking. Needs Chromium or Chrome on the hub machine (`HUBNESS_CHROME`); where
+  its sandbox can't start (Ubuntu 23.10+, containers) set `HUBNESS_CHROME_ARGS=--no-sandbox`
+  — the error says so when that is the reason.
 - Four visual styles, each with its own palettes: Expressive (the default), Glass, Paper
   and Strict.
 - A git client in the web app: changes, staging, commits, branches and history as a
