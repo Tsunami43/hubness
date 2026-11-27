@@ -1,4 +1,4 @@
-import { createContext, Suspense, useCallback, useContext, useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, House, LogOut, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
 import { useAuth } from './AuthGate';
@@ -14,6 +14,7 @@ import { matchesQuery, SessionSearch } from './SessionSearch';
 import { AgentIcon } from './AgentIcon';
 import { JumpLabel, LeaderOverlay } from './LeaderOverlay';
 import { useKeyActions } from '../lib/keys';
+import { slideOut, useSwipe } from '../lib/swipe';
 
 // key: leader shortcut (uppercase = with Shift, so it never clashes with screen keys)
 const NAV = [
@@ -27,12 +28,23 @@ const NAV = [
 const isDesktop = () => window.matchMedia('(min-width: 1024px)').matches;
 
 /** Right panel with all sessions: a column on the right on desktop, slides over the content on phone. */
-const NavContext = createContext<{ historyOpen: boolean; toggleHistory: () => void; openHistory: () => void }>({
+const NavContext = createContext<{ historyOpen: boolean; toggleHistory: () => void; openHistory: () => void; setFullscreen: (on: boolean) => void }>({
   historyOpen: false,
   toggleHistory: () => {},
   openHistory: () => {},
+  setFullscreen: () => {},
 });
 export const useNav = () => useContext(NavContext);
+
+/** A screen that takes the whole phone screen while `on` (a session inside a project): hides the bottom navigation. */
+export function usePhoneFullscreen(on: boolean) {
+  const { setFullscreen } = useNav();
+  useEffect(() => {
+    if (!on) return;
+    setFullscreen(true);
+    return () => setFullscreen(false);
+  }, [on, setFullscreen]);
+}
 
 /** An open session takes the whole screen on phone, without the bottom navigation. */
 function isFullscreen(path: string, search: string) {
@@ -76,13 +88,41 @@ function useScopeTags(sessions: Session[] | null | undefined) {
 
 /** Small row action: always visible on touch screens, on hover/focus with a mouse. */
 const rowAction =
-  'inline-flex size-7 shrink-0 items-center justify-center text-muted opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-surface hover:text-fg';
+  'tap inline-flex size-7 shrink-0 items-center justify-center text-muted opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-surface hover:text-fg';
 
-/** One session row: icon with status, title, scope · time, and row actions on the right. */
-function SessionRow({ s, scope, when, active, onPick, actions }: { s: Session; scope: ScopeTag; when: string; active: boolean; onPick?: () => void; actions: ReactNode }) {
-  return (
-    <li className={`group flex items-start border-l-2 ${active ? 'border-accent bg-sunken' : 'border-transparent hover:bg-sunken'}`}>
-      <Link to={sessionPath(s)} onClick={onPick} className="flex min-w-0 flex-1 items-start gap-2.5 py-1.5 pl-2.5">
+/**
+ * One session row: icon with status, title, scope · time, and row actions on the right.
+ * `onSwipe` (touch): swiping the row to the left commits it, like archiving in a mail app.
+ */
+function SessionRow({
+  s,
+  scope,
+  when,
+  active,
+  onPick,
+  actions,
+  onSwipe,
+}: {
+  s: Session;
+  scope: ScopeTag;
+  when: string;
+  active: boolean;
+  onPick?: () => void;
+  actions: ReactNode;
+  onSwipe?: { label: string; icon: LucideIcon; run: (reset: () => void) => void };
+}) {
+  const row = useRef<HTMLDivElement>(null);
+  const hint = useRef<HTMLSpanElement>(null);
+  const swipe = useSwipe({
+    dir: -1,
+    target: () => row.current,
+    threshold: 0.4,
+    onProgress: (_, commit) => hint.current?.classList.toggle('text-accent', commit),
+    onCommit: (reset) => onSwipe?.run(reset),
+  });
+  const body = (
+    <div ref={row} className={`group flex items-start border-l-2 ${active ? 'border-accent bg-sunken' : 'border-transparent bg-surface hover:bg-sunken'}`}>
+      <Link to={sessionPath(s)} onClick={onPick} className="flex min-w-0 flex-1 items-start gap-2.5 py-1.5 pl-2.5 pointer-coarse:py-3">
         <span className="relative mt-0.5">
           <AgentIcon kind={s.agent.kind} />
           <span className="absolute -right-1 -bottom-1 flex rounded-full bg-surface p-[2px]">
@@ -98,7 +138,17 @@ function SessionRow({ s, scope, when, active, onPick, actions }: { s: Session; s
           </span>
         </span>
       </Link>
-      <span className="flex shrink-0 items-center gap-0.5 py-1.5 pr-1.5">{actions}</span>
+      <span className="flex shrink-0 items-center gap-0.5 py-1.5 pr-1.5 pointer-coarse:py-0.5">{actions}</span>
+    </div>
+  );
+  if (!onSwipe) return <li>{body}</li>;
+  return (
+    <li className="relative overflow-hidden" {...swipe}>
+      {/* revealed under the row while it slides away */}
+      <span ref={hint} aria-hidden className="absolute inset-y-0 right-0 flex items-center gap-2 bg-sunken px-5 text-sm text-muted transition-colors">
+        <onSwipe.icon className="size-4" /> {onSwipe.label}
+      </span>
+      <div className="relative">{body}</div>
     </li>
   );
 }
@@ -120,9 +170,12 @@ export function History({ onPick, query = '' }: { onPick?: () => void; query?: s
   if (!all?.length) return <div className="px-3 py-2 text-sm text-muted">{t('history.empty')}</div>;
   if (!sessions?.length) return <div className="px-3 py-2 text-sm text-muted">{t('sessions.nothingFound')}</div>;
 
-  const archive = (s: Session) => {
+  const archive = (s: Session, reset?: () => void) => {
     setError(null);
-    api.archiveSession(s.id).catch((e: Error) => setError(e.message));
+    api.archiveSession(s.id).catch((e: Error) => {
+      reset?.();
+      setError(e.message);
+    });
   };
   return (
     <>
@@ -136,14 +189,17 @@ export function History({ onPick, query = '' }: { onPick?: () => void; query?: s
             when={s.updatedAt}
             active={isOpen(s, pathname, search)}
             onPick={onPick}
+            onSwipe={{ label: t('archive.move'), icon: Archive, run: (reset) => archive(s, reset) }}
             actions={
-              <button type="button" className={rowAction} title={t('archive.move')} aria-label={t('archive.move')} onClick={() => archive(s)}>
+              // touch: the row is swiped to the left instead
+              <button type="button" className={`${rowAction} pointer-coarse:hidden`} title={t('archive.move')} aria-label={t('archive.move')} onClick={() => archive(s)}>
                 <Archive className="size-3.5" />
               </button>
             }
           />
         ))}
       </ul>
+      <p className="hidden px-3 pt-3 text-center text-xs text-muted/70 pointer-coarse:block">{t('archive.swipeHint')}</p>
     </>
   );
 }
@@ -226,7 +282,7 @@ function SessionsPanel({ onPick }: { onPick?: () => void }) {
             key={id}
             type="button"
             onClick={() => setTab(id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2 text-sm ${tab === id ? 'border-accent text-fg' : 'border-transparent text-muted hover:text-fg'}`}
+            className={`flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2 text-sm pointer-coarse:py-3 ${tab === id ? 'border-accent text-fg' : 'border-transparent text-muted hover:text-fg'}`}
           >
             {id === 'archive' ? <Archive className="size-3.5" /> : null}
             {t(id === 'active' ? 'archive.tabActive' : 'archive.tabArchive')}
@@ -250,7 +306,9 @@ export function Layout() {
   useSessionSync();
   useAgents();
   const { pathname, search } = useLocation();
-  const full = isFullscreen(pathname, search);
+  // a screen can also ask for the whole phone screen itself (usePhoneFullscreen)
+  const [fullReq, setFullscreen] = useState(false);
+  const full = isFullscreen(pathname, search) || fullReq;
   const [expanded, setExpanded] = useLocalStorage('hub.sidebar', false);
   // Desktop: the right panel state is remembered; phone: it opens on top and closes on navigation
   const [panel, setPanel] = useLocalStorage('hub.history', false);
@@ -291,6 +349,20 @@ export function Layout() {
     { key: 'H', label: t('history.title'), section: t('keys.navigate'), run: toggleHistory },
     { key: '?', label: t('keys.settings'), section: t('keys.navigate'), run: () => nav('/settings/keyboard') },
   ]);
+  // phone drawer: slides out to the right on tap outside / ×, follows the finger when swiped away
+  const drawerRef = useRef<HTMLElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const closeDrawer = useCallback(() => {
+    if (backdropRef.current) backdropRef.current.style.opacity = '0';
+    slideOut(drawerRef.current, 1, () => setDrawer(false));
+  }, []);
+  const drawerSwipe = useSwipe({
+    dir: 1,
+    target: () => drawerRef.current,
+    threshold: 0.3,
+    onProgress: (p) => backdropRef.current && (backdropRef.current.style.opacity = String(1 - p)),
+    onCommit: () => setDrawer(false),
+  });
   useEffect(() => {
     if (!drawer) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setDrawer(false);
@@ -299,9 +371,9 @@ export function Layout() {
   }, [drawer]);
 
   const panelHeader = (onClose: () => void, icon: 'close' | 'collapse') => (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
+    <div className="flex h-11 shrink-0 items-center gap-1 border-b border-line pr-1 pl-3 pointer-coarse:h-[52px]">
       <span className="font-semibold text-accent">{t('history.title')}</span>
-      <Link to="/" className="ml-auto inline-flex size-9 items-center justify-center rounded-lg hover:bg-sunken" title={t('history.newSession')} aria-label={t('history.newSession')}>
+      <Link to="/" className="tap ml-auto inline-flex size-9 items-center justify-center rounded-lg hover:bg-sunken" title={t('history.newSession')} aria-label={t('history.newSession')}>
         <SquarePen className="size-4 text-accent" />
       </Link>
       <button
@@ -309,7 +381,7 @@ export function Layout() {
         onClick={onClose}
         aria-label={t('history.hide')}
         title={t('history.hide')}
-        className="inline-flex size-9 items-center justify-center rounded-lg hover:bg-sunken"
+        className="tap inline-flex size-9 items-center justify-center rounded-lg hover:bg-sunken"
       >
         {icon === 'close' ? <X className="size-5" /> : <PanelRightClose className="size-5" />}
       </button>
@@ -317,7 +389,7 @@ export function Layout() {
   );
 
   return (
-    <NavContext.Provider value={{ historyOpen, toggleHistory, openHistory }}>
+    <NavContext.Provider value={{ historyOpen, toggleHistory, openHistory, setFullscreen }}>
       <LeaderOverlay />
       <div className="flex h-app">
         {/* Desktop: sidebar, either a narrow strip or expanded with history */}
@@ -411,13 +483,16 @@ export function Layout() {
 
         {/* Phone: sessions panel slides in from the right */}
         {drawer ? (
-          <div className="inset-app z-50 lg:hidden" onClick={() => setDrawer(false)}>
-            <div className="absolute inset-0 motion-safe:animate-fade-in bg-black/50" />
+          <div className="inset-app z-50 lg:hidden" onClick={closeDrawer}>
+            <div ref={backdropRef} className="absolute inset-0 bg-black/50 transition-opacity duration-200 motion-safe:animate-fade-in" />
+            {/* narrower than the screen: the strip on the left closes it, so does a swipe to the right */}
             <aside
+              ref={drawerRef}
+              {...drawerSwipe}
               onClick={(e) => e.stopPropagation()}
-              className="pb-safe absolute inset-y-0 right-0 flex w-[94vw] motion-safe:animate-slide-in-right max-w-lg flex-col border-l border-line bg-surface"
+              className="pb-safe absolute inset-y-0 right-0 flex w-[86vw] max-w-lg flex-col border-l border-line bg-surface motion-safe:animate-slide-in-right"
             >
-              {panelHeader(() => setDrawer(false), 'close')}
+              {panelHeader(closeDrawer, 'close')}
               <SessionsPanel onPick={() => setDrawer(false)} />
             </aside>
           </div>
