@@ -1,3 +1,5 @@
+import { BRUTAL_THEMES, EXPRESSIVE_THEMES, GLASS_THEMES } from './styles';
+
 /**
  * Color themes. A theme sets base colors for the dark and light variants;
  * the other tokens (muted, sunken, diff colors…) are derived from them. Values
@@ -19,6 +21,10 @@ export interface Palette {
   danger: string; // errors
   /** Code highlighting: roles as in the GitHub theme (lib/highlight.ts maps TextMate scopes to them). */
   syntax: Syntax;
+  /** Glass: what is painted behind the translucent panels (a CSS background). */
+  backdrop?: string;
+  /** Glass: an opaque panel colour for "reduce transparency" / "more contrast". */
+  solid?: string;
 }
 
 export interface Syntax {
@@ -236,12 +242,34 @@ export const THEMES: Theme[] = [
   },
 ];
 
+/**
+ * Visual styles: how surfaces, shapes and type look; each has its own palettes. Strict is the
+ * original TUI look (monospace, square, thin lines); the others are set up in index.css under
+ * `html[data-style=…]`.
+ */
+export type StyleId = 'strict' | 'glass' | 'expressive' | 'brutal';
+
+export interface Style {
+  id: StyleId;
+  themes: Theme[];
+}
+
+export const STYLES: Style[] = [
+  { id: 'strict', themes: THEMES },
+  { id: 'glass', themes: GLASS_THEMES },
+  { id: 'expressive', themes: EXPRESSIVE_THEMES },
+  { id: 'brutal', themes: BRUTAL_THEMES },
+];
+
 export type Mode = 'system' | 'dark' | 'light';
 export const MODES: Mode[] = ['system', 'dark', 'light'];
 
 // v2: the default theme changed to opencode — the previous Standard choice is not carried over
 const THEME_KEY = 'hub.theme.v2';
 const MODE_KEY = 'hub.mode';
+const STYLE_KEY = 'hub.style';
+/** The palette chosen in a style (Strict keeps its historical key). */
+const themeKey = (style: StyleId) => (style === 'strict' ? THEME_KEY : `hub.theme.${style}`);
 
 const read = (k: string) => {
   try {
@@ -256,7 +284,14 @@ const write = (k: string, v: string) => {
   } catch {}
 };
 
-let themeId = THEMES.some((t) => t.id === read(THEME_KEY)) ? read(THEME_KEY)! : 'cendre';
+let styleId: StyleId = STYLES.some((x) => x.id === read(STYLE_KEY)) ? (read(STYLE_KEY) as StyleId) : 'strict';
+const styleOf = (id: StyleId) => STYLES.find((x) => x.id === id) ?? STYLES[0]!;
+const savedTheme = (id: StyleId) => {
+  const saved = read(themeKey(id));
+  const themes = styleOf(id).themes;
+  return themes.some((t) => t.id === saved) ? saved! : id === 'strict' ? 'cendre' : themes[0]!.id;
+};
+let themeId = savedTheme(styleId);
 let mode: Mode = MODES.includes(read(MODE_KEY) as Mode) ? (read(MODE_KEY) as Mode) : 'dark';
 
 const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -265,11 +300,15 @@ const listeners = new Set<() => void>();
 const mix = (a: string, b: string, pctA: number) => `color-mix(in srgb, ${a} ${pctA}%, ${b})`;
 
 export const getThemeId = () => themeId;
+export const getStyleId = () => styleId;
+/** The palettes of the current style. */
+export const currentThemes = () => styleOf(styleId).themes;
 export const getMode = () => mode;
 export const isDark = () => (mode === 'system' ? media.matches : mode === 'dark');
 
 export function applyTheme() {
-  const theme = THEMES.find((t) => t.id === themeId) ?? THEMES[0];
+  const themes = styleOf(styleId).themes;
+  const theme = themes.find((t) => t.id === themeId) ?? themes[0]!;
   const dark = isDark();
   const p = dark ? theme.dark : theme.light;
   const vars: Record<string, string> = {
@@ -290,18 +329,29 @@ export function applyTheme() {
     '--color-del': mix(p.danger, 'transparent', dark ? 16 : 13),
     '--color-del-fg': dark ? mix(p.danger, p.fg, 72) : p.danger,
     ...Object.fromEntries(Object.entries(p.syntax).map(([k, v]) => [`--syntax-${k}`, v])),
+    '--app-backdrop': p.backdrop ?? p.bg,
+    '--color-surface-solid': p.solid ?? p.panel,
   };
   const root = document.documentElement;
   for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
   root.style.colorScheme = dark ? 'dark' : 'light';
   root.dataset.theme = theme.id;
-  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', p.bg));
+  root.dataset.style = styleId;
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', p.solid ?? p.bg));
   listeners.forEach((fn) => fn());
 }
 
 export function setTheme(id: string) {
   themeId = id;
-  write(THEME_KEY, id);
+  write(themeKey(styleId), id);
+  applyTheme();
+}
+
+/** Switch the visual style; its last palette (or its first) comes along. */
+export function setStyle(id: StyleId) {
+  styleId = id;
+  write(STYLE_KEY, id);
+  themeId = savedTheme(id);
   applyTheme();
 }
 

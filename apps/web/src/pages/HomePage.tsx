@@ -225,7 +225,7 @@ export function HomePage() {
                 aria-label={t('session.send')}
                 onClick={() => void send()}
                 disabled={!ready || sending}
-                className={`inline-flex size-9 shrink-0 items-center justify-center ${ready || sending ? 'btn-accent' : 'border border-line text-muted'}`}
+                className={`ui-btn inline-flex size-9 shrink-0 items-center justify-center ${ready || sending ? 'btn-accent' : 'border border-line text-muted'}`}
               >
                 {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.5} />}
               </button>

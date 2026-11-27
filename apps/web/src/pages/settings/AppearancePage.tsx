@@ -1,13 +1,14 @@
 import { useSyncExternalStore } from 'react';
 import { Check, Minus, PanelLeft, PanelRight, Plus } from 'lucide-react';
 import { t } from '../../i18n';
-import { getThemeId, isDark, onThemeChange, setTheme, THEMES } from '../../theme';
+import { currentThemes, getStyleId, getThemeId, isDark, onThemeChange, setStyle, setTheme, STYLES, type StyleId } from '../../theme';
 import { CODE_SIZE, setCodeSize, setSideRight, useSideRight, setRelativeLines, setTabSize, setVimMode, TAB_SIZES, useCodeSize, useRelativeLines, useTabSize, useVimMode } from '../../lib/editorPrefs';
 import { IconButton, Switch } from '../../components/ui';
 
 /** Appearance: theme picker (each theme has dark and light variants; swatches show the current mode) and editor options. */
 export function AppearancePage() {
   const themeId = useSyncExternalStore(onThemeChange, getThemeId);
+  const styleId = useSyncExternalStore(onThemeChange, getStyleId);
   const vim = useVimMode();
   const size = useCodeSize();
   const tab = useTabSize();
@@ -17,9 +18,30 @@ export function AppearancePage() {
   return (
     <div className="space-y-6">
       <section>
+        <h2 className="mb-2 font-semibold">{t('settings.style')}</h2>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {STYLES.map((st) => (
+            <button
+              key={st.id}
+              type="button"
+              onClick={() => setStyle(st.id)}
+              aria-pressed={st.id === styleId}
+              className={`flex flex-col gap-2 rounded-xl border bg-surface p-3 text-left ${st.id === styleId ? 'border-accent' : 'border-line hover:border-muted'}`}
+            >
+              <StylePreview id={st.id} />
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                {t(`style.${st.id}` as const)}
+                {st.id === styleId ? <Check className="size-4 text-accent" /> : null}
+              </span>
+              <span className="text-xs text-muted">{t(`style.${st.id}Hint` as const)}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+      <section>
         <h2 className="mb-2 font-semibold">{t('settings.theme')}</h2>
         <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
-          {THEMES.map((th) => {
+          {currentThemes().map((th) => {
             const p = isDark() ? th.dark : th.light;
             return (
               <li key={th.id}>
@@ -114,5 +136,30 @@ export function AppearancePage() {
         </div>
       </section>
     </div>
+  );
+}
+
+/** A tiny drawing of a style's shapes (the real style applies to the whole app when chosen). */
+function StylePreview({ id }: { id: StyleId }) {
+  const box: Record<StyleId, string> = {
+    strict: 'rounded-none border border-line font-mono',
+    glass: 'rounded-[12px] border border-white/20 bg-white/10 shadow-lg backdrop-blur',
+    expressive: 'rounded-[18px] border border-transparent bg-sunken',
+    brutal: 'rounded-none border-2 border-fg shadow-[3px_3px_0_0_currentColor]',
+  };
+  const btn: Record<StyleId, string> = {
+    strict: 'rounded-none',
+    glass: 'rounded-[8px]',
+    expressive: 'rounded-full',
+    brutal: 'rounded-none border-2 border-fg',
+  };
+  const backdrop = id === 'glass' ? 'bg-[radial-gradient(circle_at_20%_20%,#8b7dff66,transparent_60%),radial-gradient(circle_at_80%_70%,#22d3ee55,transparent_60%)]' : '';
+  return (
+    <span aria-hidden className={`flex h-14 w-full items-center justify-center rounded-md ${backdrop}`}>
+      <span className={`flex w-24 items-center justify-between gap-1 px-2 py-1.5 ${box[id]}`}>
+        <span className="h-1.5 w-8 rounded-full bg-muted/60" />
+        <span className={`h-4 w-7 bg-accent ${btn[id]}`} />
+      </span>
+    </span>
   );
 }
