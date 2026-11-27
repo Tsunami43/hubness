@@ -581,8 +581,6 @@ export const uk: Record<MessageKey, string> = {
   'projects.sortUpdated': 'Останнє оновлення',
   'projects.sortName': 'Назва',
   'projects.updated': 'Оновлено {time}',
-  'settings.systemHint': 'Хост: Docker, сервіси, пакети',
-  'settings.harnessHint': 'Агенти, MCP-сервери, навички',
   'settings.style': 'Стиль',
   'style.strict': 'Строгий',
   'style.strictHint': 'Моноширинний шрифт, прямі кути, тонкі лінії — як у терміналі.',

@@ -581,8 +581,6 @@ export const ru: Record<MessageKey, string> = {
   'projects.sortUpdated': 'По обновлению',
   'projects.sortName': 'По имени',
   'projects.updated': 'Обновлён {time}',
-  'settings.systemHint': 'Хост: Docker, сервисы, пакеты',
-  'settings.harnessHint': 'Агенты, MCP-серверы, навыки',
   'settings.style': 'Стиль',
   'style.strict': 'Строгий',
   'style.strictHint': 'Моноширинный шрифт, прямые углы, тонкие линии — как в терминале.',

@@ -158,7 +158,7 @@ export function HomePage() {
         <div className="mx-auto max-w-3xl">
           <div
             {...att.dropProps}
-            className={`rounded-2xl border bg-surface px-3.5 pt-3 pb-2.5 focus-within:border-accent/70 ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
+            className={`rounded-2xl border bg-surface px-4 pt-3.5 pb-3 pointer-coarse:px-5 pointer-coarse:pt-4 focus-within:border-accent/70 ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
           >
             <PendingFiles files={att.files} onRemove={att.remove} />
             <div className="flex items-start gap-2">

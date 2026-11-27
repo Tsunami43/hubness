@@ -581,8 +581,6 @@ export const zh: Record<MessageKey, string> = {
   'projects.sortUpdated': '最近更新',
   'projects.sortName': '名称',
   'projects.updated': '更新于 {time}',
-  'settings.systemHint': '主机：Docker、服务、软件包',
-  'settings.harnessHint': '智能体、MCP 服务器、技能',
   'settings.style': '风格',
   'style.strict': '严谨',
   'style.strictHint': '等宽字体、直角、细线条，像终端一样。',
