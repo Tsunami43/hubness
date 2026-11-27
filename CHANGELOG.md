@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-27
+
+### Changed
+
+- Voice input builds whisper.cpp by itself: choosing a downloaded model starts the build
+  when the hub has none, and the page waits behind a progress overlay. The build no longer
+  needs cmake or git on the host — it downloads the source archive and, if cmake is missing,
+  a portable cmake into the data folder; only a C++ compiler and make are required. Models
+  can be chosen only once downloaded.
+
 ## [0.3.1] - 2026-11-27
 
 ### Added
