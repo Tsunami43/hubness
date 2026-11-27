@@ -9,7 +9,7 @@ pub mod theme;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders};
+use ratatui::widgets::{Block, BorderType, Borders, Padding};
 
 pub use theme::Theme;
 
@@ -28,11 +28,12 @@ pub fn logo() -> ratatui::widgets::Paragraph<'static> {
     ratatui::widgets::Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center)
 }
 
-/// A bordered block with a title; highlighted when focused.
+/// A bordered block with a title; highlighted when focused. A column of air on each side
+/// keeps text off the frame (`inner()` accounts for it).
 pub fn block(title: impl Into<String>, focused: bool) -> Block<'static> {
     let t = Theme::get();
     let title = title_only(&title.into());
-    let b = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(if focused {
+    let b = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).padding(Padding::horizontal(1)).border_style(if focused {
         Style::default().fg(t.border)
     } else {
         t.line_style()

@@ -74,6 +74,17 @@ html {
   /* home-indicator padding; 0 while the on-screen keyboard is open (lib/viewport.ts) */
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
+/*
+ * Touch screens: a roomier, larger interface. Tailwind sizes, paddings and gaps are multiples
+ * of --spacing and text sizes are in rem, so these two values grow almost everything at once
+ * (≈ +7% text, +20% spacing); a finger then hits rows and buttons without aiming.
+ */
+@media (pointer: coarse) {
+  html {
+    font-size: 15px;
+    --spacing: 0.28rem;
+  }
+}
 html[data-kb] {
   --safe-b: 0px;
 }

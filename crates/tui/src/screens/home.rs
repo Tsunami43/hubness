@@ -250,7 +250,7 @@ impl Screen for Home {
 
     fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx) {
         let t = Theme::get();
-        let comp_h = (self.new.input.height(area.width.saturating_sub(2)) + 2).clamp(4, 10);
+        let comp_h = (self.new.input.height(area.width.saturating_sub(4)) + 2).clamp(4, 10);
         // a dashboard header (like LazyVim's) when there is room
         let logo_h = if area.height > 30 { crate::ui::LOGO.len() as u16 + 2 } else { 0 };
         let [logo, settings, composer, list] =

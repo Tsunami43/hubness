@@ -90,11 +90,14 @@ export function MobileWorkspace({
                 type="button"
                 onClick={() => go(x.id, { s: null })}
                 aria-current={tab === x.id ? 'page' : undefined}
-                className={`relative flex h-11 items-center justify-center gap-1.5 border-b-2 text-sm ${tab === x.id ? 'border-accent text-accent' : 'border-transparent text-muted'}`}
+                className={`flex min-w-0 flex-col items-center justify-center gap-0.5 border-b-2 py-1.5 text-xs ${tab === x.id ? 'border-accent text-accent' : 'border-transparent text-muted'}`}
               >
-                <x.icon className="size-4" />
-                <span className="truncate">{x.label}</span>
-                {x.badge ? <span className="bg-accent px-1 text-[10px] leading-4 text-accent-fg">{x.badge}</span> : null}
+                {/* icon over the label (four tabs fit a phone), the count as a badge on the icon */}
+                <span className="relative">
+                  <x.icon className="size-5" />
+                  {x.badge ? <span className="absolute -top-1.5 left-3.5 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] leading-4 text-accent-fg">{x.badge}</span> : null}
+                </span>
+                <span className="max-w-full truncate">{x.label}</span>
               </button>
             ))}
           </nav>

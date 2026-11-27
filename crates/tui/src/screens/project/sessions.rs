@@ -270,7 +270,7 @@ impl Screen for SessionsTab {
 
     fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx) {
         let t = Theme::get();
-        let comp_h = (self.new.input.height(area.width.saturating_sub(2)) + 2).clamp(4, 8);
+        let comp_h = (self.new.input.height(area.width.saturating_sub(4)) + 2).clamp(4, 8);
         let [settings, composer, list] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(comp_h), Constraint::Min(3)]).areas(area);
         let mut spans = self.new.settings_spans(ctx);
