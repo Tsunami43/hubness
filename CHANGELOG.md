@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-27
+
+### Added
+
+- User roles: an account is an admin (everything, including accounts) or a member. An admin
+  gives a member projects (or all of them), sections (git, files, terminal and Run, board,
+  System, Harness, hub settings), agents and models in Settings → Users → Access; the server
+  enforces them and filters project, group and session lists. Chats outside projects belong
+  to whoever started them. Existing accounts stay admins; the last admin can't be deleted or
+  demoted, and `hubness user role <name> admin|member` changes a role from the shell.
+- Eleven more interface languages: Ukrainian, German, French, Spanish, Italian, Portuguese,
+  Polish, Turkish, Chinese, Japanese and Korean, each loaded only when chosen, and a search
+  on the language page.
+
 ## [0.3.0] - 2026-11-27
 
 ### Added
