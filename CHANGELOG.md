@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-27
+
+### Fixed
+
+- The voice setup overlay no longer hangs at 100% when the download ends while its live
+  stream reconnects: a reconnect that finds the job already finished moves on to choosing
+  the model and building whisper.cpp.
+
 ## [0.3.5] - 2026-11-27
 
 ### Changed
