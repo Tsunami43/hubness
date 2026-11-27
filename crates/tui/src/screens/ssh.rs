@@ -19,6 +19,16 @@ use crate::screens::kit;
 use crate::ui::{Theme, block};
 
 /// `name [env] — user@host:port`.
+/// In the Connections list: what to do with a connection whose host key is not pinned yet.
+const UNTESTED_HINT: &str = "not tested — t to test";
+/// In a project's / group's SSH tab: why an attached connection does nothing yet.
+const UNTESTED_BOUND: &str = "not tested: the agent doesn't get it yet — t to test";
+
+/// Did a successful "Test" pin the connection's host key? Only then do agents get it.
+pub fn is_tested(c: &Value) -> bool {
+    c["hostKeys"].as_str().is_some_and(|k| !k.trim().is_empty())
+}
+
 pub fn describe(c: &Value) -> String {
     let env = c["environment"].as_str().unwrap_or_default();
     let env = if env.is_empty() { String::new() } else { format!(" [{env}]") };
@@ -334,7 +344,7 @@ impl Screen for Connections {
                 ctx.message(
                     format!("{} is ready", v["name"].as_str().unwrap_or_default()),
                     format!(
-                        "Add the public key to the server, then press t to test:\n\n{}\n\nc copies the key, y copies this command.",
+                        "1. Add the public key to the server:\n\n{}\n\n   (y copies this command, c the key alone)\n\n2. Press t to test. Agents get the connection once the test has passed.",
                         authorized_keys_line(public)
                     ),
                 );
@@ -348,7 +358,7 @@ impl Screen for Connections {
             "tested" => {
                 let name = v["connection"]["name"].as_str().unwrap_or_default();
                 if v["ok"] == Value::Bool(true) {
-                    ctx.info(format!("{name}: connected, the host key is pinned"));
+                    ctx.info(format!("{name}: connected, the host key is pinned — agents can use it now"));
                 } else {
                     ctx.message(format!("{name}: can't connect"), v["output"].as_str().unwrap_or_default().to_string());
                 }
@@ -386,7 +396,7 @@ impl Screen for Connections {
                 .iter()
                 .map(|c| {
                     let env = c["environment"].as_str().unwrap_or_default();
-                    let pinned = !c["hostKeys"].as_str().unwrap_or_default().is_empty();
+                    let pinned = is_tested(c);
                     let mut spans =
                         vec![Span::styled(" ⇄ ", t.accent_style()), Span::raw(c["name"].as_str().unwrap_or_default().to_string())];
                     if !env.is_empty() {
@@ -404,7 +414,7 @@ impl Screen for Connections {
                     spans.push(if pinned {
                         Span::styled("  ✓ tested", Style::default().fg(t.ok))
                     } else {
-                        Span::styled("  not tested", t.muted_style())
+                        Span::styled(format!("  {UNTESTED_HINT}"), Style::default().fg(t.warn))
                     });
                     ListItem::new(Line::from(spans))
                 })
@@ -501,6 +511,7 @@ impl Screen for Bindings {
         vec![
             Action::new("a", "Attach an SSH connection"),
             Action::new("e", "Edit the note of the selected connection"),
+            Action::new("t", "Test the selected connection (agents get only tested ones)"),
             Action::new("x", "Detach the selected connection"),
             Action::new("r", "Reload"),
         ]
@@ -545,6 +556,13 @@ impl Screen for Bindings {
                     self.save(list, ctx);
                 }
             }
+            "t" => {
+                if let Some(b) = self.selected() {
+                    let id = b["connection"]["id"].as_str().unwrap_or_default();
+                    ctx.info(format!("connecting to {}…", b["connection"]["host"].as_str().unwrap_or_default()));
+                    ctx.send("tested", Method::POST, format!("/ssh/{}/test", super::session::enc(id)), json!({}));
+                }
+            }
             "r" => self.reload(ctx),
             _ => {}
         }
@@ -578,6 +596,17 @@ impl Screen for Bindings {
                 clamp(&mut self.list, self.bindings.len());
             }
             "all" => self.all = v.as_array().cloned().unwrap_or_default(),
+            "tested" => {
+                let name = v["connection"]["name"].as_str().unwrap_or_default();
+                if v["ok"] == Value::Bool(true) {
+                    ctx.info(format!("{name}: connected — agents here can use it now"));
+                } else {
+                    ctx.message(format!("{name}: can't connect"), v["output"].as_str().unwrap_or_default().to_string());
+                }
+                // the answer carries the connection as it is now (its pinned host key)
+                apply_tested(&mut self.bindings, &v["connection"]);
+                apply_tested_all(&mut self.all, &v["connection"]);
+            }
             "attach" => {
                 let Some(id) = v.as_str() else { return };
                 self.adding = Some(id.to_string());
@@ -615,7 +644,7 @@ impl Screen for Bindings {
             .wrap(Wrap { trim: true }),
             hint,
         );
-        let title = format!("SSH connections ({}) — a attach · e note · x detach", self.bindings.len());
+        let title = format!("SSH connections ({}) — a attach · e note · t test · x detach", self.bindings.len());
         if self.bindings.is_empty() {
             let msg = if self.loaded { "None attached — a attaches one (create them in System → SSH)." } else { "loading…" };
             f.render_widget(Paragraph::new(Span::styled(msg, t.muted_style())).block(block(title, true)), list);
@@ -637,16 +666,49 @@ impl Screen for Bindings {
                 ));
                 let note = b["note"].as_str().unwrap_or_default();
                 let second = if note.is_empty() { "   no note".to_string() } else { format!("   {note}") };
-                ListItem::new(vec![Line::from(first), Line::from(Span::styled(second, t.muted_style()))])
+                let mut lines = vec![Line::from(first), Line::from(Span::styled(second, t.muted_style()))];
+                if !is_tested(c) {
+                    lines.push(Line::from(Span::styled(format!("   {UNTESTED_BOUND}"), Style::default().fg(t.warn))));
+                }
+                ListItem::new(lines)
             })
             .collect();
         f.render_stateful_widget(List::new(rows).block(block(title, true)).highlight_style(t.selected()), list, &mut self.list);
     }
 }
 
+/// Put the connection a test answered with into the bindings that hold it.
+fn apply_tested(bindings: &mut [Value], connection: &Value) {
+    for b in bindings.iter_mut().filter(|b| b["connection"]["id"] == connection["id"]) {
+        b["connection"] = connection.clone();
+    }
+}
+
+fn apply_tested_all(all: &mut [Value], connection: &Value) {
+    for c in all.iter_mut().filter(|c| c["id"] == connection["id"]) {
+        *c = connection.clone();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tested_connections_are_told_apart_and_a_test_updates_the_binding() {
+        assert!(!is_tested(&json!({ "hostKeys": "" })) && !is_tested(&json!({ "hostKeys": "  " })) && !is_tested(&json!({})));
+        assert!(is_tested(&json!({ "hostKeys": "h ssh-ed25519 AAAA" })));
+        let mut bindings = vec![
+            json!({ "connection": { "id": "a", "name": "alpha", "hostKeys": "" }, "note": "keep me" }),
+            json!({ "connection": { "id": "b", "name": "beta", "hostKeys": "" }, "note": "" }),
+        ];
+        apply_tested(&mut bindings, &json!({ "id": "a", "name": "alpha", "hostKeys": "h ssh-ed25519 AAAA" }));
+        assert!(is_tested(&bindings[0]["connection"]) && !is_tested(&bindings[1]["connection"]));
+        assert_eq!(bindings[0]["note"], "keep me", "the note is the binding's, not the connection's");
+        let mut all = vec![json!({ "id": "a", "hostKeys": "" }), json!({ "id": "b", "hostKeys": "" })];
+        apply_tested_all(&mut all, &json!({ "id": "b", "hostKeys": "k" }));
+        assert!(!is_tested(&all[0]) && is_tested(&all[1]));
+    }
 
     #[test]
     fn ports() {

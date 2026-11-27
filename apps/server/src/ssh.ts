@@ -361,15 +361,15 @@ const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 /**
  * The ssh config of a session in `dir` (the same text as `session_config` in ssh.rs). Each
  * alias offers only its own key (`IdentitiesOnly` + the public key file): with many
- * connections a server would otherwise refuse after the first few wrong keys.
+ * connections a server would otherwise refuse after the first few wrong keys. Host keys are
+ * always checked: only tested connections (pinned by "Test") get here.
  */
 export function sessionConfig(list: SshBinding[], dir: string): string {
   let out = "# hubness: the SSH connections of this session; the keys stay in the hub's agent\n";
   for (const { connection: c } of list) {
-    const strict = c.hostKeys.trim() ? 'yes' : 'accept-new';
     out +=
       `\nHost ${c.name}\n  HostName ${c.host}\n  Port ${c.port}\n  User ${c.username}\n  IdentityAgent ${q(join(dir, 'agent.sock'))}\n` +
-      `  IdentityFile ${q(join(dir, 'keys', `${c.name}.pub`))}\n  IdentitiesOnly yes\n  UserKnownHostsFile ${q(join(dir, 'known_hosts'))}\n  StrictHostKeyChecking ${strict}\n`;
+      `  IdentityFile ${q(join(dir, 'keys', `${c.name}.pub`))}\n  IdentitiesOnly yes\n  UserKnownHostsFile ${q(join(dir, 'known_hosts'))}\n  StrictHostKeyChecking yes\n`;
   }
   // the user's own hosts (and their own agent) keep working outside the sandbox
   return out + '\nMatch all\n  Include ~/.ssh/config\n';
@@ -453,13 +453,27 @@ export function sweepSshRuntime() {
   } catch {}
 }
 
-/**
- * Set up the connections of a project / group session for one turn: null without any (or
- * without OpenSSH). Throws when the setup can't be made — nothing is left running then.
- */
-export function sessionSetup(owners: Owner[], sessionId: string): SessionSsh | null {
+/** The connections of the owners, each once, in order. */
+function boundTo(owners: Owner[]): SshBinding[] {
   const bound: SshBinding[] = [];
   for (const o of owners) for (const b of sshBindings(o)) if (!bound.some((x) => x.connection.id === b.connection.id)) bound.push(b);
+  return bound;
+}
+
+const tested = (b: SshBinding) => b.connection.hostKeys.trim() !== '';
+
+/**
+ * Bound connections an agent does not get yet: "Test" has not pinned their host keys. The
+ * person sees the first connection work (and whose server it is), not the agent mid-turn.
+ */
+export const untestedSsh = (owners: Owner[]): string[] => boundTo(owners).filter((b) => !tested(b)).map((b) => b.connection.name);
+
+/**
+ * Set up the tested connections of a project / group session for one turn: null without any
+ * (or without OpenSSH). Throws when the setup can't be made — nothing is left running then.
+ */
+export function sessionSetup(owners: Owner[], sessionId: string): SessionSsh | null {
+  const bound = boundTo(owners).filter(tested);
   if (!bound.length) return null;
   const ssh = which('ssh');
   const agentBin = which('ssh-agent');

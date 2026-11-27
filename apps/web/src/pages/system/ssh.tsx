@@ -96,12 +96,16 @@ export function SshSection() {
                   <span title={t('ssh.pinned')} className="text-ok">
                     <ShieldCheck className="size-4" />
                   </span>
-                ) : null}
+                ) : (
+                  <span className="rounded-md bg-warn/15 px-1.5 py-0.5 text-[11px] text-warn">{t('ssh.notTested')}</span>
+                )}
                 <span className="flex-1" />
-                <Button size="sm" loading={busy === c.id} onClick={() => void test(c)}>
-                  <Plug className="size-3.5" />
-                  {t('ssh.test')}
-                </Button>
+                {c.hostKeys ? (
+                  <Button size="sm" loading={busy === c.id} onClick={() => void test(c)}>
+                    <Plug className="size-3.5" />
+                    {t('ssh.test')}
+                  </Button>
+                ) : null}
                 <IconButton label={t('ssh.edit')} className="size-8" onClick={() => setEditing(c)}>
                   <Pencil className="size-3.5" />
                 </IconButton>
@@ -115,7 +119,8 @@ export function SshSection() {
                   {result.ok ? t('ssh.connected') : result.output || t('git.failed')}
                 </pre>
               ) : null}
-              <PublicKey c={c} />
+              {/* not tested yet: the two steps that make it usable, in the open; after that the key folds away */}
+              {c.hostKeys ? <PublicKey c={c} /> : <Setup c={c} busy={busy === c.id} onTest={() => void test(c)} />}
             </li>
           ))}
         </ul>
@@ -134,9 +139,41 @@ export function SshSection() {
   );
 }
 
+const installLine = (c: SshConnection) => `mkdir -p ~/.ssh && echo '${c.publicKey}' >> ~/.ssh/authorized_keys`;
+
+/** A new connection: put the key on the server, then test — agents get it only after that. */
+function Setup({ c, busy, onTest }: { c: SshConnection; busy: boolean; onTest: () => void }) {
+  const line = installLine(c);
+  return (
+    <ol className="mt-3 space-y-3 rounded-lg bg-sunken/60 p-3 text-sm">
+      <li className="space-y-1.5">
+        <div>
+          <span className="mr-1.5 font-mono text-muted">1</span>
+          {t('ssh.step1', { user: c.username })}
+        </div>
+        <pre className="rounded-lg bg-sunken p-2 font-mono text-[11.5px] whitespace-pre-wrap break-all">{line}</pre>
+        <div className="flex flex-wrap gap-2">
+          <CopyButton text={line} label={t('ssh.copyCommand')} />
+          <CopyButton text={c.publicKey} label={t('ssh.copyKey')} />
+        </div>
+      </li>
+      <li className="flex flex-wrap items-center gap-2">
+        <span>
+          <span className="mr-1.5 font-mono text-muted">2</span>
+          {t('ssh.step2')}
+        </span>
+        <Button size="sm" variant="primary" loading={busy} onClick={onTest}>
+          <Plug className="size-3.5" />
+          {t('ssh.test')}
+        </Button>
+      </li>
+    </ol>
+  );
+}
+
 function PublicKey({ c }: { c: SshConnection }) {
   const [open, setOpen] = useState(false);
-  const line = `mkdir -p ~/.ssh && echo '${c.publicKey}' >> ~/.ssh/authorized_keys`;
+  const line = installLine(c);
   return (
     <div className="mt-2">
       <button type="button" className="text-xs text-muted hover:text-fg" onClick={() => setOpen(!open)}>
