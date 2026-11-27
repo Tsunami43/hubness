@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Phone, sessions list: "Move to archive" no longer shows around or through the rows (rounded
+  and see-through rows in the glass and expressive styles let it peek out) and it is a real
+  button now — a short swipe to the left leaves it open to tap, a long swipe archives at once,
+  a tap on the open row closes it. A swipe on a row no longer drags the drawer too.
 - Glass style: dialogs, sheets, menus, popovers, tooltips and toasts are opaque — the page's
   text no longer shows through them. A dialog opened inside a glass panel (Harness → MCP →
   Catalog / Add manually) covers the whole screen again instead of being trapped in that

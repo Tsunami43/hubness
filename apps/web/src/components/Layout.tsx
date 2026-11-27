@@ -112,16 +112,23 @@ function SessionRow({
   onSwipe?: { label: string; icon: LucideIcon; run: (reset: () => void) => void };
 }) {
   const row = useRef<HTMLDivElement>(null);
-  const hint = useRef<HTMLSpanElement>(null);
+  const hint = useRef<HTMLButtonElement>(null);
   const swipe = useSwipe({
     dir: -1,
     target: () => row.current,
-    threshold: 0.4,
-    onProgress: (_, commit) => hint.current?.classList.toggle('text-accent', commit),
+    threshold: 0.6,
+    open: () => hint.current?.offsetWidth ?? 0,
+    onProgress: (p, commit) => {
+      // hidden at rest: nothing peeks out around a rounded or see-through row; while it moves
+      // the row gets an opaque backing, so the action never shows through its text
+      hint.current?.classList.toggle('invisible', p === 0);
+      if (row.current) row.current.style.background = p ? 'var(--color-surface-solid, var(--color-surface))' : '';
+      hint.current?.classList.toggle('text-accent', commit);
+    },
     onCommit: (reset) => onSwipe?.run(reset),
   });
   const body = (
-    <div ref={row} className={`group flex items-start border-l-2 ${active ? 'border-accent bg-sunken' : 'border-transparent bg-surface hover:bg-sunken'}`}>
+    <div className={`group flex items-start border-l-2 ${active ? 'border-accent bg-sunken' : 'border-transparent bg-surface hover:bg-sunken'}`}>
       <Link to={sessionPath(s)} onClick={onPick} className="flex min-w-0 flex-1 items-start gap-2.5 py-1.5 pl-2.5 pointer-coarse:py-3">
         <span className="relative mt-0.5">
           <AgentIcon kind={s.agent.kind} />
@@ -143,12 +150,20 @@ function SessionRow({
   );
   if (!onSwipe) return <li>{body}</li>;
   return (
-    <li className="relative overflow-hidden" {...swipe}>
-      {/* revealed under the row while it slides away */}
-      <span ref={hint} aria-hidden className="absolute inset-y-0 right-0 flex items-center gap-2 bg-sunken px-5 text-sm text-muted transition-colors">
+    <li className="relative overflow-hidden" {...swipe.bind}>
+      {/* revealed under the row: a short swipe leaves it open to tap, a long one acts at once */}
+      <button
+        ref={hint}
+        type="button"
+        tabIndex={-1}
+        onClick={() => swipe.commit()}
+        className="invisible absolute inset-y-0 right-0 flex items-center gap-2 bg-sunken px-5 text-sm text-muted transition-colors"
+      >
         <onSwipe.icon className="size-4" /> {onSwipe.label}
-      </span>
-      <div className="relative">{body}</div>
+      </button>
+      <div ref={row} className="relative">
+        {body}
+      </div>
     </li>
   );
 }
@@ -490,7 +505,7 @@ export function Layout() {
               {/* the whole screen on a phone (× or a swipe to the right closes it); a side panel on a tablet */}
               <aside
                 ref={drawerRef}
-                {...drawerSwipe}
+                {...drawerSwipe.bind}
                 onClick={(e) => e.stopPropagation()}
                 className="ui-solid pb-safe absolute inset-y-0 right-0 flex w-full flex-col bg-surface motion-safe:animate-slide-in-right sm:w-[86vw] sm:max-w-lg sm:border-l sm:border-line"
               >
