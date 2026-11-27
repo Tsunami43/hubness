@@ -252,7 +252,7 @@ impl Screen for Home {
         let t = Theme::get();
         let comp_h = (self.new.input.height(area.width.saturating_sub(4)) + 2).clamp(4, 10);
         // a dashboard header (like LazyVim's) when there is room
-        let logo_h = if area.height > 30 { crate::ui::LOGO.len() as u16 + 2 } else { 0 };
+        let logo_h = if area.height > 30 { crate::ui::LOGO_HEIGHT + 1 } else { 0 };
         let [logo, settings, composer, list] =
             Layout::vertical([Constraint::Length(logo_h), Constraint::Length(1), Constraint::Length(comp_h), Constraint::Min(3)])
                 .areas(area);
