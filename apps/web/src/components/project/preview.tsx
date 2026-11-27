@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, Play, RotateCw, Trash2 } from 'lucide-react';
+import { Play, Trash2 } from 'lucide-react';
+import { BrowserFrame } from './BrowserFrame';
 import type { RunState } from '@hubness/shared';
 import { api } from '../../lib/api';
 import { t } from '../../i18n';
@@ -13,7 +14,7 @@ export const previewUrl = (port: number, path = '/') => `${window.location.proto
 /**
  * Preview tab (like Webview in Replit). What to show is a choice: running
  * commands with a port and any ports entered manually (the app is running in
- * Shell, docker compose…). Address bar, reload, open in a tab.
+ * Shell, docker compose…); the page itself is in a BrowserFrame.
  */
 export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: string; runs: RunState[] | null; onStartRun: (r: RunState) => void }) {
   const live = (runs ?? []).filter((r) => isRunning(r) && r.previewPort);
@@ -25,9 +26,7 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
   ];
   const [pick, setPick] = useState<string | null>(null);
   const current = targets.find((x) => x.key === pick) ?? targets[0] ?? null;
-  const [path, setPath] = useState('/');
-  const [draft, setDraft] = useState('/');
-  const [nonce, setNonce] = useState(0);
+  const [adding, setAdding] = useState(false);
   const [portInput, setPortInput] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -37,10 +36,6 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
       if (!manualPreview[p]) api.previewPort(projectId, p).then((r) => setManualPreview((m) => ({ ...m, [p]: r.previewPort })), (e) => setError((e as Error).message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manual.join(','), projectId]);
-  useEffect(() => {
-    setPath('/');
-    setDraft('/');
-  }, [current?.key]);
 
   const addPort = () => {
     const p = Number(portInput);
@@ -49,6 +44,7 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
     if (!manual.includes(p)) setManual([...manual, p]);
     setPick(`port:${p}`);
     setPortInput('');
+    setAdding(false);
   };
   const portForm = (
     <form
@@ -71,7 +67,6 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
     </form>
   );
 
-  const url = current?.previewPort ? previewUrl(current.previewPort, path) : null;
   if (!current) {
     const withPort = (runs ?? []).filter((r) => r.port || r.activePort);
     return (
@@ -96,35 +91,33 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line px-1.5 py-1">
-        <Select size="sm" value={current.key} onChange={setPick} options={targets.map((x) => ({ value: x.key, label: x.label }))} className="max-w-48" />
-        <form
-          className="flex min-w-32 flex-1 items-center border border-line bg-bg px-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setPath(draft.startsWith('/') ? draft : `/${draft}`);
-            setNonce((n) => n + 1);
-          }}
-        >
-          <input value={draft} onChange={(e) => setDraft(e.target.value)} className="min-w-0 flex-1 bg-transparent px-1 py-0.5 text-[13px] outline-none" spellCheck={false} autoCapitalize="off" />
-        </form>
-        <IconButton label={t('preview.reload')} onClick={() => setNonce((n) => n + 1)} className="size-7">
-          <RotateCw className="size-3.5" />
-        </IconButton>
-        {url ? (
-          <a href={url} target="_blank" rel="noopener" title={t('preview.newTab')} className="inline-flex size-7 items-center justify-center text-muted hover:bg-sunken hover:text-fg">
-            <ExternalLink className="size-3.5" />
-          </a>
-        ) : null}
-        {current.key.startsWith('port:') ? (
-          <IconButton label={t('preview.removePort')} onClick={() => setManual(manual.filter((p) => p !== current.port))} className="size-7">
-            <Trash2 className="size-3.5" />
-          </IconButton>
-        ) : null}
-        <div className="ml-auto">{portForm}</div>
-      </div>
+      {current.previewPort ? (
+        <BrowserFrame
+          projectId={projectId}
+          previewPort={current.previewPort}
+          appPort={current.port}
+          toolbar={
+            <>
+              <Select
+                size="sm"
+                value={adding ? '__add' : current.key}
+                onChange={(v) => (v === '__add' ? setAdding(true) : (setAdding(false), setPick(v)))}
+                options={[...targets.map((x) => ({ value: x.key, label: x.label })), { value: '__add', label: t('preview.otherPort') }]}
+                className="max-w-48"
+              />
+              {adding ? portForm : null}
+              {current.key.startsWith('port:') && !adding ? (
+                <IconButton label={t('preview.removePort')} onClick={() => setManual(manual.filter((p) => p !== current.port))} className="size-7">
+                  <Trash2 className="size-3.5" />
+                </IconButton>
+              ) : null}
+            </>
+          }
+        />
+      ) : (
+        <Spinner />
+      )}
       <ErrorLine error={error} />
-      {url ? <iframe key={`${url}#${nonce}`} src={url} title={t('preview.title')} className="min-h-0 w-full flex-1 bg-white" /> : <Spinner />}
     </div>
   );
 }

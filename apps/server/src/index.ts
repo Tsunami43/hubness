@@ -11,6 +11,7 @@ import { harness, jobs } from './routes/harness.ts';
 import { handleAsk, system } from './routes/system.ts';
 import { ensureHomeProject } from './system/ask.ts';
 import { stopAll } from './runtime.ts';
+import { shutdownBrowser } from './browser.ts';
 import { killAllJobs } from './terminal.ts';
 
 const app = new Hono();
@@ -46,6 +47,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
 
 const shutdown = () => {
   stopAll();
+  shutdownBrowser();
   killAllJobs();
   server.close();
   // SSE streams never end on their own: drop them so the dev restart (src/dev.ts) is instant —

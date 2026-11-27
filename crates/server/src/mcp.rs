@@ -1,6 +1,10 @@
 //! hubness MCP server — a port of `mcp/hub-mcp.ts` (stdio, line-delimited JSON-RPC 2.0),
-//! run as `hubness mcp`. The agent gets the `open_pane` tool: show a site preview, a file,
-//! or a diff next to the chat; and `close_pane`. The hub attaches it to every agent session.
+//! run as `hubness mcp`. The agent gets:
+//! - `open_pane` / `close_pane`: show a site preview, a file, or a diff next to the chat;
+//! - `preview_*`: its own headless browser (on the hub) to open the app it builds, look at
+//!   screenshots, click, type, run JavaScript and read the console — to check its work.
+//!
+//! The hub attaches it to every agent session.
 //!
 //! Env: `HUB_URL` (http://127.0.0.1:8787), `HUB_SESSION_ID`.
 
@@ -53,34 +57,167 @@ fn tools() -> Value {
             "name": "close_pane",
             "description": "Close the panel next to the chat in the hubness UI.",
             "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "preview_open",
+            "description": "Open a page in your own headless browser on the hub to check a web app you are building or running (e.g. http://localhost:5173/settings — localhost works, also for apps in the project container). Returns the title, console errors and failed requests, and a screenshot unless screenshot=false. Use it after changing UI code to see the result yourself instead of asking the user. width/height set the window (e.g. 390×844 to check the phone layout).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": "Address to open" },
+                    "width": { "type": "number", "description": "Window width in CSS pixels (default 1280; under 600 emulates a phone)" },
+                    "height": { "type": "number", "description": "Window height (default 800)" },
+                    "screenshot": { "type": "boolean", "description": "Attach a screenshot (default true)" }
+                },
+                "required": ["url"]
+            }
+        },
+        {
+            "name": "preview_screenshot",
+            "description": "Screenshot of the page open in your preview browser.",
+            "inputSchema": { "type": "object", "properties": { "fullPage": { "type": "boolean", "description": "The whole scrollable page, not only the window" } } }
+        },
+        {
+            "name": "preview_click",
+            "description": "Click an element in the preview browser, found by CSS selector or by its visible text (buttons, links, labels).",
+            "inputSchema": { "type": "object", "properties": { "selector": { "type": "string" }, "text": { "type": "string", "description": "Visible text of the element" }, "screenshot": shot_prop() } }
+        },
+        {
+            "name": "preview_type",
+            "description": "Type into a field in the preview browser (replaces its value). Find it by CSS selector or by text (label / placeholder).",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "selector": { "type": "string" }, "text": { "type": "string", "description": "Label, placeholder or visible text" }, "value": { "type": "string", "description": "What to type" }, "screenshot": shot_prop() },
+                "required": ["value"]
+            }
+        },
+        {
+            "name": "preview_press",
+            "description": "Press a key in the preview browser: Enter, Tab, Escape, Backspace, ArrowDown… or one character.",
+            "inputSchema": { "type": "object", "properties": { "key": { "type": "string" }, "screenshot": shot_prop() }, "required": ["key"] }
+        },
+        {
+            "name": "preview_eval",
+            "description": "Run a JavaScript expression in the preview page (awaited) and get its JSON value — read the DOM, app state, localStorage…",
+            "inputSchema": { "type": "object", "properties": { "expression": { "type": "string" } }, "required": ["expression"] }
+        },
+        {
+            "name": "preview_console",
+            "description": "New console messages, uncaught errors and failed requests of the preview page since the last call — yours and those the user saw in the hubness Preview panel for the same app.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "preview_close",
+            "description": "Close your preview browser page.",
+            "inputSchema": { "type": "object", "properties": {} }
         }
     ])
+}
+
+/// The `screenshot` property of the action tools.
+fn shot_prop() -> Value {
+    json!({ "type": "boolean", "description": "Attach a screenshot of the page after the action" })
+}
+
+/// One `preview_*` tool: a POST /api/sessions/:id/browser action, formatted for the agent.
+async fn browser(hub_url: &str, session_id: &str, args: &Value, action: &str) -> Value {
+    if session_id.is_empty() {
+        return text("hubness session is not set", true);
+    }
+    let mut body = json!({ "action": action });
+    for k in ["url", "width", "height", "selector", "text", "value", "key", "expression", "fullPage", "screenshot"] {
+        if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
+            body[k] = v.clone();
+        }
+    }
+    if action == "open" && body.get("screenshot").is_none() {
+        body["screenshot"] = json!(true);
+    }
+    let (status, raw) = match post_hub(hub_url, &format!("/api/sessions/{session_id}/browser"), &body).await {
+        Ok(r) => r,
+        Err(e) => return text(&format!("Error: {e}"), true),
+    };
+    let r: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
+    if !(200..300).contains(&status) {
+        let msg = r.get("error").and_then(Value::as_str).map(String::from).unwrap_or_else(|| format!("hub responded {status}"));
+        return text(&msg, true);
+    }
+    let get = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("");
+    let mut lines: Vec<String> = vec![];
+    if !get("text").is_empty() {
+        lines.push(get("text").into());
+    }
+    if !get("url").is_empty() {
+        let title = if get("title").is_empty() { String::new() } else { format!("{} — ", get("title")) };
+        lines.push(format!("Page: {title}{}", get("url")));
+    }
+    match r.get("logs").and_then(Value::as_array).filter(|l| !l.is_empty()) {
+        Some(logs) => {
+            lines.push(String::new());
+            lines.push("Console / errors:".into());
+            for l in logs {
+                let src = if l.get("source").and_then(Value::as_str) == Some("user") { "user " } else { "" };
+                let level = l.get("level").and_then(Value::as_str).unwrap_or("");
+                lines.push(format!("[{src}{level}] {}", l.get("text").and_then(Value::as_str).unwrap_or("")));
+            }
+        }
+        None if action != "close" => lines.push("No console errors.".into()),
+        None => {}
+    }
+    let mut content = vec![json!({ "type": "text", "text": lines.join("\n") })];
+    if let Some(shot) = r.get("screenshot").and_then(Value::as_str) {
+        content.push(json!({ "type": "image", "data": shot, "mimeType": "image/png" }));
+    }
+    json!({ "content": content, "isError": false })
 }
 
 fn text(t: &str, is_error: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": t }], "isError": is_error })
 }
 
-/// POST the pane to the hub (plain HTTP/1.1 to the local hub; no TLS needed).
-async fn call_hub(hub_url: &str, session_id: &str, pane: Value) -> Result<(), String> {
-    if session_id.is_empty() {
-        return Err("hubness session is not set".into());
-    }
+/// POST JSON to the hub (plain HTTP/1.1 to the local hub; no TLS needed): (status, body).
+async fn post_hub(hub_url: &str, path: &str, body: &Value) -> Result<(u16, String), String> {
     let authority = hub_url.strip_prefix("http://").ok_or("HUB_URL must be http://")?.trim_end_matches('/');
     let mut stream = tokio::net::TcpStream::connect(authority).await.map_err(|e| e.to_string())?;
-    let body = json!({ "pane": pane }).to_string();
+    let body = body.to_string();
     let req = format!(
-        "POST /api/sessions/{session_id}/pane HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth}Connection: close\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth}Connection: close\r\n\r\n{body}",
         body.len(),
         auth =
             std::env::var("HUB_TOKEN").ok().filter(|t| !t.is_empty()).map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default()
     );
     stream.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).await.map_err(|e| e.to_string())?;
-    let status: u16 = resp.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).await.map_err(|e| e.to_string())?;
+    let resp = String::from_utf8_lossy(&raw);
+    let (head, rest) = resp.split_once("\r\n\r\n").unwrap_or((&resp, ""));
+    let status: u16 = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let chunked =
+        head.lines().any(|l| l.to_ascii_lowercase().starts_with("transfer-encoding:") && l.to_ascii_lowercase().contains("chunked"));
+    Ok((status, if chunked { dechunk(rest) } else { rest.to_string() }))
+}
+
+/// The body of a chunked response.
+fn dechunk(mut rest: &str) -> String {
+    let mut out = String::new();
+    while let Some((size, tail)) = rest.split_once("\r\n") {
+        let Ok(n) = usize::from_str_radix(size.split(';').next().unwrap_or("").trim(), 16) else { break };
+        if n == 0 || tail.len() < n {
+            break;
+        }
+        out.push_str(&tail[..n]);
+        rest = tail[n..].strip_prefix("\r\n").unwrap_or(&tail[n..]);
+    }
+    out
+}
+
+/// POST the pane to the hub.
+async fn call_hub(hub_url: &str, session_id: &str, pane: Value) -> Result<(), String> {
+    if session_id.is_empty() {
+        return Err("hubness session is not set".into());
+    }
+    let (status, detail) = post_hub(hub_url, &format!("/api/sessions/{session_id}/pane"), &json!({ "pane": pane })).await?;
     if !(200..300).contains(&status) {
-        let detail = resp.split("\r\n\r\n").nth(1).unwrap_or_default();
         return Err(format!("hub responded {status}: {detail}"));
     }
     Ok(())
@@ -126,6 +263,7 @@ async fn handle(hub_url: &str, session_id: &str, m: &Value) -> Value {
                     Ok(()) => text("Panel closed", false),
                     Err(e) => text(&format!("Error: {e}"), true),
                 },
+                other if other.starts_with("preview_") => browser(hub_url, session_id, args, &other["preview_".len()..]).await,
                 other => text(&format!("Unknown tool {other}"), true),
             };
             reply(result)

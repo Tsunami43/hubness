@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { groupOr404, groupProjects, projectOr404 } from '../catalog.ts';
+import { HttpError } from '../errors.ts';
+import { clearPreviewLogs, previewKeyByPort, previewLogs } from '../preview.ts';
 import { createRun, deleteRun, listRuns, listShells, openShell, previewPortFor, startRun, stopProjectProcesses, stopRun, suggestRuns, updateRun } from '../runs.ts';
 import { environmentStatus, runtimeOf, setRuntime, stopContainer } from '../environments.ts';
 import { deleteSecret, keySource, listSecrets, setSecret, unreadableSecrets } from '../secrets.ts';
@@ -68,6 +70,19 @@ environmentRoutes.get('/groups/:id/shells', (c) => c.json(listShells(groupScope(
 environmentRoutes.post('/projects/:id/preview', async (c) => {
   const b = await parseBody(c, Preview);
   return c.json({ previewPort: await previewPortFor(project(c), b.port) });
+});
+
+/** What a previewed app reported (console, errors, failed requests); `port` is the preview port. */
+function previewKeyOf(c: { req: { param: (k: string) => string } }) {
+  const p = project(c as never);
+  const key = previewKeyByPort(Number(c.req.param('port')));
+  if (!key || !key.startsWith(`${p.id}:`)) throw new HttpError(404, 'No such preview');
+  return key;
+}
+environmentRoutes.get('/projects/:id/previews/:port/logs', (c) => c.json({ logs: previewLogs(previewKeyOf(c), Number(c.req.query('since') ?? 0) || 0) }));
+environmentRoutes.delete('/projects/:id/previews/:port/logs', (c) => {
+  clearPreviewLogs(previewKeyOf(c));
+  return c.json({ ok: true });
 });
 
 // ---------- environment ----------

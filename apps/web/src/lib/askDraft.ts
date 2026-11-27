@@ -9,16 +9,25 @@ import { t } from '../i18n';
  */
 
 let pending: string | null = null;
+let pendingProject: string | null = null;
 
-/** Hand a draft to the start page (picked up on its next mount). */
-export function setAskDraft(text: string) {
+/** Hand a draft to the start page (picked up on its next mount); `projectId` picks that project instead of `home`. */
+export function setAskDraft(text: string, projectId?: string) {
   pending = text;
+  pendingProject = projectId ?? null;
 }
 
 export function takeAskDraft(): string | null {
   const d = pending;
   pending = null;
   return d;
+}
+
+/** The project the last draft was aimed at (read once, with the draft). */
+export function takeAskProject(): string | null {
+  const p = pendingProject;
+  pendingProject = null;
+  return p;
 }
 
 /** The opening line about an object: "Service `x` (system): ". */

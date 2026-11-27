@@ -591,6 +591,43 @@ pub struct SshTestResult {
     pub connection: SshConnection,
 }
 
+// ---------- preview helper and the agent's browser ----------
+
+/// A console / error / failed-request entry reported from a previewed app.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewLog {
+    pub seq: u64,
+    pub ts: String,
+    /// error | warn | log | network
+    pub level: String,
+    pub text: String,
+    /// The page it came from.
+    pub url: String,
+    /// `user` — the Preview panel or a browser tab; `agent` — the hub's headless browser.
+    pub source: String,
+}
+
+/// `GET /api/projects/:id/previews/:port/logs?since=N`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreviewLogsResponse {
+    pub logs: Vec<PreviewLog>,
+}
+
+/// `POST /api/sessions/:id/browser` result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserResult {
+    pub ok: bool,
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    /// PNG, base64.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screenshot: Option<String>,
+    pub logs: Vec<PreviewLog>,
+}
+
 // ---------- user accounts ----------
 
 /// What an account may do: an admin everything (including managing accounts), a member only

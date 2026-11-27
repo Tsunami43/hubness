@@ -14,3 +14,4 @@ export interface ApiError {
   error: string;
 }
 export type * from './ssh.ts';
+export type * from './preview.ts';

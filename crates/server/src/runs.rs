@@ -641,6 +641,7 @@ pub fn routes() -> Router<AppState> {
         .route("/groups/{id}/shell", post(group_shell))
         .route("/groups/{id}/shells", get(group_shells))
         .route("/projects/{id}/preview", post(preview_route))
+        .route("/projects/{id}/previews/{port}/logs", get(preview_logs_route).delete(preview_logs_clear))
 }
 
 type Id = UrlPath<String>;
@@ -732,15 +733,56 @@ async fn preview_route(State(s): State<AppState>, UrlPath(id): Id, JsonBody(b): 
         return Err(HttpError::bad_request("port: expected an integer from 1 to 65535"));
     }
     let port = n as u16;
-    let (p, docker, host) = {
+    let pp = {
         let db = s.db()?;
         let p = catalog::project_or_404(&db, &id)?;
-        let docker = environments::runtime_of(&db, &p)?.environment == RuntimeEnvironment::Docker;
-        (p, docker, s.config().host.clone())
+        preview_port_for(&db, s.config(), &p, port)?
     };
-    let pp = preview::ensure_preview(&host, &format!("{}:port:{port}", p.id), preview_target(docker, &p.id, port))
-        .ok_or_else(|| HttpError::new(503, "No free preview ports (HUBNESS_PREVIEW_PORTS)"))?;
     Ok(Json(json!({ "previewPort": pp })))
+}
+
+/// Preview of a port that something already listens on (started in Shell, docker compose…).
+/// A running command on that port already has a preview: the same page (and log) as the
+/// Preview tab. Must be called inside the tokio runtime.
+pub fn preview_port_for(db: &Connection, config: &Config, p: &Project, port: u16) -> ApiResult<u16> {
+    if let Some(pp) = list_runs(db, p)?.into_iter().find(|r| r.active_port == Some(port)).and_then(|r| r.preview_port) {
+        return Ok(pp);
+    }
+    let docker = environments::runtime_of(db, p)?.environment == RuntimeEnvironment::Docker;
+    preview::ensure_preview(&config.host, &format!("{}:port:{port}", p.id), preview_target(docker, &p.id, port))
+        .ok_or_else(|| HttpError::new(503, "No free preview ports (HUBNESS_PREVIEW_PORTS)"))
+}
+
+/// The preview key of a project's preview port (404 when it isn't one of the project's).
+fn preview_key_of(db: &Connection, id: &str, port: &str) -> ApiResult<String> {
+    let p = catalog::project_or_404(db, id)?;
+    port.parse::<u16>()
+        .ok()
+        .and_then(preview::preview_key_by_port)
+        .filter(|k| k.starts_with(&format!("{}:", p.id)))
+        .ok_or_else(|| HttpError::not_found("No such preview"))
+}
+
+#[derive(Deserialize)]
+struct SinceQuery {
+    since: Option<String>,
+}
+
+/// What a previewed app reported (console, errors, failed requests); `port` is the preview port.
+async fn preview_logs_route(
+    State(s): State<AppState>,
+    UrlPath((id, port)): Ids,
+    axum::extract::Query(q): axum::extract::Query<SinceQuery>,
+) -> ApiResult<Json<hubness_core::PreviewLogsResponse>> {
+    let since = q.since.as_deref().and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(0.0) as u64;
+    s.with(|db, _| Ok(hubness_core::PreviewLogsResponse { logs: preview::preview_logs(&preview_key_of(db, &id, &port)?, since) }))
+}
+
+async fn preview_logs_clear(State(s): State<AppState>, UrlPath((id, port)): Ids) -> ApiResult<Json<Value>> {
+    s.with(|db, _| {
+        preview::clear_preview_logs(&preview_key_of(db, &id, &port)?);
+        Ok(json!({ "ok": true }))
+    })
 }
 
 #[cfg(test)]

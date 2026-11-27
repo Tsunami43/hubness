@@ -24,6 +24,7 @@ import type {
   GitLogResponse,
   GitOpResult,
   GitCredentialInfo,
+  PreviewLogsResponse,
   SshBinding,
   SshConnection,
   SshConnectionInput,
@@ -117,6 +118,8 @@ export const api = {
   stopRun: (id: string, rid: string) => req<RunState>('POST', `/projects/${id}/runs/${rid}/stop`),
   shells: (scope: { projectId: string } | { groupId: string }) =>
     req<JobInfo[]>('GET', 'projectId' in scope ? `/projects/${scope.projectId}/shells` : `/groups/${scope.groupId}/shells`),
+  previewLogs: (id: string, previewPort: number, since = 0) => req<PreviewLogsResponse>('GET', `/projects/${id}/previews/${previewPort}/logs?since=${since}`),
+  clearPreviewLogs: (id: string, previewPort: number) => req<{ ok: true }>('DELETE', `/projects/${id}/previews/${previewPort}/logs`),
   previewPort: (id: string, port: number) => req<{ previewPort: number }>('POST', `/projects/${id}/preview`, { port }),
   shell: (scope: { projectId: string } | { groupId: string }, input: { cols?: number; rows?: number; fresh?: boolean }) =>
     req<JobInfo>('POST', 'projectId' in scope ? `/projects/${scope.projectId}/shell` : `/groups/${scope.groupId}/shell`, input),

@@ -203,7 +203,7 @@ fn project_section(method: &Method, rest: &[&str]) -> Result<Option<Section>, ()
         ["file" | "files" | "fs" | "search" | "tree", ..] => Some(Section::Files),
         ["manifest"] | ["ssh"] if get => None,
         ["manifest", ..] => Some(Section::Files),
-        ["runs" | "shell" | "shells" | "preview" | "environment", ..] => Some(Section::Terminal),
+        ["runs" | "shell" | "shells" | "preview" | "previews" | "environment", ..] => Some(Section::Terminal),
         ["cards", ..] => Some(Section::Kanban),
         _ => return Err(()),
     })
