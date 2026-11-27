@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-27
+
+### Changed
+
+- Mobile web app is easier to use with a finger: buttons, tabs, headers and list rows get
+  a 44px hit area on touch screens (the desktop keeps its dense layout), the sessions drawer
+  closes with a swipe to the right or a tap beside it, a session is archived by swiping its
+  row to the left, and a session inside a project opens full screen like a chat.
+
 ## [0.2.3] - 2026-11-26
 
 ### Fixed
