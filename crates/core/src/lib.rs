@@ -924,3 +924,72 @@ mod tests {
         }
     }
 }
+
+// ---------- voice input ----------
+
+/// Where speech is transcribed: off, a local whisper.cpp, or an OpenAI-compatible service.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum VoiceProvider {
+    #[default]
+    Off,
+    Local,
+    Api,
+}
+
+impl VoiceProvider {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "off" => Self::Off,
+            "local" => Self::Local,
+            "api" => Self::Api,
+            _ => return None,
+        })
+    }
+}
+
+/// A whisper.cpp (ggml) model the hub can download.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceModel {
+    pub id: String,
+    pub label: String,
+    /// Download size in bytes (approximate).
+    pub size: u64,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceLocal {
+    pub model: String,
+    pub binary: Option<String>,
+    pub managed: bool,
+    pub ffmpeg: bool,
+    pub missing_build_tools: Vec<String>,
+    pub models: Vec<VoiceModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceApi {
+    pub url: String,
+    pub model: String,
+    pub has_key: bool,
+}
+
+/// Settings → Voice input (`GET /api/voice`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceSettings {
+    pub provider: VoiceProvider,
+    pub language: String,
+    pub ready: bool,
+    pub local: VoiceLocal,
+    pub api: VoiceApi,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TranscriptionResult {
+    pub text: String,
+}

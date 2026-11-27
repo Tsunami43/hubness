@@ -16,6 +16,7 @@ import { Button, ErrorLine, Field, IconButton, inputCls, PanelHeader, Sheet, Spi
 import { t } from '../i18n';
 import { pushDraft, useDraft } from '../lib/ask';
 import { AttachButton, createWithFiles, PendingFiles, sendWithFiles, usePendingFiles, type PendingFile } from '../lib/attachments';
+import { MicButton } from '../lib/voice';
 import { useHubSettings } from '../lib/hubSettings';
 
 const isTouch = () => window.matchMedia('(pointer: coarse)').matches;
@@ -77,6 +78,17 @@ function Composer({
     }, 0);
   });
 
+  /** A transcript goes after the text already typed; the caret moves to its end. */
+  const insertVoice = (spoken: string) => {
+    setText((prev) => (prev.trim() ? `${prev.trimEnd()} ${spoken}` : spoken));
+    setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      if (!isTouch()) el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 0);
+  };
+
   const send = async () => {
     if (!ready || sending || busy || disabled) return;
     setSending(true);
@@ -125,6 +137,7 @@ function Composer({
             }}
             className="min-w-0 flex-1 resize-none [scrollbar-width:thin] bg-transparent text-[15px] leading-6 outline-none placeholder:text-muted/70 sm:text-[14px]"
           />
+          <MicButton onText={insertVoice} onError={att.setError} />
           <AttachButton onPick={att.add} />
           {busy && onStop ? (
             <IconButton label={t('session.stop')} onClick={onStop} className="size-8 border border-danger/60 text-danger hover:bg-danger/10 hover:text-danger">

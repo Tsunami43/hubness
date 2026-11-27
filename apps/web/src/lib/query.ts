@@ -20,6 +20,7 @@ export const queryClient = new QueryClient({
 export const qk = {
   agents: ['agents'] as const,
   settings: ['settings'] as const,
+  voice: ['voice'] as const,
   sessions: (scope: 'all' | 'archived' | `p:${string}` | `g:${string}`) => ['sessions', scope] as const,
 };
 

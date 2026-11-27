@@ -22,6 +22,9 @@ own machine or server and work with them from one browser UI — on a desktop or
 - **Sandboxing** — run agents and commands in a bubblewrap sandbox that hides other
   projects, hub data and credentials.
 - **Secrets** — encrypted per-project environment variables.
+- **Voice input** — dictate into the chat input: transcribed on the host with whisper.cpp
+  (the hub builds it and downloads models from Settings) or by any OpenAI-compatible
+  service (Groq, OpenAI, speaches).
 - **Harness** — install, update, sign in and configure the agent CLIs from the UI. Extensions
   pages show every agent at once: MCP servers (with a catalog from the official MCP Registry,
   written to the agents' own config files), skills (copy between agents, write, import from
@@ -122,6 +125,10 @@ hubness server config host 0.0.0.0 && hubness server restart
 Plain HTTP is fine on a VPN (Tailscale, WireGuard); across the internet put the hub behind an
 HTTPS reverse proxy and connect with `hubness tui --url hub.example.com`. See
 [Remote access](crates/server/README.md#remote-access).
+
+Browsers allow the microphone (voice input) only on `localhost` or over HTTPS: on a phone
+use an SSH tunnel, `tailscale serve --https=443 http://127.0.0.1:8787` or the HTTPS proxy.
+Over plain HTTP the microphone button offers an audio file instead.
 
 ## Quick start (development)
 

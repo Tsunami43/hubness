@@ -1,4 +1,4 @@
-import { Bot, GitBranch, HardDrive, Keyboard, Languages, Palette, Users } from 'lucide-react';
+import { Bot, GitBranch, HardDrive, Keyboard, Languages, Mic, Palette, Users } from 'lucide-react';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../../components/SubmenuLayout';
 import { t } from '../../i18n';
 
@@ -16,6 +16,13 @@ const items = (): SubmenuItem[] => [
     hint: t('settings.appearanceHint'),
     icon: <Palette className="size-4 text-accent" />,
     keywords: ['theme', 'standard', 'colors', 'look', 'design', 'dark', 'editor', 'vim', 'font', 'size', 'тема', 'оформление', 'редактор', 'шрифт', 'размер'],
+  },
+  {
+    to: 'voice',
+    label: t('voice.title'),
+    hint: t('voice.itemHint'),
+    icon: <Mic className="size-4 text-accent" />,
+    keywords: ['voice', 'speech', 'microphone', 'dictation', 'whisper', 'transcription', 'голос', 'речь', 'микрофон', 'диктовка', 'распознавание', 'голосовой'],
   },
   {
     to: 'git',
