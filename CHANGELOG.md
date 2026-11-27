@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Git logins show whether they still work: Settings → Git access asks the host who the login
+  is (GitHub, GitLab, Gitea / Forgejo, Bitbucket), shows the account's picture and name, and
+  says when the host refuses the token. A login is checked when it is saved and again with
+  the check button (TUI: `v`). The picture is kept by the hub, so a private host's works too.
+  A password can't be checked this way — the hosts' APIs take tokens only.
+
 ## [0.4.0] - 2026-11-28
 
 ### Added

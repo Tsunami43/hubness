@@ -132,6 +132,22 @@ const registryServer = createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'application/json' }).end(readFileSync(join(import.meta.dirname, 'fixtures', 'mcp-registry.json')));
 });
 await new Promise<void>((ok) => registryServer.listen(0, '127.0.0.1', ok));
+
+// git hosts' "who am I" APIs (git-login-check): every host lives under one address,
+// <base>/<api host>/…; what each one answers is set by the test
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63fcffff3f030005fe02fea7359a810000000049454e44ae426082', 'hex');
+const gitApi: { seen: { path: string; auth: string }[]; routes: Record<string, (auth: string) => { status: number; type?: string; body: string | Buffer; headers?: Record<string, string> }> } = { seen: [], routes: {} };
+const gitApiServer = createServer((req, res) => {
+  const path = req.url ?? '';
+  const auth = String(req.headers.authorization ?? '');
+  gitApi.seen.push({ path, auth });
+  const r = gitApi.routes[path]?.(auth) ?? { status: 404, body: '{"message":"404 Not Found"}' };
+  res.writeHead(r.status, { 'content-type': r.type ?? 'application/json', ...r.headers });
+  res.end(r.body);
+});
+await new Promise<void>((ok) => gitApiServer.listen(0, '127.0.0.1', ok));
+const gitApiBase = `http://127.0.0.1:${(gitApiServer.address() as AddressInfo).port}`;
+process.env.HUBNESS_GIT_API = gitApiBase;
 process.env.HUBNESS_MCP_REGISTRY = `http://127.0.0.1:${(registryServer.address() as AddressInfo).port}/`;
 // skills import: file:// repositories are allowed only with this flag (https otherwise)
 process.env.HUBNESS_ALLOW_FILE_GIT = '1';
@@ -164,6 +180,8 @@ process.env.PATH = `${voiceBin}:${process.env.PATH}`;
 after(() => {
   registryServer.closeAllConnections();
   registryServer.close();
+  gitApiServer.closeAllConnections();
+  gitApiServer.close();
 });
 
 const { call, raw } = await makeClient();
@@ -1270,7 +1288,11 @@ test('git logins per host: the secret never leaves the server', async () => {
   assert.equal(saved.status, 200);
   assert.equal(saved.json.length, 1);
   const [c] = saved.json;
-  assert.deepEqual({ ...c, updatedAt: undefined }, { host: 'gitlab.example.com', username: 'me', kind: 'token', updatedAt: undefined });
+  assert.deepEqual(
+    { ...c, updatedAt: undefined },
+    { host: 'gitlab.example.com', username: 'me', kind: 'token', updatedAt: undefined, status: 'unknown', checkedAt: null, account: '', error: '', avatar: false },
+    'a new login has not been checked yet',
+  );
   assert.match(c.updatedAt, /^\d{4}-\d\d-\d\dT/);
   assert.ok(!JSON.stringify(saved.json).includes('s3cr3t'));
   await call('PUT', '/git-credentials/codeberg.org', { username: 'u', kind: 'password', secret: 'pw' });
@@ -1281,6 +1303,95 @@ test('git logins per host: the secret never leaves the server', async () => {
   assert.deepEqual((await call('DELETE', '/git-credentials/gitlab.example.com')).json.map((x: any) => x.host), ['codeberg.org']);
   assert.equal((await call('DELETE', '/git-credentials/bad_host')).status, 200, 'an invalid host deletes nothing');
   assert.deepEqual((await call('DELETE', '/git-credentials/codeberg.org')).json, []);
+});
+
+test('git logins: a check asks the host who the login is, and keeps the account picture in the hub', async () => {
+  const json = (o: object) => ({ status: 200, body: JSON.stringify(o) });
+  const login = async (host: string) => (await call('GET', '/git-credentials')).json.find((x: any) => x.host === host);
+  const check = async (host: string) => {
+    const r = await call('POST', `/git-credentials/${host}/check`, {});
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return r.json.find((x: any) => x.host === host);
+  };
+  const avatar = (host: string) => raw(`/api/git-credentials/${host}/avatar`);
+  try {
+    assert.equal((await call('POST', '/git-credentials/github.com/check', {})).status, 404, 'no login for the host');
+    assert.equal((await avatar('github.com')).status, 404);
+
+    // GitHub: the public API host, a bearer token, the picture from another host — without the token
+    gitApi.routes['/api.github.com/user'] = (auth) => (auth === 'Bearer gho_good' ? json({ login: 'octocat', name: 'The Octocat', avatar_url: `${gitApiBase}/avatars.example/u/1.png` }) : { status: 401, body: '{"message":"Bad credentials"}' });
+    gitApi.routes['/avatars.example/u/1.png'] = () => ({ status: 200, type: 'image/png', body: PNG });
+    await call('PUT', '/git-credentials/github.com', { username: 'someone', kind: 'token', secret: 'gho_good' });
+    gitApi.seen.length = 0;
+    const gh = await check('github.com');
+    assert.deepEqual([gh.status, gh.account, gh.error, gh.avatar], ['ok', 'octocat', '', true]);
+    assert.match(gh.checkedAt, /^\d{4}-\d\d-\d\dT/);
+    assert.equal(gh.username, 'someone', 'the name git signs in with is not rewritten');
+    assert.deepEqual(gitApi.seen, [
+      { path: '/api.github.com/user', auth: 'Bearer gho_good' },
+      { path: '/avatars.example/u/1.png', auth: '' },
+    ]);
+    const pic = await avatar('github.com');
+    assert.equal(pic.status, 200);
+    assert.equal(pic.headers.get('content-type'), 'image/png');
+    assert.equal(pic.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await pic.arrayBuffer()), PNG);
+    assert.ok(!JSON.stringify(gh).includes('gho_good'));
+
+    // the token was revoked: refused — it is still that account, with its picture
+    gitApi.routes['/api.github.com/user'] = () => ({ status: 401, body: '{"message":"Bad credentials"}' });
+    const revoked = await check('github.com');
+    assert.deepEqual([revoked.status, revoked.account, revoked.avatar], ['failed', 'octocat', true]);
+    assert.equal(revoked.error, 'github.com refused the login (401): the token is wrong, expired or revoked.');
+    // a new login starts clean
+    await call('PUT', '/git-credentials/github.com', { username: 'someone', kind: 'token', secret: 'gho_new' });
+    assert.deepEqual(await login('github.com').then((x) => [x.status, x.checkedAt, x.account, x.error, x.avatar]), ['unknown', null, '', '', false]);
+    assert.equal((await avatar('github.com')).status, 404);
+
+    // a GitLab of one's own: an uploaded picture is a path on the host, served only with the login
+    gitApi.routes['/gitlab.corp.example/api/v4/user'] = (auth) => (auth === 'Bearer glpat-1' ? json({ username: 'r.denis', name: 'Denis', avatar_url: '/gitlab.corp.example/uploads/user/avatar/7/a.png' }) : { status: 401, body: '{}' });
+    gitApi.routes['/gitlab.corp.example/uploads/user/avatar/7/a.png'] = (auth) => (auth === 'Bearer glpat-1' ? { status: 200, type: 'image/png', body: PNG } : { status: 302, body: '', headers: { location: '/users/sign_in' } });
+    await call('PUT', '/git-credentials/gitlab.corp.example', { username: 'r.denis', kind: 'token', secret: 'glpat-1' });
+    const gl = await check('gitlab.corp.example');
+    assert.deepEqual([gl.status, gl.account, gl.avatar], ['ok', 'r.denis', true]);
+    assert.equal((await avatar('gitlab.corp.example')).status, 200);
+
+    // …and a password there: git may take it, the API doesn't — nothing is claimed either way
+    await call('PUT', '/git-credentials/gitlab.corp.example', { username: 'r.denis', kind: 'password', secret: 'hunter2' });
+    const pw = await check('gitlab.corp.example');
+    assert.equal(pw.status, 'unknown');
+    assert.equal(pw.error, 'gitlab.corp.example doesn’t check passwords through its API: the login is checked by the first fetch or push.');
+
+    // a host by another name: GitLab's API is tried, then Gitea's (name and password there)
+    gitApi.routes['/git.acme.example/api/v1/user'] = (auth) => (auth === `Basic ${Buffer.from('ann:pw1').toString('base64')}` ? json({ login: 'ann', avatar_url: `${gitApiBase}/git.acme.example/avatars/x` }) : { status: 401, body: '{}' });
+    gitApi.routes['/git.acme.example/avatars/x'] = () => ({ status: 200, type: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' });
+    await call('PUT', '/git-credentials/git.acme.example', { username: 'ann', kind: 'password', secret: 'pw1' });
+    gitApi.seen.length = 0;
+    const gitea = await check('git.acme.example');
+    assert.deepEqual([gitea.status, gitea.account, gitea.avatar], ['ok', 'ann', false], 'an SVG is not kept: it would be a document served from the hub');
+    assert.deepEqual(gitApi.seen.map((x) => x.path).slice(0, 2), ['/git.acme.example/api/v4/user', '/git.acme.example/api/v1/user']);
+
+    // Bitbucket: the app password with the name
+    gitApi.routes['/api.bitbucket.org/2.0/user'] = (auth) => (auth === `Basic ${Buffer.from('bb:app').toString('base64')}` ? json({ username: 'bb-user', display_name: 'B B', links: { avatar: { href: `${gitApiBase}/avatars.example/u/1.png` } } }) : { status: 401, body: '{}' });
+    await call('PUT', '/git-credentials/bitbucket.org', { username: 'bb', kind: 'password', secret: 'app' });
+    assert.deepEqual(await check('bitbucket.org').then((x) => [x.status, x.account, x.avatar]), ['ok', 'bb-user', true]);
+
+    // nothing the hub knows answers there: said so, not called a failure
+    await call('PUT', '/git-credentials/plain.example', { username: 'u', kind: 'token', secret: 't' });
+    const plain = await check('plain.example');
+    assert.equal(plain.status, 'unknown');
+    assert.equal(plain.error, 'plain.example has no API hubness knows: the login is checked by the first fetch or push.');
+
+    // a picture that is too big, or not a picture, is not kept
+    gitApi.routes['/api.github.com/user'] = () => json({ login: 'octocat', avatar_url: `${gitApiBase}/avatars.example/big` });
+    gitApi.routes['/avatars.example/big'] = () => ({ status: 200, type: 'image/png', body: Buffer.alloc(600 * 1024) });
+    assert.deepEqual(await check('github.com').then((x) => [x.status, x.avatar]), ['ok', false]);
+    gitApi.routes['/avatars.example/big'] = () => ({ status: 200, type: 'text/html', body: '<html>sign in</html>' });
+    assert.deepEqual(await check('github.com').then((x) => [x.status, x.avatar]), ['ok', false]);
+  } finally {
+    for (const k of Object.keys(gitApi.routes)) delete gitApi.routes[k];
+    for (const h of ['github.com', 'gitlab.corp.example', 'git.acme.example', 'bitbucket.org', 'plain.example']) await call('DELETE', `/git-credentials/${h}`);
+  }
 });
 
 test('SSH connections in a turn: the agent process gets the wrappers and the context, never a key', async () => {

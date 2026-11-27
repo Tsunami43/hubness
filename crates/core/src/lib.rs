@@ -548,6 +548,32 @@ pub struct GitCredentialInfo {
     pub username: String,
     pub kind: GitCredentialKind,
     pub updated_at: String,
+    /// The last check against the host.
+    #[serde(default)]
+    pub status: GitLoginStatus,
+    /// When it was last checked.
+    #[serde(default)]
+    pub checked_at: Option<String>,
+    /// Who the login is on the host (its name there), when the host told.
+    #[serde(default)]
+    pub account: String,
+    /// Why the check did not end in `ok`.
+    #[serde(default)]
+    pub error: String,
+    /// The account has a picture: `GET /api/git-credentials/:host/avatar`.
+    #[serde(default)]
+    pub avatar: bool,
+}
+
+/// The last check of a git login: `ok` — the host accepted it, `failed` — it refused it,
+/// `unknown` — not checked yet, or the host could not say (unreachable, no API the hub knows).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GitLoginStatus {
+    Ok,
+    Failed,
+    #[default]
+    Unknown,
 }
 
 // ---------- SSH connections ----------

@@ -21,6 +21,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 5, name: "user roles, permissions and session owners", up: user_permissions },
     Migration { version: 6, name: "SSH connections and their project / group bindings", up: ssh_connections },
     Migration { version: 7, name: "one account: the first one stays", up: single_account },
+    Migration { version: 8, name: "git logins: the last check and the account picture", up: git_login_checks },
 ];
 
 const BASELINE_SQL: &str = r#"
@@ -292,6 +293,22 @@ DELETE FROM users WHERE id NOT IN (SELECT id FROM users ORDER BY created_at, row
     )
 }
 
+/// v8 — git logins remember their last check: whether the host accepted the login, who it
+/// is there, and the account's picture (kept in the hub: a private host serves it only with
+/// the login, and the browser has no business asking other servers).
+fn git_login_checks(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "
+ALTER TABLE git_credentials ADD COLUMN check_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE git_credentials ADD COLUMN checked_at TEXT;
+ALTER TABLE git_credentials ADD COLUMN check_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE git_credentials ADD COLUMN account TEXT NOT NULL DEFAULT '';
+ALTER TABLE git_credentials ADD COLUMN avatar BLOB;
+ALTER TABLE git_credentials ADD COLUMN avatar_type TEXT NOT NULL DEFAULT '';
+",
+    )
+}
+
 pub fn schema_version(db: &Connection) -> rusqlite::Result<i64> {
     db.query_row("PRAGMA user_version", [], |r| r.get(0))
 }
@@ -326,8 +343,8 @@ mod tests {
     #[test]
     fn fresh_database_reaches_the_latest_version_once() {
         let db = Connection::open_in_memory().unwrap();
-        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4, 5, 6, 7]);
-        assert_eq!(schema_version(&db).unwrap(), 7);
+        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(schema_version(&db).unwrap(), 8);
         assert!(migrate(&db, MIGRATIONS).unwrap().is_empty());
         assert!(has_column(&db, "sessions", "archived_at").unwrap());
     }
@@ -342,7 +359,7 @@ mod tests {
              INSERT INTO auth_sessions (token_hash, user_id, created_at, last_seen, expires) VALUES ('t1', 'a', 't', 't', 't'), ('t2', 'b', 't', 't', 't');",
         )
         .unwrap();
-        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![7]);
+        assert_eq!(migrate(&db, &MIGRATIONS[..7]).unwrap(), vec![7]);
         let ids: Vec<String> =
             db.prepare("SELECT id FROM users").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
         assert_eq!(ids, ["a"]);

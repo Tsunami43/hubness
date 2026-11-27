@@ -89,4 +89,19 @@ export interface GitCredentialInfo {
   username: string;
   kind: GitCredentialKind;
   updatedAt: string;
+  /**
+   * The last check against the host: `ok` — it accepted the login, `failed` — it refused it,
+   * `unknown` — not checked yet, or the host could not say (unreachable, no API the hub knows).
+   */
+  status: GitLoginStatus;
+  /** When it was last checked. */
+  checkedAt: string | null;
+  /** Who the login is on the host (its name there), when the host told. */
+  account: string;
+  /** Why the check did not end in `ok`. */
+  error: string;
+  /** The account has a picture: `GET /api/git-credentials/:host/avatar`. */
+  avatar: boolean;
 }
+
+export type GitLoginStatus = 'ok' | 'failed' | 'unknown';

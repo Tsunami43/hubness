@@ -55,6 +55,8 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   page per session, `HUBNESS_CHROME`, `HUBNESS_CHROME_ARGS`), driven by the hub MCP `preview_*` tools through
   `POST /sessions/:id/browser`; `localhost:<port>` of a project goes through its preview.
 - `git*.ts` — git operations, credentials helper and provider (GitHub/GitLab…) logins.
+  `git-login-check.ts` asks a host's API who a stored login is (status, account, picture kept
+  in the hub); `HUBNESS_GIT_API` puts every host's API under one address for tests.
 - `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models
   downloaded into `<data>/whisper` as terminal jobs) or an OpenAI-compatible service.
 - `ssh.ts` — SSH connections (System → SSH): keys the hub holds, bound to projects / groups;

@@ -28,22 +28,65 @@ export interface GitCredentialRow {
   kind: string;
   secret: string;
   updatedAt: string;
+  /** '' — never checked; 'ok' | 'failed' | 'unknown'. */
+  checkStatus: string;
+  checkedAt: string | null;
+  checkError: string;
+  account: string;
+  hasAvatar: boolean;
+}
+
+export interface GitCheckResult {
+  status: 'ok' | 'failed' | 'unknown';
+  error: string;
+  account: string;
+  /** undefined — keep the picture there is; null — there is none. */
+  avatar?: { type: string; data: Uint8Array } | null;
 }
 
 export const gitCredentialRows = {
   list(): GitCredentialRow[] {
     return db
-      .prepare('SELECT host, username, kind, secret, updated_at FROM git_credentials ORDER BY host')
+      .prepare('SELECT host, username, kind, secret, updated_at, check_status, checked_at, check_error, account, avatar IS NOT NULL AS has_avatar FROM git_credentials ORDER BY host')
       .all()
-      .map((r) => ({ host: r.host as string, username: r.username as string, kind: r.kind as string, secret: r.secret as string, updatedAt: r.updated_at as string }));
+      .map((r) => ({
+        host: r.host as string,
+        username: r.username as string,
+        kind: r.kind as string,
+        secret: r.secret as string,
+        updatedAt: r.updated_at as string,
+        checkStatus: r.check_status as string,
+        checkedAt: (r.checked_at as string | null) ?? null,
+        checkError: r.check_error as string,
+        account: r.account as string,
+        hasAvatar: Boolean(r.has_avatar),
+      }));
   },
+  /** A new login is a new question: what the last check said no longer holds. */
   set(host: string, username: string, kind: string, secret: string) {
     db.prepare(
       `INSERT INTO git_credentials (host, username, kind, secret, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(host) DO UPDATE SET username = excluded.username, kind = excluded.kind, secret = excluded.secret, updated_at = excluded.updated_at`,
+       ON CONFLICT(host) DO UPDATE SET username = excluded.username, kind = excluded.kind, secret = excluded.secret, updated_at = excluded.updated_at,
+         check_status = '', checked_at = NULL, check_error = '', account = '', avatar = NULL, avatar_type = ''`,
     ).run(host, username, kind, secret, now());
   },
   delete(host: string) {
     db.prepare('DELETE FROM git_credentials WHERE host = ?').run(host);
+  },
+  checked(host: string, r: GitCheckResult) {
+    // who it is stays known when the host refuses or can't be asked: it is still that account
+    db.prepare("UPDATE git_credentials SET check_status = ?, checked_at = ?, check_error = ?, account = CASE WHEN ? != '' THEN ? ELSE account END WHERE host = ?").run(
+      r.status,
+      now(),
+      r.error,
+      r.account,
+      r.account,
+      host,
+    );
+    if (r.avatar !== undefined) db.prepare('UPDATE git_credentials SET avatar = ?, avatar_type = ? WHERE host = ?').run(r.avatar?.data ?? null, r.avatar?.type ?? '', host);
+  },
+  avatar(host: string): { type: string; data: Uint8Array } | null {
+    const r = db.prepare('SELECT avatar, avatar_type FROM git_credentials WHERE host = ?').get(host) as { avatar: Uint8Array | null; avatar_type: string } | undefined;
+    return r?.avatar ? { type: r.avatar_type, data: r.avatar } : null;
   },
 };

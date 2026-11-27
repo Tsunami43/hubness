@@ -18,6 +18,7 @@ pub mod extensions;
 pub mod files;
 pub mod git;
 pub mod git_auth;
+pub mod git_login_check;
 pub mod git_providers;
 pub mod harness;
 pub mod home;
