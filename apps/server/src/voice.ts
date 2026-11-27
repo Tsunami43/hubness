@@ -6,28 +6,23 @@ import type { JobInfo, VoiceModel, VoiceProvider, VoiceSettings, VoiceSettingsIn
 import { childEnv, config } from './config.ts';
 import { kv } from './db/index.ts';
 import { HttpError } from './errors.ts';
-import { decrypt, encrypt } from './secrets.ts';
 import { shq, startJob } from './terminal.ts';
 
 /**
- * Voice input: a recording from the browser becomes text for the chat input. Two providers:
- * - `local` — whisper.cpp on this machine. The hub finds `whisper-cli` on PATH or builds its
- *   own copy into `<data>/whisper/bin` (a terminal job), downloads ggml models into
- *   `<data>/whisper/models` and converts the recording to 16 kHz WAV with ffmpeg;
- * - `api` — any OpenAI-compatible `/audio/transcriptions` endpoint (OpenAI, Groq, speaches,
- *   whisper-server…); the key is encrypted like project secrets.
+ * Voice input: a recording from the browser becomes text for the chat input, with whisper.cpp
+ * on this machine. The hub finds `whisper-cli` on PATH or builds its own copy into
+ * `<data>/whisper/bin` (a terminal job), downloads ggml models into `<data>/whisper/models`
+ * and converts the recording to 16 kHz WAV with ffmpeg. The speech never leaves the host.
  */
 
 export const MAX_AUDIO = 25 * 1024 * 1024;
 const KEY = 'settings.voice';
-// AAD namespace of the encrypted API key (the "project id" of secrets.encrypt)
-const NS = 'voice';
 const MODELS_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
 const WHISPER_REPO = 'https://github.com/ggml-org/whisper.cpp';
 const WHISPER_ARCHIVE = 'https://github.com/ggml-org/whisper.cpp/archive/refs/heads/master.tar.gz';
 /** The portable cmake the hub downloads when the host has none (Kitware's release archives). */
 const CMAKE_VERSION = '3.31.6';
-const PROVIDERS: VoiceProvider[] = ['off', 'local', 'api'];
+const PROVIDERS: VoiceProvider[] = ['off', 'local'];
 
 /** Models offered in Settings, smallest first; ids are ggml file names without `ggml-` and `.bin`. */
 export const MODELS: { id: string; label: string; size: number }[] = [
@@ -43,10 +38,6 @@ interface Stored {
   provider?: VoiceProvider;
   language?: string;
   localModel?: string;
-  apiUrl?: string;
-  apiModel?: string;
-  /** Encrypted with secrets.encrypt. */
-  apiKey?: string;
 }
 
 const dirs = () => {
@@ -107,26 +98,24 @@ export function voiceSettings(): VoiceSettings {
   const bin = findBinary();
   const ffmpeg = Boolean(which('ffmpeg'));
   const models: VoiceModel[] = MODELS.map((m) => ({ ...m, installed: isFile(modelFile(m.id)) }));
-  const apiUrl = s.apiUrl ?? '';
-  const apiModel = s.apiModel ?? '';
-  const ready =
-    provider === 'local' ? Boolean(bin && ffmpeg && models.find((m) => m.id === model)?.installed) : provider === 'api' ? Boolean(apiUrl && apiModel) : false;
+  // a cloud service (`api`, removed) left in older settings counts as off
+  const ready = provider === 'local' && Boolean(bin && ffmpeg && models.find((m) => m.id === model)?.installed);
   return {
     provider,
     language: s.language ?? 'auto',
     ready,
     local: { model, binary: bin?.path ?? null, managed: bin?.managed ?? false, ffmpeg, missingBuildTools: missingBuildTools(), models },
-    api: { url: apiUrl, model: apiModel, hasKey: Boolean(s.apiKey) },
   };
 }
 
 const LANG_RE = /^(auto|[a-z]{2,3})$/;
-const CONTROL_RE = /[\0-\x1f\x7f]/;
 
 export function setVoiceSettings(b: VoiceSettingsInput): VoiceSettings {
-  const next = stored();
+  // the cloud service's fields (and its encrypted key) are dropped from older settings
+  const { provider, language, localModel } = stored();
+  const next: Stored = { provider: provider && PROVIDERS.includes(provider) ? provider : undefined, language, localModel };
   if (b.provider !== undefined) {
-    if (!PROVIDERS.includes(b.provider)) throw new HttpError(400, 'provider: off | local | api');
+    if (!PROVIDERS.includes(b.provider)) throw new HttpError(400, 'provider: off | local');
     next.provider = b.provider;
   }
   if (b.language !== undefined) {
@@ -136,22 +125,6 @@ export function setVoiceSettings(b: VoiceSettingsInput): VoiceSettings {
   if (b.localModel !== undefined) {
     if (!MODELS.some((m) => m.id === b.localModel)) throw new HttpError(400, `Unknown model: ${String(b.localModel)}`);
     next.localModel = b.localModel;
-  }
-  if (b.apiUrl !== undefined) {
-    const url = typeof b.apiUrl === 'string' ? b.apiUrl.trim() : null;
-    if (url === null || url.length > 2000 || (url && !/^https?:\/\/[^\s/]+/.test(url))) throw new HttpError(400, 'apiUrl: an http:// or https:// URL');
-    next.apiUrl = url;
-  }
-  if (b.apiModel !== undefined) {
-    const model = typeof b.apiModel === 'string' ? b.apiModel.trim() : null;
-    if (model === null || model.length > 200 || CONTROL_RE.test(model)) throw new HttpError(400, 'apiModel: at most 200 characters');
-    next.apiModel = model;
-  }
-  if (b.apiKey !== undefined) {
-    const key = typeof b.apiKey === 'string' ? b.apiKey.trim() : b.apiKey;
-    if (key === null || key === '') delete next.apiKey;
-    else if (typeof key !== 'string' || key.length > 4096 || CONTROL_RE.test(key)) throw new HttpError(400, 'apiKey: at most 4096 characters');
-    else next.apiKey = encrypt(NS, 'apiKey', key);
   }
   kv.set(KEY, next);
   return voiceSettings();
@@ -286,69 +259,10 @@ async function transcribeLocal(audio: Uint8Array, s: VoiceSettings): Promise<str
   }
 }
 
-const EXT_BY_MIME: Record<string, string> = {
-  'audio/webm': 'webm',
-  'audio/ogg': 'ogg',
-  'audio/mp4': 'm4a',
-  'audio/x-m4a': 'm4a',
-  'audio/aac': 'm4a',
-  'audio/mpeg': 'mp3',
-  'audio/wav': 'wav',
-  'audio/x-wav': 'wav',
-  'audio/flac': 'flac',
-  'video/webm': 'webm',
-  'video/mp4': 'mp4',
-};
-
-/** File name for the multipart upload: services tell the format by its extension. */
-export const audioFileName = (mime: string) => `recording.${EXT_BY_MIME[mime.split(';')[0]!.trim().toLowerCase()] ?? 'webm'}`;
-
-export const transcriptionUrl = (url: string) => (/\/audio\/transcriptions\/?$/.test(url) ? url : `${url.replace(/\/+$/, '')}/audio/transcriptions`);
-
-async function transcribeApi(audio: Uint8Array, mime: string, s: VoiceSettings): Promise<string> {
-  if (!s.api.url || !s.api.model) throw new HttpError(409, 'The transcription service is not set up: Settings → Voice input');
-  const blob = stored().apiKey;
-  let key = '';
-  if (blob) {
-    try {
-      key = decrypt(NS, 'apiKey', blob);
-    } catch {
-      throw new HttpError(409, 'The stored API key can’t be decrypted: enter it again in Settings → Voice input');
-    }
-  }
-  const form = new FormData();
-  form.append('file', new Blob([audio as Uint8Array<ArrayBuffer>], { type: mime.split(';')[0] || 'application/octet-stream' }), audioFileName(mime));
-  form.append('model', s.api.model);
-  if (s.language !== 'auto') form.append('language', s.language);
-  let res: Response;
-  try {
-    res = await fetch(transcriptionUrl(s.api.url), {
-      method: 'POST',
-      headers: key ? { authorization: `Bearer ${key}` } : {},
-      body: form,
-      signal: AbortSignal.timeout(120_000),
-    });
-  } catch (e) {
-    throw new HttpError(502, `The transcription service is unreachable: ${(e as Error).message}`);
-  }
-  const text = await res.text();
-  let data: { text?: unknown; error?: { message?: unknown } | string } | null = null;
-  try {
-    data = JSON.parse(text);
-  } catch {}
-  if (!res.ok) {
-    const err = data?.error;
-    const msg = typeof err === 'string' ? err : typeof err?.message === 'string' ? err.message : text.slice(0, 300);
-    throw new HttpError(502, `The transcription service answered ${res.status}: ${msg.trim() || res.statusText}`);
-  }
-  return (typeof data?.text === 'string' ? data.text : text).trim();
-}
-
-export async function transcribe(audio: Uint8Array, mime: string): Promise<{ text: string }> {
+export async function transcribe(audio: Uint8Array): Promise<{ text: string }> {
   if (!audio.length) throw new HttpError(400, 'The recording is empty');
   if (audio.length > MAX_AUDIO) throw new HttpError(413, `The recording is larger than ${MAX_AUDIO / 1024 / 1024} MB`);
   const s = voiceSettings();
-  if (s.provider === 'off') throw new HttpError(409, 'Voice input is off: Settings → Voice input');
-  const text = s.provider === 'local' ? await transcribeLocal(audio, s) : await transcribeApi(audio, mime, s);
-  return { text };
+  if (s.provider !== 'local') throw new HttpError(409, 'Voice input is off: Settings → Voice input');
+  return { text: await transcribeLocal(audio, s) };
 }

@@ -58,7 +58,7 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   `git-login-check.ts` asks a host's API who a stored login is (status, account, picture kept
   in the hub); `HUBNESS_GIT_API` puts every host's API under one address for tests.
 - `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models
-  downloaded into `<data>/whisper` as terminal jobs) or an OpenAI-compatible service.
+  downloaded into `<data>/whisper` as terminal jobs); the speech never leaves the host.
 - `ssh.ts` — SSH connections (System → SSH): keys the hub holds, bound to projects / groups;
   an agent turn gets a private ssh-agent, an ssh config with an alias per connection and
   ssh/scp wrappers, and the connections' descriptions (prod / dev) in its context.

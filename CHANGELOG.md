@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Voice input is local only: the cloud transcription service (Groq, Mistral or another
+  OpenAI-compatible server) is gone, speech never leaves the host. Settings that had it
+  chosen count as off — pick Local in Settings → Voice input; its URL, model and stored key
+  are dropped with the next save.
 - SSH connections no longer have an environment label (prod / staging / dev): the
   description says what the server is, and whether it is prod or dev for a project goes into
   the note of its binding to that project or group. The API ignores `environment` from older

@@ -13,9 +13,6 @@ const Settings = z.object({
   provider: z.unknown().optional(),
   language: z.unknown().optional(),
   localModel: z.unknown().optional(),
-  apiUrl: z.unknown().optional(),
-  apiModel: z.unknown().optional(),
-  apiKey: z.unknown().optional(),
 });
 
 voiceRoutes.get('/voice', (c) => c.json(voiceSettings()));
@@ -32,5 +29,5 @@ voiceRoutes.delete('/voice/models/:id', (c) => c.json(deleteModel(c.req.param('i
 voiceRoutes.post('/voice/transcribe', async (c) => {
   if (Number(c.req.header('content-length') ?? 0) > MAX_AUDIO) throw new HttpError(413, `The recording is larger than ${MAX_AUDIO / 1024 / 1024} MB`);
   const audio = new Uint8Array(await c.req.arrayBuffer());
-  return c.json(await transcribe(audio, c.req.header('content-type') ?? ''));
+  return c.json(await transcribe(audio));
 });

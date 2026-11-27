@@ -3062,7 +3062,7 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
     [['tiny', false], ['base', false], ['small', false], ['large-v3-turbo-q5_0', false], ['large-v3-turbo', false]],
   );
   assert.ok(s0.local.models.every((m: any) => m.size > 0 && m.label));
-  assert.deepEqual(s0.api, { url: '', model: '', hasKey: false });
+  assert.equal('api' in s0, false, 'no cloud service: speech never leaves the host');
 
   const transcribe = (body: Uint8Array, type = 'audio/webm;codecs=opus') =>
     raw('/api/voice/transcribe', { method: 'POST', headers: { 'X-Hubness-Request': '1', 'Content-Type': type }, body: new Blob([body as Uint8Array<ArrayBuffer>]) });
@@ -3071,11 +3071,13 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
   assert.equal((await transcribe(new Uint8Array())).status, 400, 'empty');
 
   assert.equal((await call('PUT', '/voice', { provider: 'cloud' })).status, 400);
+  assert.equal((await call('PUT', '/voice', { provider: 'api' })).status, 400, 'the cloud service is gone');
   assert.equal((await call('PUT', '/voice', { language: 'Russian' })).status, 400);
   assert.equal((await call('PUT', '/voice', { localModel: 'huge' })).status, 400);
-  assert.equal((await call('PUT', '/voice', { apiUrl: 'ftp://x' })).status, 400);
-  assert.equal((await call('PUT', '/voice', { apiModel: 'a\nb' })).status, 400);
-  assert.equal((await call('PUT', '/voice', { apiKey: 42 })).status, 400);
+  // an older client's cloud fields are ignored
+  const old = await call('PUT', '/voice', { apiUrl: 'https://api.groq.com/openai/v1', apiModel: 'm', apiKey: 'sk-x' });
+  assert.equal(old.status, 200);
+  assert.equal(JSON.stringify(old.json).includes('sk-x') || 'api' in old.json, false);
   assert.equal((await call('POST', '/voice/models/huge', {})).status, 404);
   assert.equal((await call('DELETE', '/voice/models/huge')).status, 404);
 
@@ -3105,49 +3107,5 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
   s = (await call('DELETE', '/voice/models/tiny')).json;
   assert.equal(s.ready, false);
   assert.equal(existsSync(join(models, 'ggml-tiny.bin')), false);
-
-  // api: multipart to <url>/audio/transcriptions with the stored key
-  const hits: { auth?: string; path?: string; body: string; type?: string }[] = [];
-  const svc = createServer((req, res) => {
-    let body = '';
-    req.setEncoding('latin1');
-    req.on('data', (d) => (body += d));
-    req.on('end', () => {
-      hits.push({ auth: req.headers.authorization, path: req.url, body, type: req.headers['content-type'] });
-      if (req.headers.authorization !== 'Bearer sk-good') {
-        res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Invalid API key' } }));
-        return;
-      }
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ text: ' Привет, мир. ' }));
-    });
-  });
-  await new Promise<void>((r) => svc.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${(svc.address() as AddressInfo).port}/v1/`;
-  try {
-    s = (await call('PUT', '/voice', { provider: 'api', apiUrl: `  ${base}  `, apiModel: ' whisper-large-v3-turbo ', apiKey: 'sk-bad' })).json;
-    assert.deepEqual(s.api, { url: base, model: 'whisper-large-v3-turbo', hasKey: true });
-    assert.equal(s.ready, true);
-    assert.equal(JSON.stringify(s).includes('sk-bad'), false, 'the key never leaves the server');
-    const denied = await transcribe(audio);
-    assert.equal(denied.status, 502);
-    assert.match(((await denied.json()) as any).error, /401.*Invalid API key/);
-    await call('PUT', '/voice', { apiKey: 'sk-good', language: 'auto' });
-    const done = await transcribe(audio, 'audio/ogg;codecs=opus');
-    assert.equal(done.status, 200);
-    assert.deepEqual(await done.json(), { text: 'Привет, мир.' });
-    const hit = hits.at(-1)!;
-    assert.equal(hit.path, '/v1/audio/transcriptions');
-    assert.match(hit.type ?? '', /^multipart\/form-data; boundary=/);
-    assert.match(hit.body, /name="file"; filename="recording\.ogg"/);
-    assert.match(hit.body, /voice-bytes/);
-    assert.match(hit.body, /name="model"\r\n\r\nwhisper-large-v3-turbo\r\n/);
-    assert.doesNotMatch(hit.body, /name="response_format"/, 'JSON is the default everywhere; Mistral does not list the field');
-    assert.doesNotMatch(hit.body, /name="language"/, 'auto sends no language');
-    s = (await call('PUT', '/voice', { apiKey: null, provider: 'off' })).json;
-    assert.equal(s.api.hasKey, false);
-    assert.equal(s.provider, 'off');
-  } finally {
-    svc.closeAllConnections();
-    svc.close();
-  }
+  assert.equal((await call('PUT', '/voice', { provider: 'off' })).json.provider, 'off');
 });
