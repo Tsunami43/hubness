@@ -589,9 +589,7 @@ pub struct SshConnection {
     pub host: String,
     pub port: u16,
     pub username: String,
-    /// Free label: dev, staging, prod… (shown to people and agents).
-    pub environment: String,
-    /// What the server is for — the agent reads it to tell prod from dev.
+    /// What the server is and what is on it (prod or dev for a project goes into the binding's note).
     pub description: String,
     pub public_key: String,
     /// `known_hosts` lines pinned by the first successful test (empty until then).

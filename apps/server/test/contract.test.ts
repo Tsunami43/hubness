@@ -1399,7 +1399,7 @@ test('SSH connections in a turn: the agent process gets the wrappers and the con
   const project = (await call('POST', '/projects/new-repo', { name: 'ssh-turn' })).json;
   // the fake agent lives in /tmp, which the sandbox of project sessions hides
   assert.equal((await call('PUT', `/projects/${project.id}/environment`, { sandbox: false })).status, 200);
-  const conn = (await call('POST', '/ssh', { name: 'turn-box', host: '203.0.113.7', port: 2200, username: 'deploy', environment: 'prod', description: 'The API box' })).json;
+  const conn = (await call('POST', '/ssh', { name: 'turn-box', host: '203.0.113.7', port: 2200, username: 'deploy', description: 'The API box' })).json;
   const lastEnv = () => Object.fromEntries(readFileSync(join(tmp, 'claude-last-env'), 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
   const turn = async () => {
     const s = (await call('POST', '/sessions', { projectId: project.id, agent: { kind: 'claude-code' } })).json;
@@ -1435,7 +1435,7 @@ test('SSH connections in a turn: the agent process gets the wrappers and the con
   assert.equal(env.SSH_AUTH_SOCK, plain.SSH_AUTH_SOCK, 'the user’s own ssh-agent is not hidden');
   const args = readFileSync(join(tmp, 'claude-last-args'), 'utf8');
   assert.ok(args.includes('## SSH connections'), 'the agent is told about them');
-  assert.ok(args.includes('- `turn-box` [prod] — deploy@203.0.113.7:2200 — The API box In this project: read only'));
+  assert.ok(args.includes('- `turn-box` — deploy@203.0.113.7:2200 — The API box In this project: read only'));
   const dump = readFileSync(join(tmp, 'claude-last-env'), 'utf8') + args;
   assert.ok(!dump.includes('PRIVATE KEY'), 'no key in the environment or the arguments');
   for (const name of Object.keys(env)) assert.ok(!/^HUBNESS_(SECRET|DATA|HOME|PORT|HOST)/.test(name), `${name} is the hub's own setting`);
@@ -1647,10 +1647,11 @@ test('agent browser: validation, and a real page when Chromium is installed', as
 
 test('SSH connections: generated and imported keys, bindings, the private key stays on the server', async () => {
   const base = { host: '127.0.0.1', port: 1, username: 'deploy' };
+  // `environment` (an old client's field) is ignored: what a server is goes into the description
   const made = await call('POST', '/ssh', { ...base, name: 'prod-api', environment: 'prod', description: 'Backend API' });
   assert.equal(made.status, 201);
   const a = made.json;
-  assert.deepEqual(Object.keys(a).sort(), ['createdAt', 'description', 'environment', 'host', 'hostKeys', 'id', 'name', 'port', 'publicKey', 'updatedAt', 'username']);
+  assert.deepEqual(Object.keys(a).sort(), ['createdAt', 'description', 'host', 'hostKeys', 'id', 'name', 'port', 'publicKey', 'updatedAt', 'username']);
   assert.match(a.publicKey, /^ssh-ed25519 AAAA\S+ hubness:prod-api$/, 'the hub generated an ed25519 key');
   assert.equal(a.hostKeys, '');
   assert.equal((await call('POST', '/ssh', { ...base, name: 'PROD-API' })).status, 409, 'names ignore case');
@@ -1663,7 +1664,7 @@ test('SSH connections: generated and imported keys, bindings, the private key st
   const dir = join(tmp, 'ssh-import');
   mkdirSync(dir, { recursive: true });
   execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'mine', '-f', join(dir, 'k')]);
-  const imported = await call('POST', '/ssh', { ...base, name: 'dev-api', environment: 'dev', privateKey: readFileSync(join(dir, 'k'), 'utf8') });
+  const imported = await call('POST', '/ssh', { ...base, name: 'dev-api', privateKey: readFileSync(join(dir, 'k'), 'utf8') });
   assert.equal(imported.status, 201);
   assert.equal(imported.json.publicKey.split(' ').slice(0, 2).join(' '), readFileSync(join(dir, 'k.pub'), 'utf8').split(' ').slice(0, 2).join(' '));
 
@@ -1691,19 +1692,20 @@ test('SSH connections: generated and imported keys, bindings, the private key st
 
   // both servers agree on the edges
   const post = (extra: object) => call('POST', '/ssh', { ...base, name: 'edge', ...extra });
-  for (const bad of [{ port: 0 }, { port: 65536 }, { port: -1 }, { port: 1.5 }, { port: '22' }, { host: '[::1]' }, { host: 'a b' }, { privateKey: 123 }, { environment: 5 }, { description: 'x'.repeat(4001) }])
+  for (const bad of [{ port: 0 }, { port: 65536 }, { port: -1 }, { port: 1.5 }, { port: '22' }, { host: '[::1]' }, { host: 'a b' }, { privateKey: 123 }, { description: 'x'.repeat(4001) }])
     assert.equal((await post(bad)).status, 400, JSON.stringify(bad));
   assert.equal((await call('GET', '/ssh')).json.some((c: any) => c.name === 'edge'), false, 'a refused request creates nothing');
-  const edge = await post({ port: null, environment: null, description: null, privateKey: null, host: '::1' });
+  const edge = await post({ port: null, description: null, privateKey: null, host: '::1' });
   assert.equal(edge.status, 201, 'null is "not given"; a bare IPv6 address is a host');
-  assert.deepEqual([edge.json.port, edge.json.environment, edge.json.description, edge.json.host], [22, '', '', '::1']);
+  assert.deepEqual([edge.json.port, edge.json.description, edge.json.host], [22, '', '::1']);
   const patch = (body: object) => call('PATCH', `/ssh/${edge.json.id}`, body);
   for (const bad of [{ port: 0 }, { port: 65536 }, { port: '22' }, { name: 5 }, { name: 'bad name' }, { host: '-oProxyCommand=x' }, { username: 'a@b' }])
     assert.equal((await patch(bad)).status, 400, JSON.stringify(bad));
-  const kept = await patch({ name: null, host: null, username: null, port: null, environment: null, description: null });
+  const kept = await patch({ name: null, host: null, username: null, port: null, description: null });
   assert.equal(kept.status, 200);
   assert.deepEqual([kept.json.name, kept.json.host, kept.json.port], ['edge', '::1', 22], 'null changes nothing');
-  assert.equal((await patch({ description: 'd', environment: 'dev' })).json.description, 'd');
+  const old = await patch({ description: 'd', environment: 'dev' });
+  assert.deepEqual([old.json.description, old.json.environment], ['d', undefined], 'an old client’s environment is ignored');
   assert.equal((await patch({ description: null })).json.description, 'd', 'null keeps the text; an empty string clears it');
   assert.equal((await patch({ description: '' })).json.description, '');
   assert.equal((await patch({ port: 2022 })).json.port, 2022);

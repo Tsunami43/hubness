@@ -14,6 +14,13 @@ All notable changes to this project are documented here. The format follows
   the check button (TUI: `v`). The picture is kept by the hub, so a private host's works too.
   A password can't be checked this way — the hosts' APIs take tokens only.
 
+### Changed
+
+- SSH connections no longer have an environment label (prod / staging / dev): the
+  description says what the server is, and whether it is prod or dev for a project goes into
+  the note of its binding to that project or group. The API ignores `environment` from older
+  clients and no longer returns it; the column stays in the database, unused.
+
 ### Fixed
 
 - Phone, sessions list: "Move to archive" no longer shows around or through the rows (rounded

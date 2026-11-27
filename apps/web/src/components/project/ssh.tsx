@@ -5,7 +5,6 @@ import type { SshBinding, SshConnection } from '@hubness/shared';
 import { api } from '../../lib/api';
 import { t } from '../../i18n';
 import { Button, ErrorLine, IconButton, inputCls, Spinner } from '../ui';
-import { EnvBadge } from '../../pages/system/ssh';
 
 type Scope = { projectId: string } | { groupId: string };
 
@@ -100,7 +99,6 @@ export function SshBindingsPanel({ scope }: { scope: Scope }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <KeyRound className="size-4 shrink-0 text-accent" />
                     <span className="font-mono font-medium">{c.name}</span>
-                    <EnvBadge env={c.environment} />
                     <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
                       {c.username}@{c.host}
                     </span>
@@ -137,7 +135,6 @@ export function SshBindingsPanel({ scope }: { scope: Scope }) {
               <Button key={c.id} size="sm" onClick={() => setList([...list, { connectionId: c.id, note: '' }])}>
                 <Plus className="size-3.5" />
                 <span className="font-mono">{c.name}</span>
-                <EnvBadge env={c.environment} />
               </Button>
             ))}
           </div>

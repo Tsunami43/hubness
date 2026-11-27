@@ -44,7 +44,9 @@ use crate::secrets;
 
 /// AAD namespace of the encrypted private keys (the "project id" of `secrets::encrypt`).
 const NS: &str = "ssh";
-const COLS: &str = "id, name, host, port, username, environment, description, public_key, host_keys, created_at, updated_at";
+// the `environment` column is no longer used: what a server is goes into its description
+// and into the note of its binding to a project or group
+const COLS: &str = "id, name, host, port, username, description, public_key, host_keys, created_at, updated_at";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<SshConnection> {
     Ok(SshConnection {
@@ -53,7 +55,6 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<SshConnection> {
         host: r.get("host")?,
         port: r.get::<_, i64>("port")?.clamp(1, 65535) as u16,
         username: r.get("username")?,
-        environment: r.get("environment")?,
         description: r.get("description")?,
         public_key: r.get("public_key")?,
         host_keys: r.get("host_keys")?,
@@ -262,7 +263,6 @@ pub struct Input {
     host: String,
     port: Option<Value>,
     username: String,
-    environment: Option<String>,
     description: Option<String>,
     private_key: Option<String>,
 }
@@ -272,7 +272,6 @@ pub fn create(db: &Connection, config: &Config, b: Input) -> ApiResult<SshConnec
     let host = check_host(&b.host)?;
     let username = check_user(&b.username)?;
     let port = check_port(b.port.as_ref())?.unwrap_or(22);
-    let environment = check_text("environment", b.environment.as_deref().unwrap_or(""), 32)?;
     let description = check_text("description", b.description.as_deref().unwrap_or(""), 4000)?;
     if name_taken(db, &name, "")? {
         return Err(HttpError::new(409, format!("An SSH connection named {name} exists")));
@@ -290,9 +289,9 @@ pub fn create(db: &Connection, config: &Config, b: Input) -> ApiResult<SshConnec
     let sealed = secrets::encrypt(&secrets::keys(&config.data_dir)?, NS, &id, &private)?;
     let now = db::now();
     db.execute(
-        "INSERT INTO ssh_connections (id, name, host, port, username, environment, description, public_key, private_key, host_keys, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
-        params![id, name, host, port, username, environment, description, public, sealed, now, now],
+        "INSERT INTO ssh_connections (id, name, host, port, username, description, public_key, private_key, host_keys, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
+        params![id, name, host, port, username, description, public, sealed, now, now],
     )?;
     get(db, &id)
 }
@@ -304,7 +303,6 @@ pub struct Patch {
     host: Option<String>,
     port: Option<Value>,
     username: Option<String>,
-    environment: Option<String>,
     description: Option<String>,
 }
 
@@ -327,18 +325,14 @@ pub fn update(db: &Connection, id: &str, b: Patch) -> ApiResult<SshConnection> {
         None => cur.username.clone(),
     };
     let port = check_port(b.port.as_ref())?.unwrap_or(cur.port);
-    let environment = match &b.environment {
-        Some(e) => check_text("environment", e, 32)?,
-        None => cur.environment.clone(),
-    };
     let description = match &b.description {
         Some(d) => check_text("description", d, 4000)?,
         None => cur.description.clone(),
     };
     let host_keys = if host != cur.host || port != cur.port { String::new() } else { cur.host_keys.clone() };
     db.execute(
-        "UPDATE ssh_connections SET name = ?, host = ?, port = ?, username = ?, environment = ?, description = ?, host_keys = ?, updated_at = ? WHERE id = ?",
-        params![name, host, port, username, environment, description, host_keys, db::now(), id],
+        "UPDATE ssh_connections SET name = ?, host = ?, port = ?, username = ?, description = ?, host_keys = ?, updated_at = ? WHERE id = ?",
+        params![name, host, port, username, description, host_keys, db::now(), id],
     )?;
     get(db, id)
 }
@@ -614,15 +608,14 @@ pub fn session_config(list: &[SshBinding], dir: &Path) -> String {
     out
 }
 
-/// The agent's context: each connection with its environment and description.
+/// The agent's context: each connection with its description and the project's note.
 pub fn session_context(list: &[SshBinding]) -> String {
     let mut out = String::from(
-        "## SSH connections\nThese servers are reachable from this session by name: `ssh <name>`, `scp`, `rsync -e ssh`, git over SSH. The hub holds the keys. Read the description before using one — it says what the server is (production or development) and what you may do there. Be careful on production: prefer reading, and ask before changing anything there unless the instructions say otherwise.",
+        "## SSH connections\nThese servers are reachable from this session by name: `ssh <name>`, `scp`, `rsync -e ssh`, git over SSH. The hub holds the keys. Read the description and the project note before using one — they say what the server is (production or development) and what you may do there. Be careful on production: prefer reading, and ask before changing anything there unless the instructions say otherwise.",
     );
     for b in list {
         let c = &b.connection;
-        let env = if c.environment.is_empty() { String::new() } else { format!(" [{}]", c.environment) };
-        out.push_str(&format!("\n- `{}`{env} — {}@{}:{}", c.name, c.username, c.host, c.port));
+        out.push_str(&format!("\n- `{}` — {}@{}:{}", c.name, c.username, c.host, c.port));
         if !c.description.is_empty() {
             out.push_str(&format!(" — {}", c.description.replace('\n', " ")));
         }
@@ -883,7 +876,7 @@ async fn group_put(
 mod tests {
     use super::*;
 
-    fn conn(name: &str, env: &str, keys: &str) -> SshBinding {
+    fn conn(name: &str, keys: &str) -> SshBinding {
         SshBinding {
             connection: SshConnection {
                 id: name.into(),
@@ -891,7 +884,6 @@ mod tests {
                 host: "10.0.0.5".into(),
                 port: 2222,
                 username: "deploy".into(),
-                environment: env.into(),
                 description: "Backend API".into(),
                 public_key: String::new(),
                 host_keys: keys.into(),
@@ -928,7 +920,7 @@ mod tests {
 
     #[test]
     fn config_pins_tested_hosts_and_keeps_the_users_own() {
-        let list = [conn("prod-api", "prod", "10.0.0.5 ssh-ed25519 AAAA"), conn("dev-api", "dev", "")];
+        let list = [conn("prod-api", "10.0.0.5 ssh-ed25519 AAAA"), conn("dev-api", "")];
         let cfg = session_config(&list, Path::new("/d"));
         // the same text as in ssh.test.ts
         assert!(cfg.contains(
@@ -940,8 +932,8 @@ mod tests {
         assert!(!session_config(&[], Path::new("/d")).contains("Host "));
         let ctx = session_context(&list);
         assert!(ctx.starts_with("## SSH connections\n"));
-        assert!(ctx.contains("`prod-api` [prod] — deploy@10.0.0.5:2222 — Backend API In this project: deploy only after tests pass"));
-        let mut plain = conn("box", "", "");
+        assert!(ctx.contains("`prod-api` — deploy@10.0.0.5:2222 — Backend API In this project: deploy only after tests pass"));
+        let mut plain = conn("box", "");
         plain.note.clear();
         plain.connection.description = "line one\nline two".into();
         assert!(session_context(&[plain]).ends_with("- `box` — deploy@10.0.0.5:2222 — line one line two"), "one line, no empty parts");
@@ -1068,7 +1060,6 @@ mod tests {
             json!({ "host": "a b" }),
             json!({ "host": "[::1]" }),
             json!({ "username": "a@b" }),
-            json!({ "environment": "x".repeat(33) }),
             json!({ "description": "x".repeat(4001) }),
             json!({ "privateKey": "not a key" }),
             json!({ "port": 0 }),
@@ -1087,8 +1078,7 @@ mod tests {
             "example.com ssh-ed25519 AAAA",
             "details keep the pinned keys"
         );
-        let same =
-            patch(json!({ "name": null, "host": null, "port": null, "username": null, "environment": null, "description": null })).unwrap();
+        let same = patch(json!({ "name": null, "host": null, "port": null, "username": null, "description": null })).unwrap();
         assert_eq!(
             (same.description.as_str(), same.host_keys.as_str()),
             ("changed", "example.com ssh-ed25519 AAAA"),
@@ -1137,12 +1127,8 @@ mod tests {
         let owner = [Owner::Project(&project), Owner::Project(&project)];
         assert!(session_setup(&db, &cfg, &owner, "sess-none").unwrap().is_none(), "no bindings: nothing is started");
 
-        let c = create(
-            &db,
-            &cfg,
-            input(json!({ "name": "turn-prod", "host": "203.0.113.10", "port": 2222, "username": "deploy", "environment": "prod" })),
-        )
-        .unwrap();
+        let c =
+            create(&db, &cfg, input(json!({ "name": "turn-prod", "host": "203.0.113.10", "port": 2222, "username": "deploy" }))).unwrap();
         let bound = set_bindings(
             &db,
             owner[0],
@@ -1174,7 +1160,7 @@ mod tests {
         assert_eq!(s.mount, base.0.join("sess0001abcd").to_string_lossy());
         assert!(env["PATH"].starts_with(&format!("{}/bin:", s.mount)));
         assert_eq!(env["GIT_SSH_COMMAND"], format!("'{}/bin/ssh'", s.mount));
-        assert!(s.context.contains("`turn-prod` [prod] — deploy@203.0.113.10:2222 In this project: read only"));
+        assert!(s.context.contains("`turn-prod` — deploy@203.0.113.10:2222 In this project: read only"));
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&s.mount).unwrap().permissions().mode() & 0o077, 0, "the folder is private");

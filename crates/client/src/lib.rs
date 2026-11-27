@@ -216,7 +216,7 @@ impl Client {
         self.get("/ssh").await
     }
 
-    /// A new connection: `input` holds name, host, port, username, environment, description
+    /// A new connection: `input` holds name, host, port, username, description
     /// and, to import a key, `privateKey` (without it the hub generates an ed25519 key).
     pub async fn create_ssh(&self, input: &Value) -> anyhow::Result<SshConnection> {
         self.send(reqwest::Method::POST, "/ssh", input).await

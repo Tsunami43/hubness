@@ -30,10 +30,8 @@ pub fn is_tested(c: &Value) -> bool {
 }
 
 pub fn describe(c: &Value) -> String {
-    let env = c["environment"].as_str().unwrap_or_default();
-    let env = if env.is_empty() { String::new() } else { format!(" [{env}]") };
     format!(
-        "{}{env} — {}@{}:{}",
+        "{} — {}@{}:{}",
         c["name"].as_str().unwrap_or_default(),
         c["username"].as_str().unwrap_or_default(),
         c["host"].as_str().unwrap_or_default(),
@@ -72,14 +70,6 @@ fn bindings_after(current: &[Value], all: &[Value], list: &[(String, String)]) -
         .collect()
 }
 
-fn env_style(t: &Theme, env: &str) -> Style {
-    match env.to_ascii_lowercase().as_str() {
-        "prod" | "production" | "live" => Style::default().fg(t.danger),
-        "staging" | "stage" | "test" => Style::default().fg(t.warn),
-        _ => t.accent_style(),
-    }
-}
-
 fn move_list(list: &mut ListState, k: &KeyEvent, n: usize) -> bool {
     match k.code {
         KeyCode::Down | KeyCode::Char('j') if n > 0 => list.select(Some((list.selected().unwrap_or(0) + 1).min(n - 1))),
@@ -105,7 +95,6 @@ const STEPS: &[(&str, &str)] = &[
     ("host", "Host — a domain name or an IP address"),
     ("username", "User on the server"),
     ("port", "Port"),
-    ("environment", "Environment — dev, staging, prod… (agents see it)"),
     ("description", "Description — what the server is and what agents may do there (Alt+Enter newline)"),
 ];
 
@@ -395,13 +384,9 @@ impl Screen for Connections {
                 .items
                 .iter()
                 .map(|c| {
-                    let env = c["environment"].as_str().unwrap_or_default();
                     let pinned = is_tested(c);
                     let mut spans =
                         vec![Span::styled(" ⇄ ", t.accent_style()), Span::raw(c["name"].as_str().unwrap_or_default().to_string())];
-                    if !env.is_empty() {
-                        spans.push(Span::styled(format!(" [{env}]"), env_style(&t, env)));
-                    }
                     spans.push(Span::styled(
                         format!(
                             "  {}@{}:{}",
@@ -638,7 +623,7 @@ impl Screen for Bindings {
         let [hint, list] = Layout::vertical([Constraint::Length(2), Constraint::Min(3)]).areas(area);
         f.render_widget(
             Paragraph::new(Span::styled(
-                " Agent sessions here reach these servers by name (ssh <name>); they see each one's environment, description and your note. The keys stay in the hub.",
+                " Agent sessions here reach these servers by name (ssh <name>); they see each one's description and your note. The keys stay in the hub.",
                 t.muted_style(),
             ))
             .wrap(Wrap { trim: true }),
@@ -655,11 +640,7 @@ impl Screen for Bindings {
             .iter()
             .map(|b| {
                 let c = &b["connection"];
-                let env = c["environment"].as_str().unwrap_or_default();
                 let mut first = vec![Span::styled(" ⇄ ", t.accent_style()), Span::raw(c["name"].as_str().unwrap_or_default().to_string())];
-                if !env.is_empty() {
-                    first.push(Span::styled(format!(" [{env}]"), env_style(&t, env)));
-                }
                 first.push(Span::styled(
                     format!("  {}@{}", c["username"].as_str().unwrap_or_default(), c["host"].as_str().unwrap_or_default()),
                     t.muted_style(),
@@ -726,7 +707,7 @@ mod tests {
         let line = authorized_keys_line("  ssh-ed25519 AAAAC3Nza hubness:prod-api\n");
         assert!(line.contains("echo 'ssh-ed25519 AAAAC3Nza hubness:prod-api' >> ~/.ssh/authorized_keys"), "trimmed, in single quotes");
         assert!(line.starts_with("mkdir -p ~/.ssh && ") && line.ends_with("chmod 600 ~/.ssh/authorized_keys"));
-        // no environment, the default port
+        // the default port
         assert_eq!(describe(&json!({ "name": "box", "username": "root", "host": "h" })), "box — root@h:22");
     }
 
@@ -753,7 +734,7 @@ mod tests {
         assert!(
             matches!(ctx.requests.last(), Some(crate::core::Request::Modal(crate::core::Modal::Input { title, .. })) if title.contains("is not a port"))
         );
-        for answer in ["2222", "prod", "API"] {
+        for answer in ["2222", "API"] {
             s.on_task("field", Ok(json!(answer)), &mut ctx);
         }
         s.on_task("keychoice", Ok(json!("import")), &mut ctx);
@@ -839,8 +820,8 @@ mod tests {
 
     #[test]
     fn lines() {
-        let c = json!({ "name": "prod-api", "environment": "prod", "username": "deploy", "host": "10.0.0.5", "port": 2222 });
-        assert_eq!(describe(&c), "prod-api [prod] — deploy@10.0.0.5:2222");
+        let c = json!({ "name": "prod-api", "username": "deploy", "host": "10.0.0.5", "port": 2222 });
+        assert_eq!(describe(&c), "prod-api — deploy@10.0.0.5:2222");
         assert_eq!(
             authorized_keys_line("ssh-ed25519 AAAA x\n"),
             "mkdir -p ~/.ssh && echo 'ssh-ed25519 AAAA x' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
