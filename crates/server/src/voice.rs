@@ -476,7 +476,6 @@ async fn transcribe_api(config: &Config, key_blob: Option<String>, audio: &[u8],
     if s.language != "auto" {
         fields.push(("language", s.language.as_str()));
     }
-    fields.push(("response_format", "json"));
     let body = multipart(&boundary, &fields, (&audio_file_name(mime), base_mime, audio));
     let client = reqwest::Client::builder().timeout(Duration::from_secs(120)).build().map_err(|e| HttpError::new(500, e.to_string()))?;
     let mut req =

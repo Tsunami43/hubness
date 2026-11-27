@@ -320,7 +320,6 @@ async function transcribeApi(audio: Uint8Array, mime: string, s: VoiceSettings):
   form.append('file', new Blob([audio as Uint8Array<ArrayBuffer>], { type: mime.split(';')[0] || 'application/octet-stream' }), audioFileName(mime));
   form.append('model', s.api.model);
   if (s.language !== 'auto') form.append('language', s.language);
-  form.append('response_format', 'json');
   let res: Response;
   try {
     res = await fetch(transcriptionUrl(s.api.url), {
