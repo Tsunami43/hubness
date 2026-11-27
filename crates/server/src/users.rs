@@ -1,8 +1,7 @@
 //! User accounts: storage, passwords (argon2id), sign-in sessions and the `hubness user …`
 //! commands that manage accounts directly in the database of `HUBNESS_DATA_DIR`.
 //!
-//! An account is an admin (everything, including managing accounts) or a member (what its
-//! permissions allow, see `permissions.rs`); there is always at least one admin. A session token is random (256 bits) and handed to the
+//! All accounts have the same rights. A session token is random (256 bits) and handed to the
 //! client once; the database keeps only its SHA-256, so a copy of the database can't be used
 //! to sign in.
 
@@ -10,7 +9,7 @@ use std::io::{BufRead, Write};
 use std::sync::OnceLock;
 
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
-use hubness_core::{Permissions, Role, User};
+use hubness_core::User;
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
@@ -70,21 +69,8 @@ pub fn verify_password(password: &str, hash: Option<&str>) -> bool {
     ok && hash.is_some()
 }
 
-/// The columns `user_row` reads.
-const COLS: &str = "id, username, created_at, role, permissions";
-
 fn user_row(r: &rusqlite::Row) -> rusqlite::Result<User> {
-    let role = if r.get::<_, String>("role")? == "member" { Role::Member } else { Role::Admin };
-    // a member whose permissions can't be read gets the minimal default, never "all"
-    let permissions = match role {
-        Role::Admin => None,
-        Role::Member => Some(r.get::<_, Option<String>>("permissions")?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default()),
-    };
-    Ok(User { id: r.get("id")?, username: r.get("username")?, created_at: r.get("created_at")?, role, permissions })
-}
-
-fn admins(db: &Connection) -> rusqlite::Result<i64> {
-    db.query_row("SELECT COUNT(*) FROM users WHERE role = 'admin'", [], |r| r.get(0))
+    Ok(User { id: r.get("id")?, username: r.get("username")?, created_at: r.get("created_at")? })
 }
 
 pub fn count(db: &Connection) -> rusqlite::Result<i64> {
@@ -92,17 +78,17 @@ pub fn count(db: &Connection) -> rusqlite::Result<i64> {
 }
 
 pub fn list(db: &Connection) -> rusqlite::Result<Vec<User>> {
-    let mut st = db.prepare(&format!("SELECT {COLS} FROM users ORDER BY username COLLATE NOCASE"))?;
+    let mut st = db.prepare("SELECT id, username, created_at FROM users ORDER BY created_at, rowid")?;
     st.query_map([], user_row)?.collect()
 }
 
 pub fn get(db: &Connection, id: &str) -> rusqlite::Result<Option<User>> {
-    db.query_row(&format!("SELECT {COLS} FROM users WHERE id = ?"), [id], user_row).optional()
+    db.query_row("SELECT id, username, created_at FROM users WHERE id = ?", [id], user_row).optional()
 }
 
 /// The user (case-insensitive name) with the password hash.
 pub fn find(db: &Connection, username: &str) -> rusqlite::Result<Option<(User, String)>> {
-    db.query_row(&format!("SELECT {COLS}, password_hash FROM users WHERE username = ? COLLATE NOCASE"), [username.trim()], |r| {
+    db.query_row("SELECT id, username, created_at, password_hash FROM users WHERE username = ? COLLATE NOCASE", [username.trim()], |r| {
         Ok((user_row(r)?, r.get("password_hash")?))
     })
     .optional()
@@ -112,58 +98,25 @@ pub fn password_hash(db: &Connection, id: &str) -> rusqlite::Result<Option<Strin
     db.query_row("SELECT password_hash FROM users WHERE id = ?", [id], |r| r.get(0)).optional()
 }
 
-/// Add an admin account (`username` already checked, `hash` from `hash_password`).
-pub fn create(db: &Connection, username: &str, hash: &str) -> ApiResult<User> {
-    create_with(db, username, hash, Role::Admin, None)
-}
-
-/// Add an account with a role (a member without permissions gets the minimal default).
-pub fn create_with(db: &Connection, username: &str, hash: &str, role: Role, permissions: Option<Permissions>) -> ApiResult<User> {
+/// Add an account (`username` already checked, `hash` from `hash_password`).
+fn create(db: &Connection, username: &str, hash: &str) -> ApiResult<User> {
     if find(db, username)?.is_some() {
         return Err(HttpError::new(409, format!("The username {username} is taken")));
     }
-    let permissions = (role == Role::Member).then(|| permissions.unwrap_or_default());
-    let user = User { id: db::new_id(), username: username.to_string(), created_at: db::now(), role, permissions };
+    let user = User { id: db::new_id(), username: username.to_string(), created_at: db::now() };
     db.execute(
-        "INSERT INTO users (id, username, password_hash, created_at, role, permissions) VALUES (?, ?, ?, ?, ?, ?)",
-        params![user.id, user.username, hash, user.created_at, role_str(role), permissions_json(&user.permissions)?],
+        "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
+        params![user.id, user.username, hash, user.created_at],
     )?;
     Ok(user)
 }
 
-fn role_str(role: Role) -> &'static str {
-    match role {
-        Role::Admin => "admin",
-        Role::Member => "member",
-    }
-}
-
-fn permissions_json(p: &Option<Permissions>) -> ApiResult<Option<String>> {
-    p.as_ref().map(|p| serde_json::to_string(p).map_err(|e| HttpError::new(500, e.to_string()))).transpose()
-}
-
-/// Change an account's role and permissions; the last admin stays an admin (nobody could
-/// manage the accounts otherwise). Its sessions stay: the next request already sees the change.
-pub fn set_access(db: &Connection, id: &str, role: Role, permissions: Option<Permissions>) -> ApiResult<User> {
-    db::tx(db, || {
-        let Some(cur) = get(db, id)? else { return Err(HttpError::not_found("No such user")) };
-        if cur.is_admin() && role == Role::Member && admins(db)? <= 1 {
-            return Err(HttpError::new(409, "The last admin can't become a member: make another account an admin first"));
-        }
-        let permissions = (role == Role::Member).then(|| permissions.or(cur.permissions).unwrap_or_default());
-        db.execute(
-            "UPDATE users SET role = ?, permissions = ? WHERE id = ?",
-            params![role_str(role), permissions_json(&permissions)?, id],
-        )?;
-        Ok(User { role, permissions, ..cur })
-    })
-}
-
-/// Add the very first account; refused once any account exists (two first-run forms racing).
+/// Create the hub's account (hubness is single-user); refused once it exists (two first-run
+/// forms racing).
 pub fn create_first(db: &Connection, username: &str, hash: &str) -> ApiResult<User> {
     db::tx(db, || {
         if count(db)? > 0 {
-            return Err(HttpError::new(409, "The hub already has accounts: sign in"));
+            return Err(HttpError::new(409, "The hub already has its account: sign in"));
         }
         create(db, username, hash)
     })
@@ -178,23 +131,6 @@ pub fn set_password(db: &Connection, id: &str, hash: &str, keep: Option<&str>) -
         let keep = keep.map(token_hash).unwrap_or_default();
         db.execute("DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?", params![id, keep])?;
         Ok(())
-    })
-}
-
-/// Delete an account with its sessions; the last account can't be deleted (that would open
-/// the hub again), nor the last admin.
-pub fn delete(db: &Connection, id: &str) -> ApiResult<User> {
-    db::tx(db, || {
-        let Some(user) = get(db, id)? else { return Err(HttpError::not_found("No such user")) };
-        if count(db)? <= 1 {
-            return Err(HttpError::new(409, "The last account can't be deleted: the hub would be open to anyone"));
-        }
-        if user.is_admin() && admins(db)? <= 1 {
-            return Err(HttpError::new(409, "The last admin can't be deleted: make another account an admin first"));
-        }
-        db.execute("DELETE FROM auth_sessions WHERE user_id = ?", [id])?;
-        db.execute("DELETE FROM users WHERE id = ?", [id])?;
-        Ok(user)
     })
 }
 
@@ -233,7 +169,7 @@ pub fn session_user(db: &Connection, token: &str) -> rusqlite::Result<Option<Use
     let hash = token_hash(token);
     let row = db
         .query_row(
-            "SELECT u.id, u.username, u.created_at, u.role, u.permissions, s.last_seen, s.expires FROM auth_sessions s JOIN users u ON u.id = s.user_id
+            "SELECT u.id, u.username, u.created_at, s.last_seen, s.expires FROM auth_sessions s JOIN users u ON u.id = s.user_id
              WHERE s.token_hash = ?",
             [&hash],
             |r| Ok((user_row(r)?, r.get::<_, String>("last_seen")?, r.get::<_, String>("expires")?)),
@@ -260,68 +196,40 @@ pub fn delete_session(db: &Connection, token: &str) -> rusqlite::Result<()> {
 
 // ---------- hubness user … ----------
 
-const USAGE: &str = "usage: hubness user add <name> | passwd <name> | rm <name> | role <name> admin|member | list
-  New accounts are admins; a member's permissions are set in the web app (Settings → Users).
-  The password is asked for (hidden) or read from stdin when it is not a terminal.
-  Works on the database in HUBNESS_DATA_DIR (default .data), also while the hub runs.";
+const USAGE: &str = "usage: hubness user add <name> | passwd | show
+  hubness has one account: `add` creates it (when the hub has none yet), `passwd` sets a new
+  password and signs it out everywhere. The password is asked for (hidden) or read from stdin
+  when it is not a terminal. Works on the database in HUBNESS_DATA_DIR (default .data), also
+  while the hub runs.";
 
-/// `hubness user <args…>`: manage accounts directly in the hub database.
+/// `hubness user <args…>`: the hub's account, directly in its database.
 pub fn cli(args: &[String]) -> anyhow::Result<()> {
     let config = crate::Config::from_env()?;
     config.ensure_dirs()?;
     let db = db::open(&config.db_path)?;
     let err = |e: HttpError| anyhow::anyhow!(e.message);
-    let one = |what: &str| -> anyhow::Result<String> {
-        match args.get(1) {
-            Some(n) if args.len() == 2 => Ok(n.clone()),
-            _ => anyhow::bail!("usage: hubness user {what} <name>"),
-        }
-    };
-    match args.first().map(String::as_str) {
-        Some("add") => {
-            let name = check_username(&one("add")?).map_err(err)?;
-            if find(&db, &name)?.is_some() {
-                anyhow::bail!("the username {name} is taken");
+    let account = list(&db)?.into_iter().next();
+    match (args.first().map(String::as_str), args.len()) {
+        (Some("add"), 2) => {
+            if let Some(u) = account {
+                anyhow::bail!("the hub already has its account ({}); change its password with `hubness user passwd`", u.username);
             }
+            let name = check_username(&args[1]).map_err(err)?;
             let password = read_password(&format!("Password for {name}"))?;
-            let user = create(&db, &name, &hash_password(&password).map_err(err)?).map_err(err)?;
+            let user = create_first(&db, &name, &hash_password(&password).map_err(err)?).map_err(err)?;
             println!("added {}", user.username);
         }
-        Some("passwd") => {
-            let name = one("passwd")?;
-            let Some((user, _)) = find(&db, &name)? else { anyhow::bail!("no user {name}") };
+        // `passwd <name>` is still accepted (older instructions)
+        (Some("passwd"), 1 | 2) => {
+            let Some(user) = account else { anyhow::bail!("the hub has no account yet: `hubness user add <name>`") };
             let password = read_password(&format!("New password for {}", user.username))?;
             set_password(&db, &user.id, &hash_password(&password).map_err(err)?, None).map_err(err)?;
             println!("password changed for {} (signed out everywhere)", user.username);
         }
-        Some("rm") => {
-            let name = one("rm")?;
-            let Some((user, _)) = find(&db, &name)? else { anyhow::bail!("no user {name}") };
-            delete(&db, &user.id).map_err(|e| anyhow::anyhow!("{} (reset its password with `hubness user passwd {name}`)", e.message))?;
-            println!("removed {}", user.username);
-        }
-        Some("role") => {
-            let (Some(name), Some(role), 3) = (args.get(1), args.get(2), args.len()) else {
-                anyhow::bail!("usage: hubness user role <name> admin|member")
-            };
-            let role = match role.as_str() {
-                "admin" => Role::Admin,
-                "member" => Role::Member,
-                _ => anyhow::bail!("usage: hubness user role <name> admin|member"),
-            };
-            let Some((user, _)) = find(&db, name)? else { anyhow::bail!("no user {name}") };
-            set_access(&db, &user.id, role, None).map_err(err)?;
-            println!("{} is now {}", user.username, role_str(role));
-        }
-        Some("list") if args.len() == 1 => {
-            let users = list(&db)?;
-            if users.is_empty() {
-                println!("no accounts: the hub is open to this machine only (add one with `hubness user add <name>`)");
-            }
-            for u in users {
-                println!("{}\t{}\t{}", u.username, role_str(u.role), u.created_at);
-            }
-        }
+        (Some("show" | "list"), 1) => match account {
+            Some(u) => println!("{}\t{}", u.username, u.created_at),
+            None => println!("no account: the hub is open to this machine only (create it with `hubness user add <name>`)"),
+        },
         _ => anyhow::bail!("{USAGE}"),
     }
     Ok(())
@@ -396,15 +304,13 @@ mod tests {
     }
 
     #[test]
-    fn accounts_and_sessions() {
+    fn one_account_and_its_sessions() {
         let db = db();
         let h = "$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaA";
         let a = create_first(&db, "Alice", h).unwrap();
-        assert_eq!(create_first(&db, "bob", h).unwrap_err().status.as_u16(), 409);
-        assert_eq!(create(&db, "alice", h).unwrap_err().status.as_u16(), 409, "names ignore case");
-        let b = create(&db, "bob", h).unwrap();
-        assert_eq!(find(&db, "ALICE").unwrap().unwrap().0, a);
-        assert_eq!(list(&db).unwrap().iter().map(|u| u.username.as_str()).collect::<Vec<_>>(), ["Alice", "bob"]);
+        assert_eq!(create_first(&db, "bob", h).unwrap_err().status.as_u16(), 409, "only one account");
+        assert_eq!(find(&db, "ALICE").unwrap().unwrap().0, a, "names ignore case");
+        assert_eq!(list(&db).unwrap(), std::slice::from_ref(&a));
 
         let t1 = create_session(&db, &a.id).unwrap();
         let t2 = create_session(&db, &a.id).unwrap();
@@ -415,34 +321,5 @@ mod tests {
         assert!(session_user(&db, &t2).unwrap().is_some(), "but keeps the one that changed it");
         delete_session(&db, &t2).unwrap();
         assert_eq!(session_user(&db, &t2).unwrap(), None);
-
-        let t3 = create_session(&db, &b.id).unwrap();
-        delete(&db, &b.id).unwrap();
-        assert_eq!(session_user(&db, &t3).unwrap(), None);
-        assert_eq!(delete(&db, &a.id).unwrap_err().status.as_u16(), 409, "the last account stays");
-    }
-
-    #[test]
-    fn roles_and_the_last_admin() {
-        let db = db();
-        let h = "$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaA";
-        let a = create_first(&db, "alice", h).unwrap();
-        assert!(a.is_admin() && a.permissions.is_none());
-        let m = create_with(&db, "bob", h, Role::Member, None).unwrap();
-        assert_eq!(m.permissions, Some(Permissions::default()), "a member starts with the minimal permissions");
-        assert_eq!(get(&db, &m.id).unwrap().unwrap(), m);
-        assert_eq!(set_access(&db, &a.id, Role::Member, None).unwrap_err().status.as_u16(), 409, "the last admin stays");
-        assert_eq!(delete(&db, &a.id).unwrap_err().status.as_u16(), 409);
-
-        let p = Permissions { projects: None, ..Default::default() };
-        let m = set_access(&db, &m.id, Role::Member, Some(p.clone())).unwrap();
-        assert_eq!(m.permissions, Some(p.clone()));
-        let t = create_session(&db, &m.id).unwrap();
-        assert_eq!(session_user(&db, &t).unwrap().unwrap().permissions, Some(p));
-
-        let m = set_access(&db, &m.id, Role::Admin, None).unwrap();
-        assert!(m.permissions.is_none());
-        set_access(&db, &a.id, Role::Member, None).unwrap();
-        delete(&db, &a.id).unwrap();
     }
 }

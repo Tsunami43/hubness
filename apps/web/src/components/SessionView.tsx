@@ -37,6 +37,7 @@ function Composer({
   minRows = 2,
   autoFocus,
   draftKey,
+  quick,
 }: {
   /** Send the text and attached files; true — sent (the input is cleared). */
   onSend: (text: string, files: PendingFile[]) => Promise<boolean>;
@@ -50,6 +51,8 @@ function Composer({
   autoFocus?: boolean;
   /** Drafts key ("ask the agent" about selected code/output). */
   draftKey?: string;
+  /** Offer one-tap replies above an empty input (an existing conversation). */
+  quick?: boolean;
 }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -100,13 +103,38 @@ function Composer({
     }
   };
 
+  // one tap fills the input (still sent by hand): the replies a phone user types most
+  const pick = (q: string) => {
+    setText(q);
+    setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 0);
+  };
+
   // TUI (like opencode): a frame with ">", below it a status line: agent, mode, keys
   return (
     <div className="shrink-0 px-2 pb-[max(0.5rem,var(--safe-b))] sm:px-4">
       <div className="mx-auto mb-2 max-w-3xl sm:mb-3">
+        {quick && !busy && !text.trim() && !att.files.length ? (
+          <div className="mb-1.5 flex gap-1.5 overflow-x-auto [scrollbar-width:none]">
+            {(['quick.continue', 'quick.changes', 'quick.tests', 'quick.commit'] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => pick(t(`${k}Text` as const))}
+                className="ui-btn shrink-0 border border-line bg-surface px-2.5 py-1 text-xs text-muted hover:border-accent hover:text-fg pointer-coarse:py-1.5"
+              >
+                {t(k)}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div
           {...att.dropProps}
-          className={`border bg-surface py-2 pr-2 pl-3 transition focus-within:border-accent ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
+          className={`border bg-surface py-2.5 pr-2.5 pl-4 transition pointer-coarse:pl-5 focus-within:border-accent ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
         >
         <PendingFiles files={att.files} onRemove={att.remove} />
         <div
@@ -151,7 +179,7 @@ function Composer({
               title={t('session.send')}
               onClick={() => void send()}
               disabled={!ready || sending || disabled}
-              className={`tap inline-flex size-8 shrink-0 items-center justify-center ${ready || sending ? 'btn-accent' : 'border border-line text-muted'}`}
+              className={`ui-btn tap inline-flex size-8 shrink-0 items-center justify-center ${ready || sending ? 'btn-accent' : 'border border-line text-muted'}`}
             >
               {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.5} />}
             </button>
@@ -548,6 +576,7 @@ export function SessionView({
             busy={busy}
             autoFocus
             draftKey={draftKey}
+            quick
             placeholder={busy ? t('session.placeholderBusy') : t('session.placeholderReply')}
             toolbar={<AgentChip agent={session.agent} onClick={() => setSettings(true)} />}
           />

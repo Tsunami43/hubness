@@ -9,34 +9,62 @@ pub mod theme;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders};
+use ratatui::widgets::{Block, BorderType, Borders, Padding};
 
 pub use theme::Theme;
 
-/// The hubness wordmark (the home screen's header).
-pub const LOGO: [&str; 5] =
-    ["█ █ █ █ █▀▄ █▄ █ █▀▀ █▀▀ █▀▀", "█▀█ █ █ █▀▄ █ ▀█ █▀▀ ▀▀█ ▀▀█", "▀ ▀ ▀▀▀ ▀▀  ▀  ▀ ▀▀▀ ▀▀▀ ▀▀▀", "", "agents on your own machine"];
+/// The hubness wordmark, the same pixels as the web app's hero (`logo-hero.svg`): `[hub]ness`
+/// in half blocks (one cell = one pixel wide, two tall, so the pixels come out square).
+pub const LOGO_PIXELS: [&str; 4] = [
+    "█▀▀ █           █     ▀▀█",
+    "█   █▄▀▀▄ █   █ █▄▀▀▄   █ █▄▀▀▄ ▄▀▀▀▄ ▄▀▀▀▀ ▄▀▀▀▀",
+    "█   █   █ █  ▄█ █   █   █ █   █ █▀▀▀▀  ▀▀▀▄  ▀▀▀▄",
+    "▀▀▀ ▀   ▀  ▀▀ ▀ ▀▀▀▀  ▀▀▀ ▀   ▀  ▀▀▀  ▀▀▀▀  ▀▀▀▀",
+];
 
-/// The wordmark centered, in the theme's accent.
+/// The block cursor after the wordmark (4×7 pixels in the web hero).
+const LOGO_CURSOR: [&str; 4] = ["████", "████", "████", "▀▀▀▀"];
+
+/// Rows the header takes (prompt, wordmark, rule, gap, tagline).
+pub const LOGO_HEIGHT: u16 = 1 + 1 + LOGO_PIXELS.len() as u16 + 1 + 1 + 1;
+
+/// The brand greens of the web hero (the wordmark keeps them on every theme).
+const LOGO_BRIGHT: ratatui::style::Color = ratatui::style::Color::Rgb(0x39, 0xff, 0x7a);
+const LOGO_DIM: ratatui::style::Color = ratatui::style::Color::Rgb(0x1f, 0x9e, 0x4c);
+
+/// The header of the home, connect and sign-in screens: `> connect --all agents`, the
+/// wordmark with its cursor, a rule and the tagline — as on the web app's home screen.
 pub fn logo() -> ratatui::widgets::Paragraph<'static> {
     let t = Theme::get();
-    let mut lines = vec![Line::raw("")];
-    for (i, l) in LOGO.iter().enumerate() {
-        let style = if i < 3 { Style::default().fg(t.accent).add_modifier(ratatui::style::Modifier::BOLD) } else { t.dim_style() };
-        lines.push(Line::styled(*l, style));
+    let width = LOGO_PIXELS.iter().map(|l| l.chars().count()).max().unwrap_or(0) + 1 + LOGO_CURSOR[0].chars().count();
+    // every line padded to the same width: centered as a block, left edges stay aligned
+    let pad = |text: String| format!("{text:<width$}");
+    let bold = Style::default().fg(LOGO_BRIGHT).add_modifier(ratatui::style::Modifier::BOLD);
+    let mut lines = vec![Line::raw(""), Line::styled(pad("> connect --all agents".into()), Style::default().fg(LOGO_DIM))];
+    for (i, row) in LOGO_PIXELS.iter().enumerate() {
+        let gap = width - row.chars().count() - LOGO_CURSOR[i].chars().count();
+        lines.push(Line::from(vec![
+            Span::styled(row.to_string(), bold),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(LOGO_CURSOR[i], Style::default().fg(LOGO_BRIGHT)),
+        ]));
     }
+    lines.push(Line::styled("─".repeat(width), Style::default().fg(LOGO_DIM)));
+    lines.push(Line::raw(""));
+    lines.push(Line::styled("One hub. Any agent.", t.muted_style()));
     ratatui::widgets::Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center)
 }
 
-/// A bordered block with a title; highlighted when focused.
+/// A bordered block with a title; highlighted when focused. A column of air on each side
+/// keeps text off the frame (`inner()` accounts for it).
 pub fn block(title: impl Into<String>, focused: bool) -> Block<'static> {
     let t = Theme::get();
     let title = title_only(&title.into());
-    let b = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(if focused {
-        Style::default().fg(t.border)
-    } else {
-        t.line_style()
-    });
+    let b = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .padding(Padding::horizontal(1))
+        .border_style(if focused { Style::default().fg(t.border) } else { t.line_style() });
     if title.is_empty() {
         return b;
     }

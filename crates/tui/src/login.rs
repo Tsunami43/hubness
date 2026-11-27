@@ -105,10 +105,10 @@ impl LoginForm {
         f.render_widget(Clear, area);
         f.render_widget(Block::default().style(t.base()), area);
         let box_h = 13;
-        let [top, form, _] = Layout::vertical([Constraint::Length(8), Constraint::Length(box_h), Constraint::Min(0)])
+        let [top, form, _] = Layout::vertical([Constraint::Length(crate::ui::LOGO_HEIGHT), Constraint::Length(box_h), Constraint::Min(0)])
             .flex(ratatui::layout::Flex::Center)
             .areas(area);
-        if area.height >= box_h + 8 {
+        if area.height >= box_h + crate::ui::LOGO_HEIGHT {
             f.render_widget(logo(), top);
         }
         let r = centered(form, 66, box_h);

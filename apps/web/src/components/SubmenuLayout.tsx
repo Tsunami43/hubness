@@ -75,7 +75,7 @@ export function SubmenuLayout({
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && filtered[0]) nav(`${base}/${filtered[0].to}`);
+                if (e.key === 'Enter' && filtered[0]) nav(filtered[0].to.startsWith('/') ? filtered[0].to : `${base}/${filtered[0].to}`);
                 if (e.key === 'Escape') setQ('');
               }}
               placeholder={searchPlaceholder}

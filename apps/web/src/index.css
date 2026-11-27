@@ -74,6 +74,17 @@ html {
   /* home-indicator padding; 0 while the on-screen keyboard is open (lib/viewport.ts) */
   --safe-b: env(safe-area-inset-bottom, 0px);
 }
+/*
+ * Touch screens: a roomier, larger interface. Tailwind sizes, paddings and gaps are multiples
+ * of --spacing and text sizes are in rem, so these two values grow almost everything at once
+ * (≈ +7% text, +20% spacing); a finger then hits rows and buttons without aiming.
+ */
+@media (pointer: coarse) {
+  html {
+    font-size: 15px;
+    --spacing: 0.28rem;
+  }
+}
 html[data-kb] {
   --safe-b: 0px;
 }
@@ -107,7 +118,9 @@ html[data-touch] :is(button, a, [role='button'], [role='tab'], nav) {
 }
 
 body {
-  background: var(--color-bg);
+  /* glass styles paint a colourful backdrop here for the translucent panels to blur */
+  background: var(--app-backdrop, var(--color-bg));
+  background-attachment: fixed;
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -264,4 +277,279 @@ button:disabled {
 
 @utility pt-safe {
   padding-top: env(safe-area-inset-top);
+}
+
+
+/* ======================================================================================
+ * Visual styles (Settings → Appearance), on top of the palette: <html data-style="…">.
+ * strict     — the original TUI look: monospace, square, thin lines (the @theme defaults).
+ * glass      — Liquid Glass: translucent blurred panels over a colour backdrop, soft
+ *              rounded shapes, pill controls; opaque again for "reduce transparency".
+ * expressive — Material 3 Expressive-like: tonal containers instead of lines, big rounded
+ *              shapes that tell containers apart, pill buttons, springy press.
+ * paper      — warm pages and ink: serif headings, hairlines, soft paper shadows.
+ * Components carry hooks for this: ui-btn, ui-icon, ui-input, ui-sheet, ui-pop, ui-tabbar /
+ * ui-tab (the phone's bottom bar), ui-tabs (a row of tabs); a bordered panel
+ * (.border.bg-surface) is a card. The rounded styles round every bordered box.
+ * ==================================================================================== */
+
+html:is([data-style='glass'], [data-style='expressive'], [data-style='paper']) {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ---------- glass ---------- */
+html[data-style='glass'] {
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
+  --radius-3xl: 28px;
+  --radius-4xl: 32px;
+}
+html[data-style='glass'] .bg-surface {
+  /* Safari ignores custom properties inside -webkit-backdrop-filter: literal values */
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+}
+html[data-style='glass'] :is(.border.bg-surface:not(.ui-input), .ui-pop) {
+  border-radius: 16px;
+  box-shadow:
+    0 12px 40px -16px rgb(0 0 0 / 0.45),
+    inset 0 1px 0 rgb(255 255 255 / 0.14);
+}
+html[data-style='glass'] :is(.ui-btn, .ui-input, .btn-accent) {
+  border-radius: 12px;
+}
+html[data-style='glass'] .btn-accent {
+  box-shadow:
+    0 6px 20px -8px var(--color-accent),
+    inset 0 1px 0 rgb(255 255 255 / 0.35);
+}
+html[data-style='glass'] .ui-icon {
+  border-radius: 999px;
+}
+@media (min-width: 640px) {
+  html[data-style='glass'] .ui-sheet {
+    border-radius: 22px;
+  }
+}
+/* readability first: no see-through panels when the system asks for it, or without blur support */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-style='glass'] .bg-surface {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: var(--color-surface-solid);
+  }
+  html[data-style='glass'] body {
+    background: var(--color-surface-solid);
+  }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-style='glass'] .bg-surface {
+    background-color: var(--color-surface-solid);
+  }
+}
+
+/* ---------- expressive ---------- */
+html[data-style='expressive'] {
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-2xl: 28px;
+  --radius-3xl: 32px;
+  --radius-4xl: 36px;
+}
+html[data-style='expressive'] :is(.border.bg-surface:not(.ui-input), .ui-pop) {
+  border-color: transparent;
+  border-radius: 24px;
+}
+/* no outline to mark a choice: a tonal fill instead */
+html[data-style='expressive'] :is([aria-pressed='true'], [aria-checked='true'], [aria-current='page']).bg-surface,
+html[data-style='expressive'] .border-accent.bg-surface {
+  background-color: color-mix(in srgb, var(--color-accent) 22%, var(--color-surface));
+}
+html[data-style='expressive'] :is(.ui-btn, .btn-accent, .ui-icon) {
+  border-radius: 999px;
+  transition:
+    transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+    background-color 0.2s,
+    color 0.2s;
+}
+html[data-style='expressive'] :is(.ui-btn, .btn-accent, .ui-icon):active:not(:disabled) {
+  transform: scale(0.94);
+}
+html[data-style='expressive'] .ui-input {
+  border-radius: 16px;
+  border-color: transparent;
+  background-color: var(--color-sunken);
+}
+html[data-style='expressive'] .ui-input:focus,
+html[data-style='expressive'] .ui-input[aria-expanded='true'] {
+  border-color: var(--color-accent);
+}
+html[data-style='expressive'] :is(h1, h2) {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+@media (min-width: 640px) {
+  html[data-style='expressive'] .ui-sheet {
+    border-radius: 28px;
+    border-color: transparent;
+  }
+}
+
+/* ---------- paper ---------- */
+html[data-style='paper'] {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+  --radius-4xl: 24px;
+}
+html[data-style='paper'] :is(h1, h2, h3) {
+  font-family: ui-serif, 'Iowan Old Style', 'Charter', Georgia, Cambria, 'Times New Roman', serif;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+html[data-style='paper'] :is(.border.bg-surface:not(.ui-input), .ui-pop) {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.05),
+    0 6px 20px -8px rgb(0 0 0 / 0.12);
+}
+html[data-style='paper'] :is(.ui-btn, .ui-input, .btn-accent) {
+  border-radius: 8px;
+}
+html[data-style='paper'] .ui-icon {
+  border-radius: 999px;
+}
+@media (min-width: 640px) {
+  html[data-style='paper'] .ui-sheet {
+    border-radius: 16px;
+  }
+}
+
+/* ---------- every rounded style: no square box left ---------- */
+html[data-style='glass'] {
+  --box-r: 12px;
+}
+html[data-style='expressive'] {
+  --box-r: 16px;
+}
+html[data-style='paper'] {
+  --box-r: 10px;
+}
+html:is([data-style='glass'], [data-style='expressive'], [data-style='paper']) .border:not(.ui-btn, .ui-input, .btn-accent, .ui-sheet, .ui-square) {
+  border-radius: var(--box-r);
+}
+/* lists, tables and button groups keep their rows inside the rounded frame */
+html:is([data-style='glass'], [data-style='expressive'], [data-style='paper']) :is(ul, ol, table, [role='radiogroup'], [role='tablist']).border {
+  overflow: hidden;
+}
+html:is([data-style='glass'], [data-style='expressive'], [data-style='paper']) table.border {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+/* ---------- tabs: a pill marks the current one ---------- */
+html:is([data-style='glass'], [data-style='expressive'], [data-style='paper']) .ui-tabs {
+  gap: 4px;
+  padding: 4px 6px;
+}
+html:is([data-style='glass'], [data-style='expressive'], [data-style='paper']) .ui-tabs > * {
+  border-bottom-color: transparent !important;
+  border-radius: 999px;
+}
+html:is([data-style='glass'], [data-style='expressive'], [data-style='paper']) .ui-tabs > [aria-current='page'] {
+  background-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+/* ---------- the phone's bottom bar ---------- */
+/* glass: a floating translucent pill above the content */
+html[data-style='glass'] .ui-tabbar {
+  margin: 0 10px max(8px, var(--safe-b));
+  padding: 4px;
+  padding-bottom: 4px;
+  border: 1px solid var(--color-line);
+  border-radius: 26px;
+  box-shadow:
+    0 12px 40px -12px rgb(0 0 0 / 0.5),
+    inset 0 1px 0 rgb(255 255 255 / 0.14);
+}
+html[data-style='glass'] .ui-tab {
+  border-top-color: transparent !important;
+  border-radius: 20px;
+}
+html[data-style='glass'] .ui-tab[aria-current='page'] {
+  background-color: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+/* expressive: a tonal bar, the active icon sits in a pill */
+html[data-style='expressive'] .ui-tabbar {
+  border-top-color: transparent;
+  padding-top: 6px;
+}
+html[data-style='expressive'] .ui-tab {
+  border-top-color: transparent !important;
+  gap: 4px;
+}
+html[data-style='expressive'] .ui-tab > svg {
+  box-sizing: content-box;
+  padding: 4px 18px;
+  border-radius: 999px;
+  transition: background-color 0.25s;
+}
+html[data-style='expressive'] .ui-tab[aria-current='page'] > svg {
+  background-color: color-mix(in srgb, var(--color-accent) 24%, transparent);
+}
+html[data-style='expressive'] .ui-tab[aria-current='page'] {
+  font-weight: 600;
+}
+/* paper: a quiet bar, the active item underlined in ink */
+html[data-style='paper'] .ui-tab {
+  border-top-color: transparent !important;
+}
+html[data-style='paper'] .ui-tab[aria-current='page'] {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* ---------- desktop tab strips and the navigation rail ---------- */
+/*
+ * Tabs everywhere (open places, editor tabs, Explorer / Search / Git, repository switcher)
+ * mark the current one with an underline (.border-b-2 + .border-accent), the rail with a left
+ * bar (.border-l-2). The smooth styles turn that into a rounded tonal backing instead.
+ */
+html:is([data-style='glass'], [data-style='expressive']) :is(.border-b-2, .border-l-2):not(.border-danger, .ui-tab) {
+  border-color: transparent !important;
+  border-radius: 10px;
+  margin: 3px 2px;
+}
+html[data-style='expressive'] :is(.border-b-2, .border-l-2):not(.border-danger, .ui-tab) {
+  border-radius: 999px;
+}
+html:is([data-style='glass'], [data-style='expressive']) :is(.border-b-2, .border-l-2).border-accent:not(.border-danger, .ui-tab) {
+  background-color: color-mix(in srgb, var(--color-accent) 20%, transparent) !important;
+  color: var(--color-fg);
+}
+
+/* editor tabs: no separators or top bar, the current tab sits on a rounded backing */
+html:is([data-style='glass'], [data-style='expressive']) .ui-etab {
+  border-right-color: transparent;
+  border-radius: 10px;
+  margin: 3px 1px;
+}
+html[data-style='expressive'] .ui-etab {
+  border-radius: 999px;
+}
+html:is([data-style='glass'], [data-style='expressive']) .ui-etab[aria-current='page'] {
+  background-color: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+html:is([data-style='glass'], [data-style='expressive']) .ui-etab-bar {
+  display: none;
 }

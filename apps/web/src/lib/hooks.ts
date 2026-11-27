@@ -108,18 +108,25 @@ export function useSessionSync() {
   }, [client]);
 }
 
+/** Read a JSON value of localStorage (`initial` when missing or broken). */
+function readStored<T>(key: string, initial: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : initial;
+  } catch {
+    return initial;
+  }
+}
+
 export function useLocalStorage<T>(key: string, initial: T) {
-  const [value, setValue] = useState<T>(() => {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? (JSON.parse(raw) as T) : initial;
-    } catch {
-      return initial;
-    }
-  });
+  // the value belongs to its key: a component that lives on under another key (another
+  // project in the same panel) must not show — or save — the previous key's value
+  const [state, setState] = useState<{ key: string; value: T }>(() => ({ key, value: readStored(key, initial) }));
+  const value = state.key === key ? state.value : readStored(key, initial);
+  if (state.key !== key) setState({ key, value });
   const set = useCallback(
     (v: T) => {
-      setValue(v);
+      setState({ key, value: v });
       try {
         localStorage.setItem(key, JSON.stringify(v));
       } catch {}

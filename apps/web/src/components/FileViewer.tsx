@@ -107,7 +107,10 @@ export function FileViewer({
   const stale = Boolean(draftBase && data?.hash && draftBase !== data.hash);
   const dirtyCb = useRef(onDirty);
   dirtyCb.current = onDirty;
-  useEffect(() => dirtyCb.current?.(dirty), [dirty]);
+  useEffect(() => {
+    // never return the callback's own result: React would take it for a cleanup
+    dirtyCb.current?.(dirty);
+  }, [dirty]);
   useEffect(() => () => dirtyCb.current?.(false), []);
   const gitFile = git?.files.find((f) => f.path === path);
   const defaultMode: Mode = initialMode === 'diff' ? 'diff' : line ? 'file' : isMarkdown(path) ? 'preview' : 'file';

@@ -201,6 +201,7 @@ impl Screen for Home {
             },
             KeyCode::Enter => self.open_selected(ctx),
             KeyCode::Tab => self.focus = Focus::Composer,
+            _ if crate::screens::kit::list_motion(&mut self.list, &k, n) => {}
             _ => return Handled::No,
         }
         Handled::Yes
@@ -249,9 +250,9 @@ impl Screen for Home {
 
     fn draw(&mut self, f: &mut Frame, area: Rect, ctx: &Ctx) {
         let t = Theme::get();
-        let comp_h = (self.new.input.height(area.width.saturating_sub(2)) + 2).clamp(4, 10);
+        let comp_h = (self.new.input.height(area.width.saturating_sub(4)) + 2).clamp(4, 10);
         // a dashboard header (like LazyVim's) when there is room
-        let logo_h = if area.height > 30 { crate::ui::LOGO.len() as u16 + 2 } else { 0 };
+        let logo_h = if area.height > 30 { crate::ui::LOGO_HEIGHT + 1 } else { 0 };
         let [logo, settings, composer, list] =
             Layout::vertical([Constraint::Length(logo_h), Constraint::Length(1), Constraint::Length(comp_h), Constraint::Min(3)])
                 .areas(area);

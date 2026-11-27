@@ -24,6 +24,11 @@ import type {
   GitLogResponse,
   GitOpResult,
   GitCredentialInfo,
+  PreviewLogsResponse,
+  SshBinding,
+  SshConnection,
+  SshConnectionInput,
+  SshTestResult,
   GitCredentialKind,
   GitStash,
   GitStatus,
@@ -52,8 +57,6 @@ import type {
   SystemOverview,
   SystemPlatform,
   UnitInfo,
-  User,
-  UserAccess,
   VoiceSettings,
   VoiceSettingsInput,
 } from '@hubness/shared';
@@ -113,6 +116,8 @@ export const api = {
   stopRun: (id: string, rid: string) => req<RunState>('POST', `/projects/${id}/runs/${rid}/stop`),
   shells: (scope: { projectId: string } | { groupId: string }) =>
     req<JobInfo[]>('GET', 'projectId' in scope ? `/projects/${scope.projectId}/shells` : `/groups/${scope.groupId}/shells`),
+  previewLogs: (id: string, previewPort: number, since = 0) => req<PreviewLogsResponse>('GET', `/projects/${id}/previews/${previewPort}/logs?since=${since}`),
+  clearPreviewLogs: (id: string, previewPort: number) => req<{ ok: true }>('DELETE', `/projects/${id}/previews/${previewPort}/logs`),
   previewPort: (id: string, port: number) => req<{ previewPort: number }>('POST', `/projects/${id}/preview`, { port }),
   shell: (scope: { projectId: string } | { groupId: string }, input: { cols?: number; rows?: number; fresh?: boolean }) =>
     req<JobInfo>('POST', 'projectId' in scope ? `/projects/${scope.projectId}/shell` : `/groups/${scope.groupId}/shell`, input),
@@ -253,6 +258,15 @@ export const api = {
   gitStashes: (projectId: string) => req<GitStash[]>('GET', `/projects/${projectId}/git/stashes`),
   gitOp: (projectId: string, op: string, body?: Record<string, unknown>) =>
     req<GitOpResult>('POST', `/projects/${projectId}/git/${op}`, body ?? {}),
+  sshConnections: () => req<SshConnection[]>('GET', '/ssh'),
+  createSsh: (body: SshConnectionInput) => req<SshConnection>('POST', '/ssh', body),
+  updateSsh: (id: string, body: Partial<Omit<SshConnectionInput, 'privateKey'>>) => req<SshConnection>('PATCH', `/ssh/${id}`, body),
+  deleteSsh: (id: string) => req<{ ok: true }>('DELETE', `/ssh/${id}`),
+  testSsh: (id: string) => req<SshTestResult>('POST', `/ssh/${id}/test`, {}),
+  sshBindings: (scope: { projectId: string } | { groupId: string }) =>
+    req<SshBinding[]>('GET', 'projectId' in scope ? `/projects/${scope.projectId}/ssh` : `/groups/${scope.groupId}/ssh`),
+  setSshBindings: (scope: { projectId: string } | { groupId: string }, bindings: { connectionId: string; note: string }[]) =>
+    req<SshBinding[]>('PUT', 'projectId' in scope ? `/projects/${scope.projectId}/ssh` : `/groups/${scope.groupId}/ssh`, { bindings }),
   gitCredentials: () => req<GitCredentialInfo[]>('GET', '/git-credentials'),
   setGitCredential: (host: string, body: { username: string; kind: GitCredentialKind; secret: string }) =>
     req<GitCredentialInfo[]>('PUT', `/git-credentials/${encodeURIComponent(host)}`, body),
@@ -276,11 +290,6 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, data?.error ?? t('api.error', { status: res.status }));
     return (data as { text: string }).text;
   },
-  users: () => req<User[]>('GET', '/users'),
-  createUser: (body: { username: string; password: string } & Partial<UserAccess>) => req<User>('POST', '/users', body),
-  setUserAccess: (id: string, body: UserAccess) => req<User>('PUT', `/users/${encodeURIComponent(id)}/access`, body),
-  deleteUser: (id: string) => req<{ ok: true }>('DELETE', `/users/${encodeURIComponent(id)}`),
-  /** Your own password needs `currentPassword`; ends the account's other sessions. */
-  setUserPassword: (id: string, body: { password: string; currentPassword?: string }) =>
-    req<{ ok: true }>('PUT', `/users/${encodeURIComponent(id)}/password`, body),
+  /** The account's new password; ends its other sessions. */
+  changePassword: (body: { currentPassword: string; password: string }) => req<{ ok: true }>('PUT', '/auth/password', body),
 };

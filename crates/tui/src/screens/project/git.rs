@@ -725,6 +725,9 @@ impl Screen for GitTab {
         match k.code {
             KeyCode::Down | KeyCode::Char('j') => self.move_by(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_by(-1),
+            // gg / G pick the first / last row; PageUp / PageDown (Ctrl+u / Ctrl+d) scroll the diff
+            KeyCode::Home => self.move_by(-(isize::MAX / 2)),
+            KeyCode::End => self.move_by(isize::MAX / 2),
             KeyCode::Tab | KeyCode::Char(']') => self.cycle(1),
             KeyCode::BackTab | KeyCode::Char('[') => self.cycle(-1),
             KeyCode::Enter | KeyCode::Char('-') => self.space(ctx),

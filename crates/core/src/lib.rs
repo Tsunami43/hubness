@@ -550,80 +550,94 @@ pub struct GitCredentialInfo {
     pub updated_at: String,
 }
 
-// ---------- user accounts ----------
+// ---------- SSH connections ----------
 
-/// What an account may do: an admin everything (including managing accounts), a member only
-/// what its `Permissions` allow.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    #[default]
-    Admin,
-    Member,
-}
-
-/// Parts of the hub a member can be given (chats in its projects are always available).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum Section {
-    /// The project's git client.
-    Git,
-    /// The file explorer and editor.
-    Files,
-    /// Run commands, shells, preview and the project environment.
-    Terminal,
-    /// The project board.
-    Kanban,
-    /// The host page (Docker, systemd, packages).
-    System,
-    /// Agents, MCP servers, skills and the agents' accounts.
-    Harness,
-    /// Hub-wide settings: defaults, git access, voice input.
-    Settings,
-}
-
-/// A member's permissions. `None` lists mean "all".
+/// A server the hub can reach over SSH with a key it holds (Settings → SSH). The private key
+/// never leaves the server; `public_key` goes into the server's `authorized_keys`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct Permissions {
-    /// Projects the member can open (and groups made only of them); `None` — every project.
-    #[serde(default)]
-    pub projects: Option<Vec<String>>,
-    #[serde(default)]
-    pub sections: Vec<Section>,
-    /// Agent kinds the member can start sessions with; `None` — every agent.
-    #[serde(default)]
-    pub agents: Option<Vec<String>>,
-    /// Models the member can pick; `None` — every model.
-    #[serde(default)]
-    pub models: Option<Vec<String>>,
+pub struct SshConnection {
+    pub id: String,
+    /// The alias agents use: `ssh <name>`.
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    /// Free label: dev, staging, prod… (shown to people and agents).
+    pub environment: String,
+    /// What the server is for — the agent reads it to tell prod from dev.
+    pub description: String,
+    pub public_key: String,
+    /// `known_hosts` lines pinned by the first successful test (empty until then).
+    pub host_keys: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
-impl Default for Permissions {
-    /// A new member: no projects yet, files and git, every agent and model.
-    fn default() -> Self {
-        Self { projects: Some(vec![]), sections: vec![Section::Files, Section::Git], agents: None, models: None }
-    }
+/// A connection attached to a project or a group, with what it is for there.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshBinding {
+    pub connection: SshConnection,
+    pub note: String,
 }
 
-/// A hub account (the password hash never leaves the server). `permissions` is set for
-/// members only.
+/// `POST /api/ssh/:id/test`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTestResult {
+    pub ok: bool,
+    pub output: String,
+    pub connection: SshConnection,
+}
+
+// ---------- preview helper and the agent's browser ----------
+
+/// A console / error / failed-request entry reported from a previewed app.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewLog {
+    pub seq: u64,
+    pub ts: String,
+    /// error | warn | log | network
+    pub level: String,
+    pub text: String,
+    /// The page it came from.
+    pub url: String,
+    /// `user` — the Preview panel or a browser tab; `agent` — the hub's headless browser.
+    pub source: String,
+}
+
+/// `GET /api/projects/:id/previews/:port/logs?since=N`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreviewLogsResponse {
+    pub logs: Vec<PreviewLog>,
+}
+
+/// `POST /api/sessions/:id/browser` result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserResult {
+    pub ok: bool,
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    /// PNG, base64.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screenshot: Option<String>,
+    pub logs: Vec<PreviewLog>,
+}
+
+// ---------- user accounts ----------
+
+/// The hub's one account (hubness is single-user: it is set at the first sign-in). The
+/// password hash never leaves the server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: String,
     pub username: String,
     pub created_at: String,
-    #[serde(default)]
-    pub role: Role,
-    #[serde(default)]
-    pub permissions: Option<Permissions>,
-}
-
-impl User {
-    pub fn is_admin(&self) -> bool {
-        self.role == Role::Admin
-    }
 }
 
 /// `GET /api/auth/status`: `required` — the hub has accounts and asks for a sign-in;

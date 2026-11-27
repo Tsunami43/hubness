@@ -2,8 +2,9 @@
 //! leader (which-key) panel and modals. Mirrors the web app's layout and leader keys.
 
 mod draw;
+mod help;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
@@ -11,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::core::{Action, AppEvent, Ctx, Handled, Hit, Modal, Request, Route, Screen, ScreenId, Shared, next_screen_id};
+use crate::keymap::{self, Cmd, Lookup};
 use crate::login::{LoginEvent, LoginForm};
 use crate::screens;
 use crate::ui::input::{InputEvent, TextInput};
@@ -27,7 +29,7 @@ enum Overlay {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Menu {
     Root,
-    /// `Space a` (or `?`): the actions of the current screen.
+    /// `Space a`: the actions of the current screen.
     Actions,
     /// `Space w`: moving between panes.
     Windows,
@@ -65,11 +67,16 @@ pub struct App {
     /// Least recently used last; screens beyond the cache size are dropped.
     lru: Vec<Route>,
     overlay: Overlay,
-    /// The first key of a two-key sequence (`g`, Ctrl+w as `^w`).
-    pending: String,
+    /// The `?` help over the screen (takes the keys while open).
+    help: Option<help::Help>,
+    /// The keys typed so far of a longer sequence (`g`, `C-w`), as `keymap` tokens.
+    pending: Vec<String>,
     /// A count typed before a motion (`5j`).
     count: Option<usize>,
     modal: Option<(ScreenId, Modal, TextInput)>,
+    /// Modals asked for while another one was open (an answer to a background request
+    /// arrived mid-typing): shown one by one as the open one closes, never over it.
+    queued: VecDeque<(ScreenId, Modal, TextInput)>,
     sidebar: bool,
     /// The sign-in screen of a hub with accounts (takes over the whole terminal).
     login: Option<LoginForm>,
@@ -118,9 +125,11 @@ impl App {
             screens: HashMap::new(),
             lru: vec![],
             overlay: Overlay::None,
-            pending: String::new(),
+            help: None,
+            pending: vec![],
             count: None,
             modal: None,
+            queued: VecDeque::new(),
             sidebar: true,
             login,
             user,
@@ -200,7 +209,9 @@ impl App {
         self.ctx.screen = APP;
         self.ctx.close_stream("global");
         self.modal = None;
+        self.queued.clear();
         self.overlay = Overlay::None;
+        self.help = None;
         let user = self.user.take().or_else(|| crate::hubs::stored(&url).1);
         self.login = Some(LoginForm::new(user.as_deref(), message));
     }
@@ -336,17 +347,48 @@ impl App {
         Some(r)
     }
 
+    /// Is the screen the one on display (the app itself always is)?
+    fn visible(&self, id: ScreenId) -> bool {
+        id == APP || self.screens.get(&self.route).is_some_and(|s| s.id == id)
+    }
+
+    /// A modal from a screen the user has left: a message becomes a status line, a question
+    /// about something they are no longer looking at is dropped.
+    fn modal_of_hidden(&mut self, m: Modal) {
+        if let Modal::Message { title, text } = m {
+            let first = text.lines().next().unwrap_or_default();
+            self.ctx.info(if first.is_empty() { title } else { format!("{title}: {first}") });
+        }
+    }
+
+    /// Show the next queued modal once nothing is open.
+    fn next_modal(&mut self) {
+        while self.modal.is_none() {
+            let Some((owner, m, input)) = self.queued.pop_front() else { return };
+            if self.visible(owner) {
+                self.modal = Some((owner, m, input));
+            } else {
+                self.modal_of_hidden(m);
+            }
+        }
+    }
+
     fn apply_requests(&mut self) {
         let requests = std::mem::take(&mut self.ctx.requests);
         let from = self.ctx.screen;
         for r in requests {
+            // an answer to a background request may arrive after the user moved on: a screen
+            // that is not on display neither navigates nor puts a popup over another screen
+            let shown = self.visible(from);
             match r {
+                Request::Go(_) | Request::Back if !shown => {}
                 Request::Go(route) => self.go(route),
                 Request::Back => {
                     if let Some(prev) = self.history.pop() {
                         self.show(prev);
                     }
                 }
+                Request::Modal(m) if !shown => self.modal_of_hidden(m),
                 Request::Modal(m) => {
                     let input = match &m {
                         Modal::Input { value, secret, multiline, .. } => {
@@ -357,10 +399,16 @@ impl App {
                         }
                         _ => TextInput::default(),
                     };
-                    self.modal = Some((from, m, input));
+                    // never over an open modal (what is typed there would be lost): it waits
+                    if self.modal.is_some() {
+                        self.queued.push_back((from, m, input));
+                    } else {
+                        self.modal = Some((from, m, input));
+                    }
                 }
                 Request::OpenUrl(url) => open_url(&url, &mut self.ctx),
                 Request::SwitchHub(url) => self.switch_hub(url),
+                Request::LogOut => self.log_out(),
             }
         }
     }
@@ -397,13 +445,7 @@ impl App {
                 self.sign_out(Some("Signed out".into()));
             }
             AppEvent::Input(Event::Key(k)) if k.kind != KeyEventKind::Release => self.on_key(k),
-            AppEvent::Input(Event::Paste(text)) => {
-                if let Some((_, Modal::Input { .. }, input)) = &mut self.modal {
-                    input.paste(&text);
-                } else {
-                    self.with_screen(|s, ctx| s.on_paste(&text, ctx));
-                }
-            }
+            AppEvent::Input(Event::Paste(text)) => self.on_paste(&text),
             AppEvent::Input(Event::Mouse(m)) => self.on_mouse(m),
             AppEvent::Input(_) => {}
             AppEvent::Task { screen: APP, key, result } => self.on_shared(&key, result),
@@ -427,12 +469,45 @@ impl App {
         }
     }
 
+    /// Pasted text goes where the keys go: into the open prompt or the picker's filter, into
+    /// the help's filter while it is typed — never to the screen under a popup.
+    fn on_paste(&mut self, text: &str) {
+        let one_line = || text.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+        match &mut self.modal {
+            Some((_, Modal::Input { .. }, input)) => input.paste(text),
+            Some((_, Modal::Pick { filter, selected, .. }, _)) => {
+                filter.push_str(&one_line());
+                *selected = 0;
+            }
+            Some(_) => {}
+            None => {
+                if let Some(h) = &mut self.help {
+                    h.on_paste(&one_line());
+                } else if matches!(self.overlay, Overlay::None) {
+                    self.with_screen(|s, ctx| s.on_paste(text, ctx));
+                }
+            }
+        }
+    }
+
     /// Keys: popups first, then the overlays (leader / which-key), then Vim NORMAL-mode
     /// motions and globals, then the screen. See crates/tui/DESIGN.md.
     fn on_key(&mut self, k: KeyEvent) {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         if self.modal.is_some() {
             return self.on_modal_key(k);
+        }
+        if let Some(h) = &mut self.help {
+            match h.on_key(k) {
+                help::Outcome::Stay => {}
+                help::Outcome::Close => self.help = None,
+                help::Outcome::Run(key) => {
+                    self.help = None;
+                    self.run_action(&key);
+                    self.apply_requests();
+                }
+            }
+            return;
         }
         if let Overlay::Leader(menu) = self.overlay {
             self.overlay = Overlay::None;
@@ -480,74 +555,92 @@ impl App {
         }
     }
 
+    /// NORMAL mode: counts, then the app keys of `keymap::NORMAL`, then the screen's keys
+    /// and its single-letter actions.
     fn on_normal_key(&mut self, k: KeyEvent) {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        let none = KeyModifiers::NONE;
-        let n = self.count.unwrap_or(1);
-        // two-key sequences: gg, gt, gT, Ctrl+w h/l
-        if !self.pending.is_empty() {
-            let seq = format!("{}{}", self.pending, key_name(&k));
-            self.reset_pending();
-            match seq.as_str() {
-                "gg" => self.send_key(KeyCode::Home, none, 1),
-                "gt" => self.next_tab(true, n),
-                "gT" => self.next_tab(false, n),
-                "^wh" | "^w^h" | "^wk" | "^w^k" => self.focus_prev(),
-                "^wl" | "^w^l" | "^wj" | "^w^j" | "^ww" => self.send_key(KeyCode::Tab, none, 1),
-                _ => {}
-            }
+        // counts: 5j, 10G
+        if let KeyCode::Char(c @ '0'..='9') = k.code
+            && k.modifiers.is_empty()
+            && self.pending.is_empty()
+            && (c != '0' || self.count.is_some())
+        {
+            self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(c as usize - '0' as usize));
             return;
         }
-        match (k.code, ctrl) {
-            // counts: 5j, 10G
-            (KeyCode::Char(c @ '0'..='9'), false) if k.modifiers.is_empty() && (c != '0' || self.count.is_some()) => {
-                self.count = Some(self.count.unwrap_or(0) * 10 + (c as usize - '0' as usize));
-                return;
-            }
-            (KeyCode::Char('g'), false) => self.pending = "g".into(),
-            (KeyCode::Char('w'), true) => self.pending = "^w".into(),
-            (KeyCode::Char('j'), false) | (KeyCode::Down, false) => self.send_key(KeyCode::Down, none, n),
-            (KeyCode::Char('k'), false) | (KeyCode::Up, false) => self.send_key(KeyCode::Up, none, n),
-            (KeyCode::Char('h'), false) => self.send_key(KeyCode::Left, none, n),
-            (KeyCode::Char('l'), false) => self.send_key(KeyCode::Right, none, n),
-            (KeyCode::Char('G'), false) => self.send_key(KeyCode::End, none, 1),
-            (KeyCode::Char('d'), true) => self.send_key(KeyCode::PageDown, none, n),
-            (KeyCode::Char('u'), true) => self.send_key(KeyCode::PageUp, none, n),
-            (KeyCode::Char('f'), true) => self.send_key(KeyCode::PageDown, none, 2 * n),
-            (KeyCode::Char('b'), true) => self.send_key(KeyCode::PageUp, none, 2 * n),
-            (KeyCode::Char('h'), true) => self.focus_prev(),
-            (KeyCode::Char('l'), true) => self.send_key(KeyCode::Tab, none, 1),
-            (KeyCode::Char(' '), false) => self.overlay = Overlay::Leader(Menu::Root),
-            (KeyCode::Char('?'), false) => self.overlay = Overlay::Leader(Menu::Actions),
-            (KeyCode::Char(':'), false) => self.open_palette(),
-            (KeyCode::Char('q'), false) => {
-                // a screen closes its own popup first
-                if matches!(self.with_screen(|s, ctx| s.on_key(k, ctx)).unwrap_or(Handled::No), Handled::No) {
-                    self.back_or_quit();
+        let n = self.count.unwrap_or(1);
+        let mut typed = std::mem::take(&mut self.pending);
+        let in_sequence = !typed.is_empty();
+        if let Some(tok) = keymap::token(&k) {
+            typed.push(tok);
+            match keymap::lookup(keymap::NORMAL, &typed) {
+                Lookup::Prefix => {
+                    self.pending = typed;
+                    return;
                 }
-            }
-            (KeyCode::Char('c'), true) => self.quit = true,
-            _ => {
-                // the screen's own keys: Enter, Esc, Tab, `/`, `i`, actions…
-                let handled = self.with_screen(|s, ctx| s.on_key(k, ctx)).unwrap_or(Handled::No);
-                if matches!(handled, Handled::No) {
-                    match k.code {
-                        KeyCode::Esc => self.back_or_quit_soft(),
-                        KeyCode::Left if k.modifiers.contains(KeyModifiers::ALT) => self.ctx.back(),
-                        KeyCode::Char(c) if !ctrl => {
-                            let key = c.to_string();
-                            if let Some(a) = self.screen_actions().into_iter().find(|a| a.key == key) {
-                                self.with_screen(|s, ctx| s.on_action(a.key, ctx));
-                            }
-                        }
-                        _ => {}
+                Lookup::Run(b) => {
+                    self.count = None;
+                    if b.screen_first && !matches!(self.with_screen(|s, ctx| s.on_key(k, ctx)).unwrap_or(Handled::No), Handled::No) {
+                        return;
                     }
+                    return self.run_cmd(b.cmd, n);
                 }
+                Lookup::None => {}
             }
         }
-        if k.code != KeyCode::Char('g') && !(ctrl && k.code == KeyCode::Char('w')) {
-            self.count = None;
+        self.count = None;
+        if in_sequence {
+            // `g` or Ctrl+w followed by a key that ends no sequence: drop both
+            return;
         }
+        // the screen's own keys: Enter, Tab, `/`, `i`, actions…
+        let handled = self.with_screen(|s, ctx| s.on_key(k, ctx)).unwrap_or(Handled::No);
+        if matches!(handled, Handled::No)
+            && let KeyCode::Char(c) = k.code
+            && !ctrl
+        {
+            self.run_action(&c.to_string());
+        }
+    }
+
+    /// Run an app command of the key table, `n` times where a count makes sense.
+    fn run_cmd(&mut self, cmd: Cmd, n: usize) {
+        let none = KeyModifiers::NONE;
+        match cmd {
+            Cmd::Down => self.send_key(KeyCode::Down, none, n),
+            Cmd::Up => self.send_key(KeyCode::Up, none, n),
+            Cmd::Left => self.send_key(KeyCode::Left, none, n),
+            Cmd::Right => self.send_key(KeyCode::Right, none, n),
+            Cmd::Top => self.send_key(KeyCode::Home, none, 1),
+            Cmd::Bottom => self.send_key(KeyCode::End, none, 1),
+            Cmd::HalfDown => self.send_key(KeyCode::PageDown, none, n),
+            Cmd::HalfUp => self.send_key(KeyCode::PageUp, none, n),
+            Cmd::PageDown => self.send_key(KeyCode::PageDown, none, 2 * n),
+            Cmd::PageUp => self.send_key(KeyCode::PageUp, none, 2 * n),
+            Cmd::PrevPane => self.focus_prev(),
+            Cmd::NextPane => self.send_key(KeyCode::Tab, none, 1),
+            Cmd::NextTab => self.next_tab(true, n),
+            Cmd::PrevTab => self.next_tab(false, n),
+            Cmd::Leader => self.overlay = Overlay::Leader(Menu::Root),
+            Cmd::Help => self.open_help(),
+            Cmd::Palette => self.open_palette(),
+            Cmd::Jump => self.open_jump(),
+            Cmd::Back => self.back_or_quit(),
+            Cmd::BackSoft => self.back_or_quit_soft(),
+            Cmd::Quit => self.quit = true,
+        }
+    }
+
+    /// `?`: every key of the current screen.
+    fn open_help(&mut self) {
+        let actions = self.screen_actions();
+        let title = self.screens.get(&self.route).map(|s| s.screen.title()).unwrap_or_default();
+        let leader: Vec<(String, String)> = self
+            .leader_entries(Menu::Root)
+            .into_iter()
+            .map(|e| (if e.key == "␣" { "Space".into() } else { e.key }, if e.group { format!("+{}", e.label) } else { e.label }))
+            .collect();
+        self.help = Some(help::Help::new(help::rows(&title, &actions, &leader)));
     }
 
     /// Focus the previous pane (Shift+Tab); screens with two panes may only know Tab.
@@ -591,6 +684,19 @@ impl App {
             MouseEventKind::ScrollDown => Some(false),
             _ => None,
         };
+        if let Some(h) = &mut self.help {
+            match (up, m.kind) {
+                (Some(up), _) => h.wheel(up),
+                // a click outside the help closes it
+                (_, MouseEventKind::Down(_))
+                    if self.ctx.hits.borrow().iter().rev().find(|(r, _, _)| r.contains(pos)).is_none_or(|(_, id, _)| *id != APP) =>
+                {
+                    self.help = None
+                }
+                _ => {}
+            }
+            return;
+        }
         if self.modal.is_some() {
             // the wheel moves a picker; clicks stay inside the popup
             if let Some(up) = up {
@@ -615,7 +721,7 @@ impl App {
                 Some((_, Hit::Go(route))) => self.go(route),
                 // status line: `? more`, `␣ leader` (work in INSERT too)
                 Some((APP, Hit::Key(k))) => match k.code {
-                    KeyCode::Char('?') => self.overlay = Overlay::Leader(Menu::Actions),
+                    KeyCode::Char('?') => self.open_help(),
                     KeyCode::Char(' ') => self.overlay = Overlay::Leader(Menu::Root),
                     _ => self.on_key(k),
                 },
@@ -659,7 +765,7 @@ impl App {
     fn leader_entries(&self, menu: Menu) -> Vec<Entry> {
         match menu {
             Menu::Root => vec![
-                Entry::cmd("␣", "Find a session"),
+                Entry::cmd("␣", "Go to… (Ctrl+p)"),
                 Entry::cmd("c", "Chats"),
                 Entry::cmd("p", "Projects"),
                 Entry::cmd("s", "System"),
@@ -706,6 +812,7 @@ impl App {
                 "s" => self.go(Route::System(None)),
                 "h" => self.go(Route::Harness(None)),
                 "," => self.go(Route::Settings(None)),
+                "a" if self.screen_actions().is_empty() => self.ctx.info("No actions here: ? lists every key of this screen"),
                 "a" => self.overlay = Overlay::Leader(Menu::Actions),
                 "w" => self.overlay = Overlay::Leader(Menu::Windows),
                 "t" => self.overlay = Overlay::Leader(Menu::Tabs),
@@ -753,19 +860,44 @@ impl App {
         }
     }
 
+    /// `Ctrl+p` / `Space Space`: go to a session, project, group or section, fuzzy-filtered.
     fn open_jump(&mut self) {
-        let items = self
-            .ctx
-            .shared
+        let shared = &self.ctx.shared;
+        let name = |v: &Value| v["name"].as_str().unwrap_or_default().to_string();
+        let mut items: Vec<(String, String)> = shared
             .sessions
             .iter()
-            .map(|s| (s["id"].as_str().unwrap_or_default().to_string(), session_label(s, &self.ctx.shared)))
+            .map(|s| (format!("session:{}", s["id"].as_str().unwrap_or_default()), session_label(s, shared)))
             .collect();
+        items.extend(shared.projects.iter().map(|p| {
+            (
+                format!("project:{}", p["id"].as_str().unwrap_or_default()),
+                format!("{}  · project · {}", name(p), p["path"].as_str().unwrap_or_default()),
+            )
+        }));
+        items.extend(
+            shared.groups.iter().map(|g| (format!("group:{}", g["id"].as_str().unwrap_or_default()), format!("{}  · group", name(g)))),
+        );
+        for (id, label) in SECTIONS {
+            items.push((id.to_string(), format!("{label}  · section")));
+        }
         self.modal = Some((
             APP,
-            Modal::Pick { title: "Jump to a session".into(), items, filter: String::new(), selected: 0, key: "jump".into() },
+            Modal::Pick { title: "Go to".into(), items, filter: String::new(), selected: 0, key: "jump".into() },
             TextInput::default(),
         ));
+    }
+
+    /// Where a jump list entry goes.
+    fn jump_route(&self, id: &str) -> Option<Route> {
+        let (kind, rest) = id.split_once(':')?;
+        Some(match kind {
+            "session" => self.session_route(rest),
+            "project" => Route::Project(rest.into()),
+            "group" => Route::Group(rest.into()),
+            "go" => section_route(rest)?,
+            _ => return None,
+        })
     }
 
     /// `:` — every screen action and global command, fuzzy-filtered.
@@ -778,7 +910,8 @@ impl App {
             ("go:system", "Go to system"),
             ("go:harness", "Go to harness (agents)"),
             ("go:settings", "Go to settings"),
-            ("cmd:jump", "Jump to a session"),
+            ("cmd:jump", "Go to a session, project or group  (Ctrl+p)"),
+            ("cmd:help", "Help: every key of this screen  (?)"),
             ("cmd:sidebar", "Toggle sidebar"),
             ("cmd:reload", "Reload"),
             ("cmd:back", "Back"),
@@ -797,11 +930,11 @@ impl App {
 
     fn run_palette(&mut self, id: &str) {
         match id {
-            "go:chats" => self.go(Route::Home),
-            "go:projects" => self.go(Route::Projects),
-            "go:system" => self.go(Route::System(None)),
-            "go:harness" => self.go(Route::Harness(None)),
-            "go:settings" => self.go(Route::Settings(None)),
+            go if go.starts_with("go:") => {
+                if let Some(route) = section_route(&go[3..]) {
+                    self.go(route);
+                }
+            }
             "cmd:jump" => self.open_jump(),
             "cmd:sidebar" => self.sidebar = !self.sidebar,
             "cmd:reload" => {
@@ -809,6 +942,7 @@ impl App {
                 self.with_screen(|s, ctx| s.on_show(ctx));
             }
             "cmd:back" => self.ctx.back(),
+            "cmd:help" => self.open_help(),
             "cmd:hub" => self.open_hubs(),
             "cmd:logout" => self.log_out(),
             "cmd:quit" => self.quit = true,
@@ -824,17 +958,33 @@ impl App {
     }
 
     fn on_modal_key(&mut self, k: KeyEvent) {
+        self.modal_key(k);
+        // the modal closed (and its answer opened no other): the next waiting one
+        self.next_modal();
+    }
+
+    fn modal_key(&mut self, k: KeyEvent) {
         let Some((owner, modal, mut input)) = self.modal.take() else { return };
         let mut answer: Option<(String, Value)> = None;
         let mut keep = None;
+        // a live filter's text so far, sent to its screen while the prompt stays open
+        let mut live: Option<(String, String)> = None;
         match modal {
             Modal::Input { title, value, key, secret, multiline } => match input.on_key(k) {
                 InputEvent::Submit => answer = Some((key, Value::String(input.value()))),
+                // a live filter goes back to what it was
+                InputEvent::Cancel if is_live_filter(&key) => answer = Some((key, Value::String(value))),
                 InputEvent::Cancel => answer = Some((key, Value::Null)),
+                InputEvent::Changed if is_live_filter(&key) => {
+                    live = Some((key.clone(), input.value()));
+                    keep = Some(Modal::Input { title, value, key, secret, multiline });
+                }
                 _ => keep = Some(Modal::Input { title, value, key, secret, multiline }),
             },
             Modal::Confirm { title, message, key, danger } => match k.code {
-                KeyCode::Enter | KeyCode::Char('y') => answer = Some((key, Value::Bool(true))),
+                // Enter alone never confirms something that can't be undone
+                KeyCode::Char('y') => answer = Some((key, Value::Bool(true))),
+                KeyCode::Enter if !danger => answer = Some((key, Value::Bool(true))),
                 KeyCode::Esc | KeyCode::Char('n') => answer = Some((key, Value::Bool(false))),
                 _ => keep = Some(Modal::Confirm { title, message, key, danger }),
             },
@@ -847,7 +997,8 @@ impl App {
                 match k.code {
                     KeyCode::Esc => answer = Some((key.clone(), Value::Null)),
                     KeyCode::Enter => {
-                        answer = Some((key.clone(), visible.get(selected).map(|(id, _)| Value::String(id.clone())).unwrap_or(Value::Null)))
+                        answer =
+                            Some((key.clone(), visible.get(selected).map(|((id, _), _)| Value::String(id.clone())).unwrap_or(Value::Null)))
                     }
                     KeyCode::Down => selected = (selected + 1).min(visible.len().saturating_sub(1)),
                     KeyCode::Up => selected = selected.saturating_sub(1),
@@ -855,10 +1006,20 @@ impl App {
                     KeyCode::End => selected = visible.len().saturating_sub(1),
                     KeyCode::PageDown => selected = (selected + 10).min(visible.len().saturating_sub(1)),
                     KeyCode::PageUp => selected = selected.saturating_sub(10),
-                    KeyCode::Char('n') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    KeyCode::Char('n' | 'j') if k.modifiers.contains(KeyModifiers::CONTROL) => {
                         selected = (selected + 1).min(visible.len().saturating_sub(1))
                     }
-                    KeyCode::Char('p') if k.modifiers.contains(KeyModifiers::CONTROL) => selected = selected.saturating_sub(1),
+                    KeyCode::Char('p' | 'k') if k.modifiers.contains(KeyModifiers::CONTROL) => selected = selected.saturating_sub(1),
+                    KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                        filter.clear();
+                        selected = 0;
+                    }
+                    KeyCode::Char('w') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let trimmed = filter.trim_end().len();
+                        filter.truncate(filter[..trimmed].rfind(' ').map(|i| i + 1).unwrap_or(0));
+                        selected = 0;
+                    }
+                    KeyCode::Char(_) if k.modifiers.contains(KeyModifiers::CONTROL) => {}
                     KeyCode::Backspace => {
                         filter.pop();
                         selected = 0;
@@ -877,6 +1038,9 @@ impl App {
         if let Some(m) = keep {
             self.modal = Some((owner, m, input));
         }
+        if let Some((key, text)) = live {
+            self.with_screen_id(owner, |s, ctx| s.on_task(&key, Ok(Value::String(text)), ctx));
+        }
         if let Some((key, value)) = answer {
             if owner == APP {
                 if key == "palette"
@@ -887,8 +1051,9 @@ impl App {
                 } else if key == "jump"
                     && let Some(id) = value.as_str()
                 {
-                    let route = self.session_route(id);
-                    self.go(route);
+                    if let Some(route) = self.jump_route(id) {
+                        self.go(route);
+                    }
                 } else if key == "hubs"
                     && let Some(id) = value.as_str()
                 {
@@ -912,10 +1077,17 @@ impl App {
     }
 }
 
-/// Items whose label contains every word of the filter (case-insensitive).
-fn filtered<'a>(items: &'a [(String, String)], filter: &str) -> Vec<&'a (String, String)> {
-    let words: Vec<String> = filter.to_lowercase().split_whitespace().map(String::from).collect();
-    items.iter().filter(|(_, l)| words.iter().all(|w| l.to_lowercase().contains(w))).collect()
+/// Items of a picker matching the filter, best first, with the matched char positions.
+fn filtered<'a>(items: &'a [(String, String)], filter: &str) -> Vec<(&'a (String, String), Vec<usize>)> {
+    crate::fuzzy::filter(items, filter)
+}
+
+/// A prompt that filters a list: the screen gets the text on every key (`/` filters as
+/// you type), and Esc restores the filter it had. Keys are `filter` or `<what>-filter`,
+/// behind the prefixes of tabs (`tab2:filter`).
+fn is_live_filter(key: &str) -> bool {
+    let own = key.rsplit(':').next().unwrap_or(key);
+    own == "filter" || own.ends_with("-filter")
 }
 
 pub fn session_label(s: &Value, shared: &Shared) -> String {
@@ -925,6 +1097,26 @@ pub fn session_label(s: &Value, shared: &Shared) -> String {
         _ => "chat".into(),
     };
     format!("{}  · {} · {}", s["title"].as_str().unwrap_or_default(), scope, s["agent"]["kind"].as_str().unwrap_or_default())
+}
+
+/// The top-level sections (jump list ids).
+const SECTIONS: [(&str, &str); 5] = [
+    ("go:chats", "Chats"),
+    ("go:projects", "Projects"),
+    ("go:system", "System"),
+    ("go:harness", "Harness (agents)"),
+    ("go:settings", "Settings"),
+];
+
+fn section_route(name: &str) -> Option<Route> {
+    Some(match name {
+        "chats" => Route::Home,
+        "projects" => Route::Projects,
+        "system" => Route::System(None),
+        "harness" => Route::Harness(None),
+        "settings" => Route::Settings(None),
+        _ => return None,
+    })
 }
 
 /// Open a URL in the local browser (xdg-open / open).
@@ -946,11 +1138,150 @@ fn open_url(url: &str, ctx: &mut Ctx) {
     }
 }
 
-/// A key as typed in a sequence: `g`, `T`, Ctrl+w → `^w`.
-fn key_name(k: &KeyEvent) -> String {
-    match k.code {
-        KeyCode::Char(c) if k.modifiers.contains(KeyModifiers::CONTROL) => format!("^{c}"),
-        KeyCode::Char(c) => c.to_string(),
-        _ => String::new(),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An app on a hub that isn't there (requests fail in the background), with the runtime
+    /// its screens start tasks on.
+    fn app() -> (tokio::runtime::Runtime, App) {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let app = {
+            let _guard = rt.enter();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            App::new(hubness_client::Client::new("http://127.0.0.1:1", None).unwrap(), tx, None, None)
+        };
+        (rt, app)
+    }
+
+    fn key(code: KeyCode) -> AppEvent {
+        AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+    }
+
+    fn visible_id(app: &App) -> ScreenId {
+        app.screens[&app.route].id
+    }
+
+    #[test]
+    fn a_modal_never_replaces_an_open_one() {
+        let (rt, mut app) = app();
+        let _guard = rt.enter();
+        app.ctx.screen = visible_id(&app);
+        app.ctx.prompt("name", "Name", "typed so far");
+        app.apply_requests();
+        // an answer to a background request arrives while the prompt is open
+        app.ctx.screen = visible_id(&app);
+        app.ctx.message("prod: can't connect", "timeout");
+        app.ctx.confirm("sure", "Sure?", "…", false);
+        app.apply_requests();
+        assert!(matches!(&app.modal, Some((_, Modal::Input { key, .. }, input)) if key == "name" && input.value() == "typed so far"));
+        assert_eq!(app.queued.len(), 2);
+        // closing the prompt shows the waiting ones, in order
+        app.handle(key(KeyCode::Esc));
+        assert!(matches!(&app.modal, Some((_, Modal::Message { title, .. }, _)) if title == "prod: can't connect"));
+        app.handle(key(KeyCode::Enter));
+        assert!(matches!(&app.modal, Some((_, Modal::Confirm { key, .. }, _)) if key == "sure"));
+        app.handle(key(KeyCode::Esc));
+        assert!(app.modal.is_none() && app.queued.is_empty());
+    }
+
+    #[test]
+    fn a_screen_the_user_left_neither_navigates_nor_pops_up() {
+        let (rt, mut app) = app();
+        let _guard = rt.enter();
+        let home = visible_id(&app);
+        app.go(Route::Projects);
+        assert_eq!(app.route, Route::Projects);
+        // the chats screen's request finishes now
+        app.ctx.screen = home;
+        app.ctx.go(Route::Chat("s1".into()));
+        app.ctx.back();
+        app.ctx.message("Created", "the session is ready\nmore");
+        app.ctx.prompt("title", "Title", "");
+        app.apply_requests();
+        assert_eq!(app.route, Route::Projects, "the user stays where they are");
+        assert_eq!(app.history, vec![Route::Home]);
+        assert!(app.modal.is_none(), "no popup over another screen");
+        assert_eq!(app.ctx.status, Some(("Created: the session is ready".into(), false)), "a message becomes a status line");
+
+        // queued while its screen was shown, then the user left before it came up
+        app.ctx.screen = visible_id(&app);
+        app.ctx.prompt("a", "A", "");
+        app.ctx.message("Later", "text");
+        app.apply_requests();
+        assert_eq!(app.queued.len(), 1);
+        app.queued[0].0 = home;
+        app.handle(key(KeyCode::Esc));
+        assert!(app.modal.is_none());
+        assert_eq!(app.ctx.status, Some(("Later: text".into(), false)));
+
+        // the screen on display and the app itself still navigate
+        app.ctx.screen = visible_id(&app);
+        app.ctx.go(Route::Settings(None));
+        app.apply_requests();
+        assert_eq!(app.route, Route::Settings(None));
+    }
+
+    #[test]
+    fn a_paste_goes_where_the_keys_go() {
+        let (rt, mut app) = app();
+        let _guard = rt.enter();
+        let paste = |app: &mut App, text: &str| app.handle(AppEvent::Input(Event::Paste(text.into())));
+
+        // the picker: into its filter, as one line
+        app.open_palette();
+        paste(&mut app, "  quit\n");
+        let Some((_, Modal::Pick { filter, selected, items, .. }, _)) = &app.modal else { panic!("the palette is open") };
+        assert_eq!((filter.as_str(), *selected), ("quit", 0));
+        assert_eq!(filtered(items, filter)[0].0.0, "cmd:quit");
+        app.handle(key(KeyCode::Esc));
+
+        // a prompt: into its input, newlines and all for a multi-line one
+        app.ctx.screen = visible_id(&app);
+        app.ctx.prompt_multiline("text", "Text", "");
+        app.apply_requests();
+        paste(&mut app, "one\ntwo");
+        assert!(matches!(&app.modal, Some((_, Modal::Input { .. }, input)) if input.value() == "one\ntwo"));
+        app.handle(key(KeyCode::Esc));
+
+        // a message, the help and the leader menu swallow it: nothing reaches the screen below
+        app.ctx.screen = visible_id(&app);
+        app.ctx.message("Done", "ok");
+        app.apply_requests();
+        paste(&mut app, "x");
+        assert!(matches!(&app.modal, Some((_, Modal::Message { .. }, _))));
+        app.handle(key(KeyCode::Enter));
+        app.open_help();
+        paste(&mut app, "refresh");
+        assert_eq!(app.help.as_ref().map(|h| h.filter.as_str()), Some(""));
+        app.handle(key(KeyCode::Char('/')));
+        paste(&mut app, "refresh");
+        assert_eq!(app.help.as_ref().map(|h| h.filter.as_str()), Some("refresh"));
+        app.help = None;
+        app.overlay = Overlay::Leader(Menu::Root);
+        paste(&mut app, "c");
+        assert!(app.overlay == Overlay::Leader(Menu::Root) && app.route == Route::Home, "a paste is not a leader key");
+    }
+
+    #[test]
+    fn live_filters_by_key() {
+        assert!(is_live_filter("filter"));
+        assert!(is_live_filter("tab3:filter"));
+        assert!(is_live_filter("tab0:import-filter"));
+        assert!(!is_live_filter("filter:rename"));
+        assert!(!is_live_filter("rename"));
+        // only the key's own last part counts, and only the whole word
+        assert!(is_live_filter("tab1:tab2:log-filter"));
+        for other in ["filters", "prefilter", "tab2:filter:name", "tab0:filter-name", "", "tab1:"] {
+            assert!(!is_live_filter(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn sections_route() {
+        for (id, _) in SECTIONS {
+            assert!(section_route(&id[3..]).is_some(), "{id}");
+        }
+        assert_eq!(section_route("nope"), None);
     }
 }

@@ -6,6 +6,53 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-28
+
+### Added
+
+- SSH connections (System → SSH): the hub keeps a key per server — generated or imported,
+  encrypted like secrets, never shown again — and attaches connections to projects and
+  groups with a note. Agent sessions there use them by name (`ssh <name>`, `scp`, git over
+  SSH) through a per-turn ssh-agent, so the agent never sees a key, and read each
+  connection's environment and description to tell prod from dev. A connection reaches
+  agents only after "Test" has connected once and pinned the server's host key.
+- A browser in the Preview tab: the address bar follows navigation inside the app, with
+  back, forward and reload; phone, tablet and laptop sizes with rotation; full screen; a QR
+  code for a real phone; a console of the page's errors and failed requests; "pick an
+  element" that drafts a message for the agent.
+- A browser for agents: `preview_open`, `preview_screenshot`, `preview_click`,
+  `preview_type`, `preview_press`, `preview_eval` and `preview_console` drive a headless
+  Chromium on the hub, so an agent looks at the app it builds — also at a phone size —
+  instead of asking. Needs Chromium or Chrome on the hub machine (`HUBNESS_CHROME`).
+- Four visual styles, each with its own palettes: Expressive (the default), Glass, Paper
+  and Strict.
+- A git client in the web app: changes, staging, commits, branches and history as a
+  source-control view.
+- A chat-first project view on phones, a five-item bottom bar and quick replies.
+- Ten more interface languages (13 in all), with search on the language page.
+- TUI: a `?` help panel and one key table, fuzzy pickers and live filters, Alt+Tab and
+  Alt+Shift+Tab between tabs, the web app's logo as the header, sign-in to GitHub with a
+  one-time code, an SSH section and an Account tab.
+
+### Changed
+
+- **One account.** hubness is single-user: the account set at the first sign-in is the only
+  one. Roles, member permissions and Settings → Users are gone; Settings → Account changes
+  the password and signs out (now also on phones). Agents share the machine's configs, git
+  logins and files, so per-user rights could not be enforced. On upgrade the first account
+  stays and any other account is deleted with its sessions.
+- `hubness user` is `add` (while the hub has no account), `passwd` and `show`; `rm`, `role`
+  and `list` are gone. The API has `PUT /api/auth/password` instead of `/api/users`.
+- The preview proxy adds a small helper script to previewed pages (console, address bar,
+  element picker); `HUBNESS_PREVIEW_INJECT=0` turns it off.
+- Touch screens have roomier controls; boxes, tabs and bars are rounded in the smooth styles.
+- The README is short; the details moved to `docs/guide.md`.
+
+### Fixed
+
+- The installed web app has PNG icons.
+- TUI: `gg`, `G`, Ctrl+d and Ctrl+u work in every list.
+
 ## [0.3.8] - 2026-11-27
 
 ### Changed

@@ -28,7 +28,6 @@ import { StatusDot } from './ui';
 import { ActivityButton, Title, ToolBadge, ToolBar, ToolLauncher } from './workspace/chrome';
 import { GitTool, Readme } from './workspace/git';
 import { ContextMenu, DropZone, GroupBody, TabStrip } from './workspace/tabs';
-import { useAccess } from './AuthGate';
 
 /**
  * git status of each repository: refreshed on changes on disk (the workbench's file stream is
@@ -92,7 +91,7 @@ type MobileView = SideView | 'editor';
 const DESKTOP = '(min-width: 1024px)';
 
 /** Re-render when the window width crosses the desktop/phone boundary. */
-function useDesktop() {
+export function useDesktop() {
   const [desk, setDesk] = useState(() => window.matchMedia(DESKTOP).matches);
   useEffect(() => {
     const m = window.matchMedia(DESKTOP);
@@ -188,7 +187,6 @@ export function RepoWorkspace({
   const [side, setSide] = useLocalStorage<SideView>('hub.side.view', 'files');
   const [sideOpen, setSideOpen] = useLocalStorage('hub.side.open', true);
   const [sideWidth, setSideWidth] = useLocalStorage('hub.side.width', 280);
-  const access = useAccess();
   const [mobileView, setMobileView] = useState<MobileView>(() => (params.get('file') || params.get('t') || params.get('s') ? 'editor' : 'files'));
   const [dirty, setDirty] = useState<Set<string>>(() => new Set());
   /**
@@ -289,7 +287,9 @@ export function RepoWorkspace({
   }, [current?.key]);
 
   const openToolsKey = layout.groups.flatMap((g) => g.tabs.filter((x) => x.ref.kind === 'tool').map((x) => (x.ref as { id: string }).id)).sort().join(',');
-  useEffect(() => onOpenTools?.(openToolsKey ? openToolsKey.split(',') : []), [openToolsKey, onOpenTools]);
+  useEffect(() => {
+    onOpenTools?.(openToolsKey ? openToolsKey.split(',') : []);
+  }, [openToolsKey, onOpenTools]);
 
   const api_: WorkbenchApi = useMemo(
     () => ({
@@ -335,9 +335,7 @@ export function RepoWorkspace({
 
   // running shells without a tab (opened before shells became tabs, or on another device)
   // get one, so none keeps running out of reach
-  const terminal = access.can('terminal');
   useEffect(() => {
-    if (!terminal) return;
     let alive = true;
     api.shells(sessions.scope).then(
       (list) => {
@@ -501,15 +499,10 @@ export function RepoWorkspace({
     [],
   );
 
-  // a member sees the file views and git only with those sections
   const sideViews: { id: SideView; label: string; icon: LucideIcon; badge?: number }[] = [
-    ...(access.can('files')
-      ? [
-          { id: 'files' as const, label: t('side.files'), icon: Files },
-          { id: 'search' as const, label: t('side.search'), icon: Search },
-        ]
-      : []),
-    ...(repos.length && access.can('git') ? [{ id: 'git' as const, label: t('side.git'), icon: GitBranch, badge: changes }] : []),
+    { id: 'files', label: t('side.files'), icon: Files },
+    { id: 'search', label: t('side.search'), icon: Search },
+    ...(repos.length ? [{ id: 'git' as const, label: t('side.git'), icon: GitBranch, badge: changes }] : []),
   ];
   const hiddenView = mobileView !== 'editor' && !sideViews.some((v) => v.id === mobileView);
   useEffect(() => {

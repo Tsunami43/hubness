@@ -1,3 +1,4 @@
+import { copyText } from '../lib/clipboard';
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useOutletContext, useParams } from 'react-router';
 import {
@@ -297,7 +298,8 @@ function CommandLine({ action, onRun, runLabel }: { action: Pick<HarnessAction, 
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard?.writeText(action.command).then(() => {
+            void copyText(action.command).then((ok) => {
+              if (!ok) return;
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             });

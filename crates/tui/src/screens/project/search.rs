@@ -298,6 +298,8 @@ impl Screen for SearchTab {
             }
             KeyCode::PageDown => self.move_by(10),
             KeyCode::PageUp => self.move_by(-10),
+            KeyCode::Home => self.move_by(-(isize::MAX / 2)),
+            KeyCode::End => self.move_by(isize::MAX / 2),
             KeyCode::Enter | KeyCode::Char('o') => self.activate(),
             KeyCode::Left | KeyCode::Right => {
                 let path = match self.list.selected().and_then(|i| self.rows.get(i)) {
