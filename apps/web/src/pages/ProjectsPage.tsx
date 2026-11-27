@@ -24,7 +24,7 @@ type Sort = 'updated' | 'name';
 
 /**
  * Projects page, laid out like the repository list on GitHub: groups in a side column
- * (chips on a phone), projects as a list — name, groups, description and a meta line
+ * (a full-width list on a phone), projects as a list — name, groups, description and a meta line
  * (language, host, folder, last update). Search, group and language filters, sorting.
  */
 export function ProjectsPage() {
@@ -65,7 +65,7 @@ export function ProjectsPage() {
         subtitle={settings?.projectsRoot ? <span className="hidden font-mono sm:inline">{settings.projectsRoot}</span> : undefined}
       />
       <div className="mx-auto grid w-full max-w-6xl gap-6 p-4 lg:grid-cols-[260px_1fr]">
-        {/* groups: side column on desktop, chips on a phone */}
+        {/* groups: side column on desktop, a full-width list on a phone */}
         <aside className="min-w-0">
           <div className="mb-2 flex items-center gap-2">
             <h2 className="flex-1 text-sm font-semibold">{t('projects.tab.groups')}</h2>
@@ -76,9 +76,10 @@ export function ProjectsPage() {
             ) : null}
           </div>
           {groups.length ? (
-            <ul className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] lg:block lg:space-y-1 lg:overflow-visible">
+            // one group per line at full width: a long project list ends with … instead of running off the screen
+            <ul className="space-y-2 lg:space-y-1">
               {groups.map((g) => (
-                <li key={g.id} className="shrink-0">
+                <li key={g.id} className="min-w-0">
                   <Link data-jump to={`/groups/${g.id}`} className="group flex items-start gap-2 border border-line bg-surface px-3 py-2 hover:border-accent/60 lg:border-transparent lg:bg-transparent lg:px-2 lg:hover:bg-sunken">
                     <Boxes className="mt-0.5 size-4 shrink-0 text-accent" />
                     <span className="min-w-0 flex-1">
