@@ -589,8 +589,8 @@ export const en = {
   'style.glassHint': 'Translucent blurred panels over colour, soft rounded shapes.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'Tonal surfaces, big rounded shapes, pill buttons.',
-  'style.brutal': 'Brutal',
-  'style.brutalHint': 'Ink lines, hard shadows, loud flat colours.',
+  'style.paper': 'Paper',
+  'style.paperHint': 'Warm pages and ink: serif headings, soft shadows.',
   'settings.theme': 'Theme',
   'settings.appearance': 'Appearance',
 

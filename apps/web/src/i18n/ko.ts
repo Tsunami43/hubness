@@ -590,8 +590,8 @@ export const ko: Record<MessageKey, string> = {
   'style.glassHint': '색 위의 반투명 블러 패널, 부드러운 모서리.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': '톤 있는 표면, 큰 둥근 모서리, 알약 버튼.',
-  'style.brutal': '브루탈',
-  'style.brutalHint': '굵은 선, 단단한 그림자, 강렬한 평면 색.',
+  'style.paper': '종이',
+  'style.paperHint': '따뜻한 종이와 잉크: 세리프 제목, 부드러운 그림자.',
   'settings.theme': '테마',
   'settings.appearance': '모양',
 

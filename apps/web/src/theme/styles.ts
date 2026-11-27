@@ -63,37 +63,37 @@ function tonal(id: string, label: string, dark: Omit<Palette, 'syntax' | 'ok' | 
   };
 }
 
-/** Neo-brutalist: paper and ink, one loud accent. */
-function ink(id: string, label: string, accent: { dark: string; light: string; fg: string }): Theme {
+/** Paper: warm pages, ink text, a quiet accent — light first, with a night-reading variant. */
+function paper(id: string, label: string, c: { page: string; card: string; ink: string; accent: string; night: string; nightAccent: string }): Theme {
   return {
     id,
     label,
     dark: {
-      bg: '#121212',
-      panel: '#1d1d1d',
-      sunken: '#2a2a2a',
-      border: '#f2f2f2',
-      fg: '#f7f7f2',
-      muted: '#b8b8b0',
-      accent: accent.dark,
-      accentFg: accent.fg,
-      ok: '#4ade80',
-      warn: '#fb923c',
-      danger: '#f87171',
+      bg: c.night,
+      panel: `color-mix(in srgb, ${c.night} 88%, #ffffff)`,
+      sunken: `color-mix(in srgb, ${c.night} 80%, #ffffff)`,
+      border: `color-mix(in srgb, ${c.night} 74%, #ffffff)`,
+      fg: '#ece6da',
+      muted: '#a59d8f',
+      accent: c.nightAccent,
+      accentFg: '#1a1714',
+      ok: '#86c79a',
+      warn: '#e3b062',
+      danger: '#ef8f80',
       syntax: SYNTAX_DARK,
     },
     light: {
-      bg: '#fbf8ef',
-      panel: '#ffffff',
-      sunken: '#f1ede0',
-      border: '#111111',
-      fg: '#111111',
-      muted: '#55524a',
-      accent: accent.light,
-      accentFg: accent.fg,
-      ok: '#15803d',
-      warn: '#c2410c',
-      danger: '#dc2626',
+      bg: c.page,
+      panel: c.card,
+      sunken: `color-mix(in srgb, ${c.page} 88%, ${c.ink})`,
+      border: `color-mix(in srgb, ${c.page} 82%, ${c.ink})`,
+      fg: c.ink,
+      muted: `color-mix(in srgb, ${c.ink} 62%, ${c.page})`,
+      accent: c.accent,
+      accentFg: '#ffffff',
+      ok: '#2f7d4c',
+      warn: '#a35f00',
+      danger: '#b3261e',
       syntax: SYNTAX_LIGHT,
     },
   };
@@ -133,9 +133,9 @@ export const EXPRESSIVE_THEMES: Theme[] = [
   ),
 ];
 
-export const BRUTAL_THEMES: Theme[] = [
-  ink('lemon', 'Lemon', { dark: '#ffd60a', light: '#ffd60a', fg: '#111111' }),
-  ink('bubblegum', 'Bubblegum', { dark: '#ff6fb1', light: '#ff4fa0', fg: '#111111' }),
-  ink('cobalt', 'Cobalt', { dark: '#5b8cff', light: '#2f5bff', fg: '#ffffff' }),
-  ink('signal', 'Signal', { dark: '#ff4d3d', light: '#ff3b2f', fg: '#ffffff' }),
+export const PAPER_THEMES: Theme[] = [
+  paper('cream', 'Cream', { page: '#f6f1e7', card: '#fffdf8', ink: '#2b2620', accent: '#b4532a', night: '#1c1915', nightAccent: '#e8916a' }),
+  paper('sepia', 'Sepia', { page: '#f1e7d6', card: '#fbf5ea', ink: '#3a2c1d', accent: '#8a5a2b', night: '#1f1a14', nightAccent: '#d4a373' }),
+  paper('ink', 'Ink', { page: '#f4f4f0', card: '#ffffff', ink: '#1e2430', accent: '#2848a8', night: '#15181f', nightAccent: '#8fa8f0' }),
+  paper('sage', 'Sage', { page: '#eff2ea', card: '#fbfcf8', ink: '#242b22', accent: '#4c7a55', night: '#171b16', nightAccent: '#93c19c' }),
 ];

@@ -1,4 +1,4 @@
-import { BRUTAL_THEMES, EXPRESSIVE_THEMES, GLASS_THEMES } from './styles';
+import { EXPRESSIVE_THEMES, GLASS_THEMES, PAPER_THEMES } from './styles';
 
 /**
  * Color themes. A theme sets base colors for the dark and light variants;
@@ -45,34 +45,6 @@ export interface Theme {
 }
 
 export const THEMES: Theme[] = [
-  {
-    id: 'standard',
-    label: 'Standard',
-    dark: {
-      bg: '#282c34',
-      fg: '#9cdef2',
-      panel: '#111111',
-      border: '#355a66',
-      accent: '#e06c75',
-      ok: '#50fa7b',
-      warn: '#f0ad4e',
-      danger: '#ff5f66',
-      // GitHub Dark palette; strings are warm: blue ones would blend with the theme's primary text
-      syntax: { comment: '#8b949e', keyword: '#ff7b72', constant: '#79c0ff', entity: '#ffa657', function: '#d2a8ff', tag: '#7ee787', string: '#e5c07b' },
-    },
-    light: {
-      bg: '#f3f5f7',
-      fg: '#26313a',
-      panel: '#ffffff',
-      border: '#cbd3da',
-      accent: '#b34d5c',
-      ok: '#2e8b48',
-      warn: '#b26a00',
-      danger: '#c0392b',
-      // GitHub Light palette
-      syntax: { comment: '#6e7781', keyword: '#cf222e', constant: '#0550ae', entity: '#953800', function: '#8250df', tag: '#116329', string: '#0a3069' },
-    },
-  },
   {
     // Cendre (github.com/Aejkatappaja/cendre, hard variant): ash and embers — a warm
     // near-black background, ember accent. The original is dark-only; the light one is
@@ -243,11 +215,11 @@ export const THEMES: Theme[] = [
 ];
 
 /**
- * Visual styles: how surfaces, shapes and type look; each has its own palettes. Strict is the
- * original TUI look (monospace, square, thin lines); the others are set up in index.css under
- * `html[data-style=…]`.
+ * Visual styles: how surfaces, shapes and type look; each has its own palettes. Expressive is the
+ * default; Strict is the original TUI look (monospace, square, thin lines); the others are set up
+ * in index.css under `html[data-style=…]`.
  */
-export type StyleId = 'strict' | 'glass' | 'expressive' | 'brutal';
+export type StyleId = 'expressive' | 'strict' | 'glass' | 'paper';
 
 export interface Style {
   id: StyleId;
@@ -255,10 +227,10 @@ export interface Style {
 }
 
 export const STYLES: Style[] = [
+  { id: 'expressive', themes: EXPRESSIVE_THEMES },
   { id: 'strict', themes: THEMES },
   { id: 'glass', themes: GLASS_THEMES },
-  { id: 'expressive', themes: EXPRESSIVE_THEMES },
-  { id: 'brutal', themes: BRUTAL_THEMES },
+  { id: 'paper', themes: PAPER_THEMES },
 ];
 
 export type Mode = 'system' | 'dark' | 'light';
@@ -284,7 +256,8 @@ const write = (k: string, v: string) => {
   } catch {}
 };
 
-let styleId: StyleId = STYLES.some((x) => x.id === read(STYLE_KEY)) ? (read(STYLE_KEY) as StyleId) : 'strict';
+// Expressive by default; a style that no longer exists falls back to it
+let styleId: StyleId = STYLES.some((x) => x.id === read(STYLE_KEY)) ? (read(STYLE_KEY) as StyleId) : 'expressive';
 const styleOf = (id: StyleId) => STYLES.find((x) => x.id === id) ?? STYLES[0]!;
 const savedTheme = (id: StyleId) => {
   const saved = read(themeKey(id));

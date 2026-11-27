@@ -83,7 +83,7 @@ export function MobileWorkspace({
       {sessionOpen ? null : (
         <>
           <TopBar back="/projects" title={badge ? <span className="flex items-baseline gap-2">{title}<span className="border border-line px-1 text-[10px] font-normal text-muted">{badge}</span></span> : title} subtitle={subtitle} />
-          <nav className="grid shrink-0 border-b border-line bg-surface" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+          <nav className="ui-tabs grid shrink-0 border-b border-line bg-surface" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
             {tabs.map((x) => (
               <button
                 key={x.id}

@@ -590,8 +590,8 @@ export const de: Record<MessageKey, string> = {
   'style.glassHint': 'Durchscheinende, weichgezeichnete Flächen über Farbe, sanfte Rundungen.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'Tonale Flächen, große Rundungen, Pillen-Buttons.',
-  'style.brutal': 'Brutal',
-  'style.brutalHint': 'Tintenlinien, harte Schatten, laute flache Farben.',
+  'style.paper': 'Papier',
+  'style.paperHint': 'Warme Seiten und Tinte: Serifen-Überschriften, sanfte Schatten.',
   'settings.theme': 'Theme',
   'settings.appearance': 'Darstellung',
 

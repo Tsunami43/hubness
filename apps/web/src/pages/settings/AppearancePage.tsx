@@ -142,16 +142,16 @@ export function AppearancePage() {
 /** A tiny drawing of a style's shapes (the real style applies to the whole app when chosen). */
 function StylePreview({ id }: { id: StyleId }) {
   const box: Record<StyleId, string> = {
-    strict: 'rounded-none border border-line font-mono',
+    strict: 'ui-square rounded-none border border-line font-mono',
     glass: 'rounded-[12px] border border-white/20 bg-white/10 shadow-lg backdrop-blur',
     expressive: 'rounded-[18px] border border-transparent bg-sunken',
-    brutal: 'rounded-none border-2 border-fg shadow-[3px_3px_0_0_currentColor]',
+    paper: 'rounded-[10px] border border-line bg-surface shadow-[0_2px_10px_rgba(0,0,0,0.12)]',
   };
   const btn: Record<StyleId, string> = {
     strict: 'rounded-none',
     glass: 'rounded-[8px]',
     expressive: 'rounded-full',
-    brutal: 'rounded-none border-2 border-fg',
+    paper: 'rounded-[7px]',
   };
   const backdrop = id === 'glass' ? 'bg-[radial-gradient(circle_at_20%_20%,#8b7dff66,transparent_60%),radial-gradient(circle_at_80%_70%,#22d3ee55,transparent_60%)]' : '';
   return (
