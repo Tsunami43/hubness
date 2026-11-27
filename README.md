@@ -4,45 +4,23 @@
 
 # hubness
 
-A self-hosted web hub for coding agents. Run Claude Code, Codex, OpenCode and Grok on your
-own machine or server and work with them from one browser UI — on a desktop or a phone.
+A self-hosted hub for coding agents. Run Claude Code, Codex, OpenCode and Grok on your own
+machine or server and work with them from one place — a browser on a desktop or a phone, or
+a terminal UI.
 
 ## Features
 
-- **Chats with agents** — streaming event feed, tool calls, diffs, file attachments and
-  inline permission approvals. Switch agent and model per session.
-- **Projects and groups** — clone or create repositories, group several repositories so an
-  agent can work across them, keep per-project notes in a `.hub/hub.yaml` manifest.
-- **Workspace** — file explorer, CodeMirror editor (with Vim mode), full-text search,
-  side panes that agents can open themselves (preview, file, diff) via a built-in MCP tool.
-- **Git** — status, staging, commits, branches, history graph, and provider logins for
-  pushing to GitHub/GitLab.
-- **Run and Preview** — named run commands per project, interactive shells in xterm.js,
-  and a preview proxy that makes a dev server reachable from your phone.
-- **Sandboxing** — run agents and commands in a bubblewrap sandbox that hides other
-  projects, hub data and credentials.
-- **Secrets** — encrypted per-project environment variables.
-- **Voice input** — dictate into the chat input: transcribed on the host with whisper.cpp
-  (the hub builds it and downloads models from Settings) or by any OpenAI-compatible
-  service (Groq, OpenAI, speaches).
-- **Harness** — install, update, sign in and configure the agent CLIs from the UI. Extensions
-  pages show every agent at once: MCP servers (with a catalog from the official MCP Registry,
-  written to the agents' own config files), skills (copy between agents, write, import from
-  git), rules files, subagents, commands and plugins.
-- **System** — Docker containers, systemd units, packages and disks of the host, with an
-  "ask about this" button that starts a chat with the relevant logs attached.
-- English and Russian UI, light and dark themes, keyboard-driven navigation.
-
-## Requirements
-
-- Linux x86_64 (any current distro) or a Mac with Apple silicon — ready-made builds; other
-  machines build from source (`--from-source`). `hubness server` needs systemd
-- git
-- At least one agent CLI: `claude`, `codex` (through `@zed-industries/codex-acp`, needs
-  Node.js), `opencode` or `grok` — the Harness page can install them for you
-- Optional: `bwrap` (bubblewrap) for the sandbox environment, Docker and systemd for the
-  System page
-- For development: Node.js 24+, pnpm 11 (or `npx -y pnpm@11.29.0`; corepack is not needed), Rust 1.91+
+- **Chats with agents** — a live feed with tool calls, diffs, attachments and permission
+  approvals; any agent and model per session.
+- **Projects and groups** — repositories, and groups of them an agent works across.
+- **Workspace** — files, editor (with Vim mode), search, a git client, shells and run commands.
+- **Preview** — the app you are building in a built-in browser: device sizes, console, pick an
+  element and send it to the agent. Agents have a browser of their own to check their work.
+- **SSH connections** — keys the hub holds for your servers; agents use them by name and never
+  see a key.
+- **Harness** — install, sign in and configure the agent CLIs: MCP servers, skills, rules.
+- **System** — Docker, systemd units and packages of the host, with "ask about this".
+- **Sandbox, secrets, voice input**, four visual styles, 13 languages.
 
 ## Install
 
@@ -50,144 +28,39 @@ own machine or server and work with them from one browser UI — on a desktop or
 curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh
 ```
 
-It downloads the latest release for your OS and CPU, checks its sha256 and puts one
-command, `hubness`, into `~/.local/bin`: the hub (server with the web app inside), its
-management commands, the terminal UI and self-update. `--tui-only` installs the client build
-of the same command instead — the terminal UI and `webapp` for a hub on another machine, no
-server code.
-
-On a first install in a terminal it asks where the hub keeps its data (default
-`~/.local/share/hubness`), starts it as a service and offers to create an account. Later the
-folder is shown in Settings → Storage (web) and Settings → Connection (TUI) and changed with
-`hubness server config data-dir <path>` + `hubness server restart`.
-
-Options go after `sh -s --`:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --tui-only     # client build: TUI only
-curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --version 0.2.0
-curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --from-source  # cargo (+ Node.js for the web app)
-curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --data-dir /srv/hubness  # no questions
-curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --no-start     # binaries only
-curl -fsSL https://raw.githubusercontent.com/Tsunami43/hubness/main/install.sh | sh -s -- --uninstall    # data stays
-```
-
-`--dir DIR` (or `HUBNESS_INSTALL_DIR`) installs elsewhere. Upgrade with `hubness update`
-(`--check` only reports; it restarts the service on the new binary), or run the installer
-again. Coming from a pre-0.2 build (`hubcli`, `hubtui`)? The installer removes them and
-moves the service over to `hubness`.
+One command, `hubness`, lands in `~/.local/bin`: the hub with the web app inside, the
+terminal UI and self-update (`hubness update`). Linux x86_64 and Apple silicon have ready
+builds; elsewhere add `--from-source`.
 
 ## Usage
 
-**Run the hub** as a systemd user service:
-
 ```sh
-hubness server start          # http://127.0.0.1:8787, starts again at login (asks for the data folder the first time)
-hubness user add alice        # an account: sign-in for the web app, the TUI and the API
-hubness server status         # running? health, URL, data folder, accounts
-hubness server logs -f        # its log
+hubness server start     # the hub as a service: http://127.0.0.1:8787
+hubness webapp           # open it in the browser
+hubness tui              # or in the terminal
+hubness user add alice   # the hub's account — needed before it listens beyond this machine
 ```
 
-Open the URL in a browser (`hubness webapp`), or run `hubness tui`. On a server, `sudo loginctl enable-linger $USER`
-keeps the hub running after you log out and across reboots (`server start` reminds you).
-Without systemd (macOS, containers) run `hubness serve` under your own process manager.
+You need git and at least one agent CLI (`claude`, `codex`, `opencode`, `grok`) — the
+Harness page installs them. Optional: bubblewrap for the sandbox, Docker, Chromium for the
+agents' browser, OpenSSH for SSH connections.
 
-**Settings** live in `~/.config/hubness/hub.env`; data (database, logs, keys) in
-`~/.local/share/hubness`:
+The [guide](docs/guide.md) covers install options, remote access and every setting.
 
-```sh
-hubness server config                        # show host, port, data-dir
-hubness server config port 9000              # then: hubness server restart
-hubness server start --data-dir ~/hubness/.data   # keep using an existing data folder
-```
-
-**The terminal UI.** The first `hubness tui` asks for the hub's address — a domain or an IP,
-with `:port` when it isn't 8787 (a bare host tries `https://` first, then `http://…:8787`;
-Enter alone is this machine). It signs in if the hub has accounts and remembers the hub, so
-the next start opens it directly. `Space H` switches between saved hubs or adds one;
-`hubness tui --url <address>` opens another one from the command line.
-
-**Remote use.** The hub listens on `127.0.0.1` by default. The simplest way in keeps it
-there and forwards the port over SSH:
-
-```sh
-ssh -N -L 8787:127.0.0.1:8787 you@server    # on your laptop, then: hubness tui (address 127.0.0.1)
-```
-
-To listen on the network, create an account first and set the host — hubness refuses a
-public address while there is no account:
-
-```sh
-hubness user add alice
-hubness server config host 0.0.0.0 && hubness server restart
-```
-
-Plain HTTP is fine on a VPN (Tailscale, WireGuard); across the internet put the hub behind an
-HTTPS reverse proxy and connect with `hubness tui --url hub.example.com`. See
-[Remote access](crates/server/README.md#remote-access).
-
-Browsers allow the microphone (voice input) only on `localhost` or over HTTPS: on a phone
-use an SSH tunnel, `tailscale serve --https=443 http://127.0.0.1:8787` or the HTTPS proxy.
-Over plain HTTP the microphone button offers an audio file instead.
-
-## Quick start (development)
-
-```sh
-git clone <repo-url> hubness
-cd hubness
-pnpm install
-cp .env.example .env   # optional, defaults are fine
-pnpm dev
-```
-
-Open <http://127.0.0.1:5173>. The API server listens on `127.0.0.1:8787`.
-
-Production:
-
-```sh
-pnpm build
-pnpm start             # serves the UI and API on http://127.0.0.1:8787
-```
-
-## Configuration
-
-All settings are environment variables (see [`.env.example`](.env.example)):
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `HUBNESS_PORT` | `8787` | Server port |
-| `HUBNESS_HOST` | `127.0.0.1` | Bind address |
-| `HUBNESS_DATA_DIR` | `./.data` | SQLite database, logs, keys |
-| `HUBNESS_HOME` | `~/hub` | Hub working folder: `inbox`, `projects`, `home` |
-| `HUBNESS_SECRET_KEY` | generated | Key for project secrets (comma-separated for rotation) |
-| `HUBNESS_PREVIEW_PORTS` | `8790-8809` | Port range for the preview proxy |
-| `HUBNESS_MCP_REGISTRY` | `https://registry.modelcontextprotocol.io` | MCP Registry searched by Harness → MCP servers → Catalog |
-| `HUBNESS_CLAUDE_BIN`, `HUBNESS_OPENCODE_BIN`, `HUBNESS_GROK_BIN` | binary name | Agent CLI paths |
-| `HUBNESS_CODEX_ACP` | pinned `npx` command | Codex ACP adapter command |
-
-> **Security.** hubness gives agents shell access to the host. Keep it on `127.0.0.1`
-> unless it has accounts (`hubness user add`; the TypeScript dev server has none), and put
-> it behind HTTPS or a VPN before it leaves your machine.
+> **Security.** hubness gives agents shell access to the host. It listens on `127.0.0.1`
+> and has one account; put it behind HTTPS or a VPN before it leaves your machine.
 
 ## Development
 
 ```sh
-pnpm dev      # server with auto-restart + Vite dev server
-pnpm check    # typecheck all packages
+pnpm install
+pnpm dev      # server (:8787) + Vite (:5173)
+pnpm check    # typecheck
 pnpm test     # server tests
 ```
 
-The repository is a pnpm workspace:
-
-```
-apps/server      Hono API, agent runtime, SQLite (node:sqlite)
-apps/web         React 19, Vite, Tailwind CSS 4
-packages/shared  Shared TypeScript types
-crates/          Rust server, API client, TUI; the hubness binary
-```
-
-See [CLAUDE.md](CLAUDE.md) for architecture notes and [CONTRIBUTING.md](CONTRIBUTING.md)
-for the workflow.
+Node.js 24+, pnpm 11 and Rust 1.91+. See [CLAUDE.md](CLAUDE.md) for the architecture and
+[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
 
 ## License
 
