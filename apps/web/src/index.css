@@ -288,7 +288,8 @@ button:disabled {
  * expressive — Material 3 Expressive-like: tonal containers instead of lines, big rounded
  *              shapes that tell containers apart, pill buttons, springy press.
  * paper      — warm pages and ink: serif headings, hairlines, soft paper shadows.
- * Components carry hooks for this: ui-btn, ui-icon, ui-input, ui-sheet, ui-pop, ui-tabbar /
+ * Components carry hooks for this: ui-btn, ui-icon, ui-input, ui-sheet, ui-pop, ui-solid
+ * (a layer floating over the page: never see-through), ui-tabbar /
  * ui-tab (the phone's bottom bar), ui-tabs (a row of tabs); a bordered panel
  * (.border.bg-surface) is a card. The rounded styles round every bordered box.
  * ==================================================================================== */
@@ -334,6 +335,16 @@ html[data-style='glass'] .ui-icon {
   html[data-style='glass'] .ui-sheet {
     border-radius: 22px;
   }
+}
+/*
+ * Layers that float over the page (dialogs, sheets, drawers, menus, popovers, tooltips,
+ * toasts) are opaque: through a translucent panel the page's text shows right behind the
+ * layer's own text — and Safari often draws a nested or animated backdrop-filter unblurred.
+ */
+html[data-style='glass'] .ui-solid {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: var(--color-surface-solid);
 }
 /* readability first: no see-through panels when the system asks for it, or without blur support */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {

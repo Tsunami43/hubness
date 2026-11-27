@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { ChevronDown, MessageSquarePlus, MessagesSquare } from 'lucide-react';
 import { useAsk } from '../lib/ask';
 import { t } from '../i18n';
+import { Layer } from './ui';
 
 /**
  * "Ask the agent" buttons for a selection: into an open session or a new one. The target is
@@ -66,7 +67,7 @@ export function AskActions({
         {t('ask.new')}
       </button>
       {menu ? (
-        <div role="menu" className={`absolute left-0 z-50 max-h-72 w-72 max-w-[80vw] overflow-y-auto border border-line bg-surface py-1 shadow-xl shadow-black/40 ${up ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
+        <div role="menu" className={`ui-solid absolute left-0 z-50 max-h-72 w-72 max-w-[80vw] overflow-y-auto border border-line bg-surface py-1 shadow-xl shadow-black/40 ${up ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
           <div className="px-3 py-1 text-[11px] text-muted">{t('ask.pick')}</div>
           {api.sessions.map((s) => (
             <button key={s.id} type="button" role="menuitem" onClick={() => go(s.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-sunken">
@@ -107,15 +108,17 @@ export function SelectionAsk({ container, format }: { container: RefObject<HTMLE
 
   if (!ask || !box) return null;
   return (
-    <div className="fixed z-40 -translate-x-1/2 -translate-y-full border border-line bg-surface text-[13px] shadow-xl shadow-black/40" style={{ left: box.x, top: box.y }}>
-      <AskActions
-        text={box.text}
-        onDone={() => {
-          window.getSelection()?.removeAllRanges();
-          setBox(null);
-        }}
-      />
-    </div>
+    <Layer>
+      <div className="ui-solid fixed z-40 -translate-x-1/2 -translate-y-full border border-line bg-surface text-[13px] shadow-xl shadow-black/40" style={{ left: box.x, top: box.y }}>
+        <AskActions
+          text={box.text}
+          onDone={() => {
+            window.getSelection()?.removeAllRanges();
+            setBox(null);
+          }}
+        />
+      </div>
+    </Layer>
   );
 }
 

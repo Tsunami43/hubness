@@ -156,6 +156,10 @@ Always run `pnpm check` and `pnpm test` before considering a change done; for ch
   `preview-inject.js` is tested in `preview-inject.test.ts` (a `vm` context).
 - A React effect without braces returns its expression: only state setters may be written
   that way (`web-logic.test.ts` checks it) — a returned Promise breaks the app on the next update.
+- A layer floating over the page (dialog, sheet, menu, popover, tooltip, toast) carries the
+  `ui-solid` class (opaque in the glass style) and, when `position: fixed`, renders through
+  `<Layer>` from `components/ui.tsx` (a portal to `<body>`): a glass panel's backdrop-filter
+  would otherwise trap it inside that panel.
 - Content that comes from a previewed page (logs, picked elements) is untrusted: it reaches an
   agent only fenced and marked as page content.
 - Local data lives in `.data/` (SQLite, logs, keys) and is git-ignored. Do not commit it.

@@ -14,6 +14,13 @@ All notable changes to this project are documented here. The format follows
   the check button (TUI: `v`). The picture is kept by the hub, so a private host's works too.
   A password can't be checked this way — the hosts' APIs take tokens only.
 
+### Fixed
+
+- Glass style: dialogs, sheets, menus, popovers, tooltips and toasts are opaque — the page's
+  text no longer shows through them. A dialog opened inside a glass panel (Harness → MCP →
+  Catalog / Add manually) covers the whole screen again instead of being trapped in that
+  panel under its neighbours.
+
 ## [0.4.0] - 2026-11-28
 
 ### Added

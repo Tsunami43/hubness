@@ -83,7 +83,7 @@ export function ConfirmHost() {
         aria-modal="true"
         aria-label={current.title ?? current.message}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm border border-line bg-surface shadow-2xl shadow-black/50"
+        className="ui-solid w-full max-w-sm border border-line bg-surface shadow-2xl shadow-black/50"
       >
         <div className="px-4 pt-4 pb-3">
           {current.title ? <h2 className="mb-1 font-semibold text-accent">{current.title}</h2> : null}

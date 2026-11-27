@@ -5,7 +5,7 @@ import { api } from '../../lib/api';
 import { fmtSize } from '../../lib/format';
 import { useVoiceSettings } from '../../lib/voice';
 import { liveStream } from '../../lib/stream';
-import { Button, ErrorLine, Field, IconButton, inputCls, Spinner } from '../../components/ui';
+import { Button, ErrorLine, Field, IconButton, Layer, Spinner, inputCls } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { sheetTermSize } from '../../components/Terminal';
 import { confirmDialog } from '../../components/Confirm';
@@ -326,37 +326,39 @@ function SetupOverlay({ steps, onFinish }: { steps: Step[]; onFinish: () => void
   const title = step.kind === 'download' ? t('voice.downloading', { name: step.label }) : t('voice.building');
   const percent = step.kind === 'download' ? percentOf(lines.at(-1)) : null;
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={title}>
-      <div className="w-full max-w-md space-y-4 border border-line bg-surface p-5">
-        {failed !== null ? (
-          <>
-            <p className="flex items-center gap-2 font-semibold text-danger">
-              <CircleAlert className="size-5" /> {step.kind === 'download' ? t('voice.downloadFailed') : t('voice.buildFailed')}
-            </p>
-            <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed || lines.join('\n')}</pre>
-            <Button variant="primary" onClick={onFinish}>
-              {t('common.close')}
-            </Button>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center gap-4">
-              <Ring percent={percent} />
-              <div className="min-w-0">
-                {steps.length > 1 ? <p className="text-xs text-muted">{t('voice.step', { n: index + 1, total: steps.length })}</p> : null}
-                <p className="font-semibold">{title}</p>
-                <p className="text-xs text-muted">{step.kind === 'download' ? t('voice.downloadingHint') : t('voice.buildingHint')}</p>
+    <Layer>
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={title}>
+        <div className="ui-solid w-full max-w-md space-y-4 border border-line bg-surface p-5">
+          {failed !== null ? (
+            <>
+              <p className="flex items-center gap-2 font-semibold text-danger">
+                <CircleAlert className="size-5" /> {step.kind === 'download' ? t('voice.downloadFailed') : t('voice.buildFailed')}
+              </p>
+              <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed || lines.join('\n')}</pre>
+              <Button variant="primary" onClick={onFinish}>
+                {t('common.close')}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-4">
+                <Ring percent={percent} />
+                <div className="min-w-0">
+                  {steps.length > 1 ? <p className="text-xs text-muted">{t('voice.step', { n: index + 1, total: steps.length })}</p> : null}
+                  <p className="font-semibold">{title}</p>
+                  <p className="text-xs text-muted">{step.kind === 'download' ? t('voice.downloadingHint') : t('voice.buildingHint')}</p>
+                </div>
+                <span className="ml-auto font-mono text-sm text-muted tabular-nums">{clock(secs)}</span>
               </div>
-              <span className="ml-auto font-mono text-sm text-muted tabular-nums">{clock(secs)}</span>
-            </div>
-            {step.kind === 'build' ? <p className="truncate font-mono text-xs text-muted">{lines.at(-1) ?? ''}</p> : null}
-            <Button size="sm" disabled={!job} onClick={() => job && void api.jobKill(job.id)}>
-              <Square className="size-3.5" /> {t('term.stop')}
-            </Button>
-          </>
-        )}
+              {step.kind === 'build' ? <p className="truncate font-mono text-xs text-muted">{lines.at(-1) ?? ''}</p> : null}
+              <Button size="sm" disabled={!job} onClick={() => job && void api.jobKill(job.id)}>
+                <Square className="size-3.5" /> {t('term.stop')}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </Layer>
   );
 }
 

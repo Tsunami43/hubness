@@ -32,7 +32,7 @@ export function LeaderOverlay() {
     : null;
 
   if (!prefs.hints)
-    return <div className="pointer-events-none fixed right-3 bottom-3 z-[60] border border-accent bg-surface px-2 py-1 text-xs text-accent">{leaderLabel(prefs.leader)} …</div>;
+    return <div className="ui-solid pointer-events-none fixed right-3 bottom-3 z-[60] border border-accent bg-surface px-2 py-1 text-xs text-accent">{leaderLabel(prefs.leader)} …</div>;
   // only page items to jump to (no screen actions besides navigation): a compact bar, the page stays visible
   const compact = jumps.length > 0 && actions.every((a) => a.key.length === 1 && (a.key !== a.key.toLowerCase() || !/[a-z0-9]/.test(a.key)));
 
@@ -44,7 +44,7 @@ export function LeaderOverlay() {
       <>
         {labels}
         <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex justify-center p-3">
-          <div className="flex max-w-4xl flex-wrap items-center gap-x-4 gap-y-1 border border-accent/60 bg-surface/95 px-3 py-2 text-xs shadow-2xl backdrop-blur">
+          <div className="ui-solid flex max-w-4xl flex-wrap items-center gap-x-4 gap-y-1 border border-accent/60 bg-surface/95 px-3 py-2 text-xs shadow-2xl backdrop-blur">
             <span className="border border-accent px-1.5 text-accent">{leaderLabel(prefs.leader)}</span>
             <span className="text-muted">{t('keys.jumpHint')}</span>
             {actions.map((a) => (
@@ -65,7 +65,7 @@ export function LeaderOverlay() {
     <>
     {labels}
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex justify-center p-3">
-      <div className="pointer-events-auto max-h-[60dvh] w-full max-w-4xl overflow-auto border border-accent/60 bg-surface/95 p-3 shadow-2xl backdrop-blur">
+      <div className="ui-solid pointer-events-auto max-h-[60dvh] w-full max-w-4xl overflow-auto border border-accent/60 bg-surface/95 p-3 shadow-2xl backdrop-blur">
         <div className="mb-2 flex items-center gap-2 text-xs text-muted">
           <span className="border border-accent px-1.5 text-accent">{leaderLabel(prefs.leader)}</span>
           <span className="flex-1">{t('keys.panelHint')}</span>

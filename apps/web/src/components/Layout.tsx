@@ -8,7 +8,7 @@ import { timeAgo } from '../lib/format';
 import { useArchivedSessions, useLocalStorage, useRecentSessions, useSessionSync } from '../lib/hooks';
 import { useAgents } from '../lib/agents';
 import { t } from '../i18n';
-import { Button, ErrorLine, PageSpinner, StatusDot } from './ui';
+import { Button, ErrorLine, Layer, PageSpinner, StatusDot } from './ui';
 import { confirmDialog } from './Confirm';
 import { matchesQuery, SessionSearch } from './SessionSearch';
 import { AgentIcon } from './AgentIcon';
@@ -484,19 +484,21 @@ export function Layout() {
 
         {/* Phone: sessions panel slides in from the right */}
         {drawer ? (
-          <div className="inset-app z-50 lg:hidden" onClick={closeDrawer}>
-            <div ref={backdropRef} className="absolute inset-0 bg-black/50 transition-opacity duration-200 motion-safe:animate-fade-in" />
-            {/* the whole screen on a phone (× or a swipe to the right closes it); a side panel on a tablet */}
-            <aside
-              ref={drawerRef}
-              {...drawerSwipe}
-              onClick={(e) => e.stopPropagation()}
-              className="pb-safe absolute inset-y-0 right-0 flex w-full flex-col bg-surface motion-safe:animate-slide-in-right sm:w-[86vw] sm:max-w-lg sm:border-l sm:border-line"
-            >
-              {panelHeader(closeDrawer, 'close')}
-              <SessionsPanel onPick={() => setDrawer(false)} />
-            </aside>
-          </div>
+          <Layer>
+            <div className="inset-app z-50 lg:hidden" onClick={closeDrawer}>
+              <div ref={backdropRef} className="absolute inset-0 bg-black/50 transition-opacity duration-200 motion-safe:animate-fade-in" />
+              {/* the whole screen on a phone (× or a swipe to the right closes it); a side panel on a tablet */}
+              <aside
+                ref={drawerRef}
+                {...drawerSwipe}
+                onClick={(e) => e.stopPropagation()}
+                className="ui-solid pb-safe absolute inset-y-0 right-0 flex w-full flex-col bg-surface motion-safe:animate-slide-in-right sm:w-[86vw] sm:max-w-lg sm:border-l sm:border-line"
+              >
+                {panelHeader(closeDrawer, 'close')}
+                <SessionsPanel onPick={() => setDrawer(false)} />
+              </aside>
+            </div>
+          </Layer>
         ) : null}
       </div>
     </NavContext.Provider>
