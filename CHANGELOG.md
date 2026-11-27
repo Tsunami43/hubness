@@ -8,7 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.4.1] - 2026-11-28
 
+The first published release of the 0.4 line: 0.4.0 was tagged, but its macOS build failed and
+nothing was published.
+
 ### Fixed
+
+- The hub builds on macOS again (the agents' browser used a Linux-only call), and on macOS a
+  leftover ssh-agent of a crashed run is recognized without `/proc`.
 
 - The agents' browser says why Chromium didn't start (what it wrote itself) instead of a
   bare "The browser closed", and names the way out when it is its sandbox: on Ubuntu 23.10+

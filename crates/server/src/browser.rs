@@ -268,9 +268,20 @@ fn touch() {
 /// Two pipes: fd 3 of the child reads what we write, fd 4 of the child writes what we read.
 fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
     let mut fds = [0; 2];
-    // SAFETY: pipe2 fills two descriptors on success
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-        return Err(std::io::Error::last_os_error());
+    // pipe + FD_CLOEXEC, not pipe2: macOS has no pipe2
+    // SAFETY: pipe fills two descriptors on success; fcntl on descriptors we just got
+    unsafe {
+        if libc::pipe(fds.as_mut_ptr()) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        for fd in fds {
+            if libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) != 0 {
+                let e = std::io::Error::last_os_error();
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+                return Err(e);
+            }
+        }
     }
     // SAFETY: both descriptors are fresh and owned by nobody else
     Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
