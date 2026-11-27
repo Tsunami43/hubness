@@ -134,6 +134,17 @@ await new Promise<void>((ok) => registryServer.listen(0, '127.0.0.1', ok));
 process.env.HUBNESS_MCP_REGISTRY = `http://127.0.0.1:${(registryServer.address() as AddressInfo).port}/`;
 // skills import: file:// repositories are allowed only with this flag (https otherwise)
 process.env.HUBNESS_ALLOW_FILE_GIT = '1';
+// voice input: fake whisper-cli and ffmpeg first on PATH (they log their arguments)
+const voiceBin = join(tmp, 'voice-bin');
+mkdirSync(voiceBin, { recursive: true });
+writeFileSync(join(voiceBin, 'ffmpeg'), '#!/bin/sh\nin=""; prev=""; last=""\nfor a; do last="$a"; [ "$prev" = "-i" ] && in="$a"; prev="$a"; done\ngrep -q BROKEN "$in" && { echo "Invalid data found when processing input" >&2; exit 1; }\ncp "$in" "$last"\n');
+writeFileSync(
+  join(voiceBin, 'whisper-cli'),
+  '#!/bin/sh\necho "$@" > "$(dirname "$0")/whisper-args"\nf=""; of=""; prev=""\nfor a; do [ "$prev" = "-f" ] && f="$a"; [ "$prev" = "-of" ] && of="$a"; prev="$a"; done\nprintf " [BLANK_AUDIO]\\n Hello  there,\\n %s\\n" "$(cat "$f")" > "$of.txt"\n',
+);
+chmodSync(join(voiceBin, 'ffmpeg'), 0o755);
+chmodSync(join(voiceBin, 'whisper-cli'), 0o755);
+process.env.PATH = `${voiceBin}:${process.env.PATH}`;
 after(() => {
   registryServer.closeAllConnections();
   registryServer.close();
@@ -2439,5 +2450,110 @@ test('accounts: users CRUD, password changes, the last account stays, failed sig
     assert.match(limited.json.error, /try again in \d+ s/);
   } finally {
     srv.kill('SIGTERM');
+  }
+});
+
+test('voice input: settings, local whisper.cpp, OpenAI-compatible service', async () => {
+  const s0 = (await call('GET', '/voice')).json;
+  assert.equal(s0.provider, 'off');
+  assert.equal(s0.language, 'auto');
+  assert.equal(s0.ready, false);
+  assert.equal(s0.local.model, 'large-v3-turbo-q5_0', 'the default model');
+  assert.equal(s0.local.binary, join(voiceBin, 'whisper-cli'), 'found on PATH');
+  assert.equal(s0.local.managed, false);
+  assert.equal(s0.local.ffmpeg, true);
+  assert.ok(Array.isArray(s0.local.missingBuildTools));
+  assert.deepEqual(
+    s0.local.models.map((m: any) => [m.id, m.installed]),
+    [['tiny', false], ['base', false], ['small', false], ['large-v3-turbo-q5_0', false], ['large-v3-turbo', false]],
+  );
+  assert.ok(s0.local.models.every((m: any) => m.size > 0 && m.label));
+  assert.deepEqual(s0.api, { url: '', model: '', hasKey: false });
+
+  const transcribe = (body: Uint8Array, type = 'audio/webm;codecs=opus') =>
+    raw('/api/voice/transcribe', { method: 'POST', headers: { 'X-Hubness-Request': '1', 'Content-Type': type }, body: new Blob([body as Uint8Array<ArrayBuffer>]) });
+  const audio = Buffer.from('voice-bytes');
+  assert.equal((await transcribe(audio)).status, 409, 'off');
+  assert.equal((await transcribe(new Uint8Array())).status, 400, 'empty');
+
+  assert.equal((await call('PUT', '/voice', { provider: 'cloud' })).status, 400);
+  assert.equal((await call('PUT', '/voice', { language: 'Russian' })).status, 400);
+  assert.equal((await call('PUT', '/voice', { localModel: 'huge' })).status, 400);
+  assert.equal((await call('PUT', '/voice', { apiUrl: 'ftp://x' })).status, 400);
+  assert.equal((await call('PUT', '/voice', { apiModel: 'a\nb' })).status, 400);
+  assert.equal((await call('PUT', '/voice', { apiKey: 42 })).status, 400);
+  assert.equal((await call('POST', '/voice/models/huge', {})).status, 404);
+  assert.equal((await call('DELETE', '/voice/models/huge')).status, 404);
+
+  // local: the model file decides "installed"; whisper-cli gets the WAV ffmpeg made
+  let s = (await call('PUT', '/voice', { provider: 'local', localModel: 'tiny', language: 'ru' })).json;
+  assert.equal(s.provider, 'local');
+  assert.equal(s.ready, false, 'the model is not downloaded');
+  const nope = await transcribe(audio);
+  assert.equal(nope.status, 409);
+  assert.match(((await nope.json()) as any).error, /model/);
+  const models = join(tmp, 'data', 'whisper', 'models');
+  mkdirSync(models, { recursive: true });
+  writeFileSync(join(models, 'ggml-tiny.bin'), 'model');
+  writeFileSync(join(models, 'ggml-base.bin.part'), 'partial');
+  s = (await call('GET', '/voice')).json;
+  assert.equal(s.ready, true);
+  assert.deepEqual(s.local.models.filter((m: any) => m.installed).map((m: any) => m.id), ['tiny'], 'a partial download is not installed');
+  const ok = await transcribe(audio);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { text: 'Hello there, voice-bytes' });
+  const args = readFileSync(join(voiceBin, 'whisper-args'), 'utf8').trim().split(' ');
+  assert.equal(args[args.indexOf('-m') + 1], join(models, 'ggml-tiny.bin'));
+  assert.equal(args[args.indexOf('-l') + 1], 'ru');
+  const broken = await transcribe(Buffer.from('BROKEN'));
+  assert.equal(broken.status, 400);
+  assert.match(((await broken.json()) as any).error, /Invalid data found/);
+  s = (await call('DELETE', '/voice/models/tiny')).json;
+  assert.equal(s.ready, false);
+  assert.equal(existsSync(join(models, 'ggml-tiny.bin')), false);
+
+  // api: multipart to <url>/audio/transcriptions with the stored key
+  const hits: { auth?: string; path?: string; body: string; type?: string }[] = [];
+  const svc = createServer((req, res) => {
+    let body = '';
+    req.setEncoding('latin1');
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      hits.push({ auth: req.headers.authorization, path: req.url, body, type: req.headers['content-type'] });
+      if (req.headers.authorization !== 'Bearer sk-good') {
+        res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Invalid API key' } }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ text: ' Привет, мир. ' }));
+    });
+  });
+  await new Promise<void>((r) => svc.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(svc.address() as AddressInfo).port}/v1/`;
+  try {
+    s = (await call('PUT', '/voice', { provider: 'api', apiUrl: `  ${base}  `, apiModel: ' whisper-large-v3-turbo ', apiKey: 'sk-bad' })).json;
+    assert.deepEqual(s.api, { url: base, model: 'whisper-large-v3-turbo', hasKey: true });
+    assert.equal(s.ready, true);
+    assert.equal(JSON.stringify(s).includes('sk-bad'), false, 'the key never leaves the server');
+    const denied = await transcribe(audio);
+    assert.equal(denied.status, 502);
+    assert.match(((await denied.json()) as any).error, /401.*Invalid API key/);
+    await call('PUT', '/voice', { apiKey: 'sk-good', language: 'auto' });
+    const done = await transcribe(audio, 'audio/ogg;codecs=opus');
+    assert.equal(done.status, 200);
+    assert.deepEqual(await done.json(), { text: 'Привет, мир.' });
+    const hit = hits.at(-1)!;
+    assert.equal(hit.path, '/v1/audio/transcriptions');
+    assert.match(hit.type ?? '', /^multipart\/form-data; boundary=/);
+    assert.match(hit.body, /name="file"; filename="recording\.ogg"/);
+    assert.match(hit.body, /voice-bytes/);
+    assert.match(hit.body, /name="model"\r\n\r\nwhisper-large-v3-turbo\r\n/);
+    assert.match(hit.body, /name="response_format"\r\n\r\njson\r\n/);
+    assert.doesNotMatch(hit.body, /name="language"/, 'auto sends no language');
+    s = (await call('PUT', '/voice', { apiKey: null, provider: 'off' })).json;
+    assert.equal(s.api.hasKey, false);
+    assert.equal(s.provider, 'off');
+  } finally {
+    svc.closeAllConnections();
+    svc.close();
   }
 });
