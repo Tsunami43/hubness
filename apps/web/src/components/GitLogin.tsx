@@ -5,11 +5,47 @@ import { api } from '../lib/api';
 import { t } from '../i18n';
 import { Button, ErrorLine, Field, inputCls, Sheet } from './ui';
 
-/** Where to create a personal access token on known hostings. */
-function tokenPage(host: string): string | null {
-  if (host === 'github.com' || host.startsWith('github.')) return `https://${host}/settings/tokens`;
-  if (host === 'gitlab.com' || host.startsWith('gitlab.')) return `https://${host}/-/user_settings/personal_access_tokens`;
+/** The host part of what was typed: `https://gitlab.example.com/group/repo` → `gitlab.example.com`. */
+export function hostOf(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z+]+:\/\//, '')
+    .replace(/^[^@/]*@/, '')
+    .replace(/[/?#].*$/, '')
+    // scp-like `git@host:group/repo` (a `:port` stays)
+    .replace(/:(?!\d+$).*$/, '');
+}
+
+type Hosting = 'github' | 'gitlab' | 'gitea' | 'bitbucket';
+
+/** Token pages, opened with the scopes git needs already filled in where the hosting allows it. */
+const TOKEN_PAGES: Record<Hosting, (host: string) => string> = {
+  // a classic token: fine-grained ones can't be prefilled; `workflow` lets pushes touch CI files
+  github: (h) => `https://${h}/settings/tokens/new?scopes=repo,workflow&description=hubness`,
+  gitlab: (h) => `https://${h}/-/user_settings/personal_access_tokens?name=hubness&scopes=read_repository,write_repository`,
+  gitea: (h) => `https://${h}/user/settings/applications`,
+  bitbucket: () => 'https://id.atlassian.com/manage-profile/security/api-tokens',
+};
+
+function hostingOf(host: string): Hosting | null {
+  if (host === 'github.com' || host.startsWith('github.')) return 'github';
+  if (host === 'gitlab.com' || /(^|[.-])gitlab([.-]|$)/.test(host)) return 'gitlab';
+  if (host === 'codeberg.org' || /(^|[.-])(gitea|forgejo)([.-]|$)/.test(host)) return 'gitea';
+  if (host === 'bitbucket.org') return 'bitbucket';
   return null;
+}
+
+/** Where to create a token for `host`: one page for a known hosting, the likely ones for another domain. */
+export function tokenPages(host: string): { label: string | null; url: string }[] {
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}(:\d+)?$/.test(host)) return [];
+  const known = hostingOf(host);
+  if (known) return [{ label: null, url: TOKEN_PAGES[known](host) }];
+  // self-hosted on a custom domain: most often GitLab, else Gitea / Forgejo
+  return [
+    { label: 'GitLab', url: TOKEN_PAGES.gitlab(host) },
+    { label: 'Gitea / Forgejo', url: TOKEN_PAGES.gitea(host) },
+  ];
 }
 
 /**
@@ -63,8 +99,8 @@ export function GitLoginSheet({
     };
   }, [open, fixedHost, existing]);
 
-  const h = (fixedHost ?? host).trim().toLowerCase();
-  const page = h ? tokenPage(h) : null;
+  const h = hostOf(fixedHost ?? host);
+  const pages = tokenPages(h);
   const ready = h && username.trim() && secret;
 
   const save = async () => {
@@ -72,7 +108,7 @@ export function GitLoginSheet({
     setBusy(true);
     setError(null);
     try {
-      onSaved(await api.setGitCredential(h, { username: username.trim(), kind, secret }));
+      onSaved(await api.setGitCredential(h, { username: username.trim(), kind, secret: kind === 'token' ? secret.trim() : secret }));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -132,11 +168,26 @@ export function GitLoginSheet({
           ))}
         </div>
         <p className={`text-xs ${kind === 'password' ? 'text-warn' : 'text-muted'}`}>{kind === 'token' ? t('gitauth.tokenHint') : t('gitauth.passwordHint')}</p>
-        {kind === 'token' && page ? (
-          <a href={page} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
-            {t('gitauth.createToken', { host: h })}
-            <ExternalLink className="size-3.5" />
-          </a>
+        {pages.length ? (
+          // a token works with two-factor auth: the page opens with the scopes filled in
+          <div className="space-y-1.5 border border-accent/30 bg-accent/5 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {pages.map((p) => (
+                <a
+                  key={p.url}
+                  href={p.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setKind('token')}
+                  className="inline-flex items-center gap-1 text-sm text-accent hover:underline"
+                >
+                  {p.label ? t('gitauth.createTokenAs', { kind: p.label }) : t('gitauth.createToken', { host: h })}
+                  <ExternalLink className="size-3.5" />
+                </a>
+              ))}
+            </div>
+            <p className="text-xs text-muted">{pages.length > 1 ? t('gitauth.createTokenUnknown') : t('gitauth.createTokenHint')}</p>
+          </div>
         ) : null}
         <Field label={t('gitauth.username')}>
           <input
