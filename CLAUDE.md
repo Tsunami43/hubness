@@ -51,6 +51,9 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
 - `git*.ts` — git operations, credentials helper and provider (GitHub/GitLab…) logins.
 - `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models
   downloaded into `<data>/whisper` as terminal jobs) or an OpenAI-compatible service.
+- `ssh.ts` — SSH connections (System → SSH): keys the hub holds, bound to projects / groups;
+  an agent turn gets a private ssh-agent, an ssh config with an alias per connection and
+  ssh/scp wrappers, and the connections' descriptions (prod / dev) in its context.
 - `secrets.ts` — encrypted per-project secrets (`HUBNESS_SECRET_KEY` or `<data>/secret.key`).
 - `manifest.ts` — project manifest `.hub/hub.yaml` (links, hosts, containers, units),
   shown in the UI and passed to the agent as context.

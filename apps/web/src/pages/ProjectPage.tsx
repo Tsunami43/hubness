@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
-import { AppWindow, Boxes, ExternalLink, GitBranch, GitPullRequest, KeyRound, MessagesSquare, Play, Plus, Settings2, SquareTerminal, Trash2, X } from 'lucide-react';
+import { AppWindow, Boxes, ExternalLink, GitBranch, GitPullRequest, KeyRound, MessagesSquare, Play, Plus, Server, Settings2, SquareTerminal, Trash2, X } from 'lucide-react';
 import type { ProjectDetail, RunState } from '@hubness/shared';
 import { api } from '../lib/api';
 import { useApi } from '../lib/query';
@@ -15,6 +15,7 @@ import { PreviewPanel } from '../components/project/preview';
 import { ptySize, ShellPanel } from '../components/project/shell';
 import { EnvironmentSection } from '../components/project/environment';
 import { SecretsPanel } from '../components/project/secrets';
+import { SshBindingsPanel } from '../components/project/ssh';
 import { Button, ErrorLine, Field, inputCls, Spinner } from '../components/ui';
 import { Select } from '../components/Select';
 import { confirmDialog } from '../components/Confirm';
@@ -90,6 +91,7 @@ export function ProjectPage() {
     ...(terminal ? [{ id: 'shell', label: t('shell.title'), icon: SquareTerminal, render: () => <ShellPanel scope={{ projectId: project.id }} /> }] : []),
     // secrets and project settings are for admins
     ...(normal && access.admin ? [{ id: 'secrets', label: t('secrets.title'), icon: KeyRound, render: () => <SecretsPanel projectId={project.id} /> }] : []),
+    ...(normal && access.admin ? [{ id: 'ssh', label: 'SSH', icon: Server, render: () => <SshBindingsPanel scope={{ projectId: project.id }} /> }] : []),
     ...(access.admin
       ? [{ id: 'settings', label: t('ws.settings'), icon: Settings2, render: () => <ProjectSettings project={project} onSaved={() => void reload()} /> }]
       : []),

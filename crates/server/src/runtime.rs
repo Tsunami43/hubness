@@ -249,7 +249,7 @@ fn now_ms() -> i64 {
 /// Start a turn: record the user message, launch the agent, return the updated session.
 pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments: Vec<hubness_core::Attachment>) -> ApiResult<Session> {
     let rt = &state.runtime;
-    let (turn, session) = {
+    let (turn, session, ssh) = {
         let db = state.db()?;
         let cfg = state.config();
         let mut session = repo::get(&db, session_id)?.ok_or_else(|| HttpError::not_found("Session not found"))?;
@@ -304,6 +304,24 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
             (None, Some(g)) => Some(context::group_context(g, &members)),
             _ => None,
         };
+        // SSH connections of the project (a group: its own and its repositories'), for this turn
+        let owners: Vec<crate::ssh::Owner> = match (&project, &group) {
+            (Some(p), _) => vec![crate::ssh::Owner::Project(&p.id)],
+            (None, Some(g)) => {
+                std::iter::once(crate::ssh::Owner::Group(&g.id)).chain(members.iter().map(|p| crate::ssh::Owner::Project(&p.id))).collect()
+            }
+            _ => vec![],
+        };
+        let ssh = crate::ssh::session_setup(&db, cfg, &owners, session_id)?;
+        let scope_ctx = match (&ssh, scope_ctx) {
+            (Some(s), Some(c)) => Some(format!("{c}\n\n{}", s.context)),
+            (Some(s), None) => Some(s.context.clone()),
+            (None, c) => c,
+        };
+        let mut env = env;
+        if let Some(s) = &ssh {
+            env.extend(s.env.iter().cloned());
+        }
         let hub_instructions = catalog::settings(&db, cfg)?.session_instructions;
         let wrap = match (&project, &group) {
             (Some(p), _) if environments::project_sandbox(&db, p)? => {
@@ -314,6 +332,14 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
                 Wrap { bwrap: Some(environments::bwrap_args(&db, cfg, &repos, &cwd)?) }
             }
             _ => Wrap::default(),
+        };
+        // the sandbox hides the hub's folders: show it the session's ssh folder, read-only
+        let wrap = match (wrap, &ssh) {
+            (Wrap { bwrap: Some(mut args) }, Some(s)) => {
+                args.extend(["--ro-bind".to_string(), s.mount.clone(), s.mount.clone()]);
+                Wrap { bwrap: Some(args) }
+            }
+            (w, _) => w,
         };
         let turn = Arc::new(Turn {
             state: state.clone(),
@@ -336,7 +362,7 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
             log: Mutex::default(),
             log_path: Path::new(&cfg.logs_dir).join(format!("{session_id}.jsonl")),
         });
-        (turn, session)
+        (turn, session, ssh)
     };
 
     let mut user = json!({ "kind": "user", "text": text });
@@ -359,6 +385,8 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
             let id = session_id.to_string();
             tokio::spawn(async move {
                 let _ = done.await;
+                // the turn is over: its ssh-agent and config go away
+                drop(ssh);
                 state.runtime.active.lock().expect("runtime lock").remove(&id);
                 *turn.log.lock().expect("turn lock") = None;
                 let failed = turn.last_is_error();

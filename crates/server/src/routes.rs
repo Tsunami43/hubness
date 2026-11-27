@@ -46,6 +46,7 @@ pub fn api() -> Router<AppState> {
         .merge(crate::runs::routes())
         .merge(crate::environments::routes())
         .merge(crate::voice::routes())
+        .merge(crate::ssh::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 

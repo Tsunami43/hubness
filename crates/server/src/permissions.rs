@@ -172,6 +172,7 @@ fn need(method: &Method, path: &str) -> Need {
         ["groups"] if get => Nothing,
         ["groups", id] | ["groups", id, "context"] if get => Group(id.to_string(), None),
         ["groups", id, "shell" | "shells"] => Group(id.to_string(), Some(Section::Terminal)),
+        ["groups", id, "ssh"] if get => Group(id.to_string(), None),
         ["groups", ..] => Admin,
         // filtered or checked by the handlers
         ["sessions"] | ["sessions", "archive"] | ["stream"] => Nothing,
@@ -183,6 +184,7 @@ fn need(method: &Method, path: &str) -> Need {
         ["harness", ..] => Area(Section::Harness),
         ["system", ..] | ["ask"] => Area(Section::System),
         ["git-credentials", ..] => Area(Section::Settings),
+        ["ssh", ..] => Area(Section::System),
         ["voice"] if get => Nothing,
         ["voice", "transcribe"] => Nothing,
         ["voice", ..] => Area(Section::Settings),
@@ -199,7 +201,7 @@ fn project_section(method: &Method, rest: &[&str]) -> Result<Option<Section>, ()
         // the file list feeds @-mentions in the chat composer
         ["files"] if get => None,
         ["file" | "files" | "fs" | "search" | "tree", ..] => Some(Section::Files),
-        ["manifest"] if get => None,
+        ["manifest"] | ["ssh"] if get => None,
         ["manifest", ..] => Some(Section::Files),
         ["runs" | "shell" | "shells" | "preview" | "environment", ..] => Some(Section::Terminal),
         ["cards", ..] => Some(Section::Kanban),

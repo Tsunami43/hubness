@@ -550,6 +550,47 @@ pub struct GitCredentialInfo {
     pub updated_at: String,
 }
 
+// ---------- SSH connections ----------
+
+/// A server the hub can reach over SSH with a key it holds (Settings → SSH). The private key
+/// never leaves the server; `public_key` goes into the server's `authorized_keys`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConnection {
+    pub id: String,
+    /// The alias agents use: `ssh <name>`.
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    /// Free label: dev, staging, prod… (shown to people and agents).
+    pub environment: String,
+    /// What the server is for — the agent reads it to tell prod from dev.
+    pub description: String,
+    pub public_key: String,
+    /// `known_hosts` lines pinned by the first successful test (empty until then).
+    pub host_keys: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A connection attached to a project or a group, with what it is for there.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshBinding {
+    pub connection: SshConnection,
+    pub note: String,
+}
+
+/// `POST /api/ssh/:id/test`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTestResult {
+    pub ok: bool,
+    pub output: String,
+    pub connection: SshConnection,
+}
+
 // ---------- user accounts ----------
 
 /// What an account may do: an admin everything (including managing accounts), a member only

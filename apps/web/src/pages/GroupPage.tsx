@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
-import { Boxes, FolderGit2, MessagesSquare, Plus, Settings2, SquareTerminal, Trash2 } from 'lucide-react';
+import { Boxes, FolderGit2, MessagesSquare, Plus, Server, Settings2, SquareTerminal, Trash2 } from 'lucide-react';
 import type { GroupDetail, Project } from '@hubness/shared';
 import { api } from '../lib/api';
 import { useApi } from '../lib/query';
@@ -12,6 +12,7 @@ import { Button, Empty, ErrorLine, Field, inputCls, Spinner } from '../component
 import { NewProject } from '../components/NewProject';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { ShellPanel } from '../components/project/shell';
+import { SshBindingsPanel } from '../components/project/ssh';
 import { useHubSettings } from '../lib/hubSettings';
 import { GroupFolderField, ProjectPicker } from './ProjectsPage';
 import { Section } from './ProjectPage';
@@ -55,7 +56,8 @@ export function GroupPage() {
   const tools: Tool[] = [
     { id: 'sessions', label: t('tab.sessions'), icon: MessagesSquare, render: () => <SessionsTool scope={{ groupId: group.id }} root={group.workspace.path} title={group.name} /> },
     ...(access.can('terminal') ? [{ id: 'shell', label: t('shell.title'), icon: SquareTerminal, render: () => <ShellPanel scope={{ groupId: group.id }} /> }] : []),
-    // group settings are for admins
+    // SSH and group settings are for admins
+    ...(access.admin ? [{ id: 'ssh', label: 'SSH', icon: Server, render: () => <SshBindingsPanel scope={{ groupId: group.id }} /> }] : []),
     ...(access.admin
       ? [
           {
