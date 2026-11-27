@@ -36,7 +36,7 @@ const LanguagePage = page(() => import('./pages/settings/LanguagePage'), 'Langua
 const AgentPage = page(() => import('./pages/settings/AgentPage'), 'AgentPage');
 const KeyboardPage = page(() => import('./pages/settings/KeyboardPage'), 'KeyboardPage');
 const GitAccessPage = page(() => import('./pages/settings/GitAccessPage'), 'GitAccessPage');
-const UsersPage = page(() => import('./pages/settings/UsersPage'), 'UsersPage');
+const AccountPage = page(() => import('./pages/settings/AccountPage'), 'AccountPage');
 const StoragePage = page(() => import('./pages/settings/StoragePage'), 'StoragePage');
 const VoicePage = page(() => import('./pages/settings/VoicePage'), 'VoicePage');
 const HarnessLayout = page(() => import('./pages/HarnessPage'), 'HarnessLayout');
@@ -81,7 +81,8 @@ createRoot(document.getElementById('root')!).render(
               <Route path="agent" element={<AgentPage />} />
               <Route path="voice" element={<VoicePage />} />
               <Route path="git" element={<GitAccessPage />} />
-              <Route path="users" element={<UsersPage />} />
+              <Route path="account" element={<AccountPage />} />
+              <Route path="users" element={<Navigate to="/settings/account" replace />} />
               <Route path="storage" element={<StoragePage />} />
               <Route path="keyboard" element={<KeyboardPage />} />
               <Route path="language" element={<LanguagePage />} />

@@ -1,7 +1,7 @@
 import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, House, LogOut, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
-import { useAccess, useAuth } from './AuthGate';
+import { useAuth } from './AuthGate';
 import type { Session } from '@hubness/shared';
 import { api } from '../lib/api';
 import { timeAgo } from '../lib/format';
@@ -344,9 +344,7 @@ export function Layout() {
   useEffect(() => setDrawer(false), [pathname]);
   const nav = useNavigate();
   const auth = useAuth();
-  const access = useAccess();
-  // System and Harness only for accounts that have them
-  const navItems = NAV.filter((n) => (n.to === '/system' ? access.can('system') : n.to === '/harness' ? access.can('harness') : true));
+  const navItems = NAV;
   useKeyActions('nav', [
     ...navItems.map((n) => ({ key: n.key, label: t(n.label), section: t('keys.navigate'), run: () => nav(n.to) })),
     { key: 'H', label: t('history.title'), section: t('keys.navigate'), run: toggleHistory },

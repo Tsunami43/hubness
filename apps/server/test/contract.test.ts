@@ -2556,7 +2556,7 @@ test('accounts: first-run setup from this machine, then sign-in with bearer and 
     const status = (await req('GET', '/api/auth/status', undefined, cookie)).json;
     assert.equal(status.required, true);
     assert.equal(status.user.username, 'alice');
-    assert.deepEqual(Object.keys(status.user).sort(), ['createdAt', 'id', 'permissions', 'role', 'username']);
+    assert.deepEqual(Object.keys(status.user).sort(), ['createdAt', 'id', 'username']);
 
     const out = await req('POST', '/api/auth/logout', {}, cookie);
     assert.match(out.headers.get('set-cookie') ?? '', /hubness_session=; .*Max-Age=0/);
@@ -2568,60 +2568,38 @@ test('accounts: first-run setup from this machine, then sign-in with bearer and 
   }
 });
 
-test('accounts: users CRUD, password changes, the last account stays, failed sign-ins back off', rustOnly, async () => {
+test('accounts: one account — password changes, no account management, the CLI, failed sign-ins back off', rustOnly, async () => {
   const dataDir = join(tmp, 'auth-users');
   userCli(dataDir, ['add', 'alice'], 'correct horse\n');
+  assert.throws(() => userCli(dataDir, ['add', 'bob'], 'battery staple\n'), /already has its account/);
   const { srv, req } = await startAuthServer(dataDir);
   try {
     const login = async (username: string, password: string) => req('POST', '/api/auth/login', { username, password });
     const alice = await login('alice', 'correct horse');
-    assert.equal(alice.status, 200, 'an account added with hubness signs in');
+    assert.equal(alice.status, 200, 'the account added with hubness signs in');
     const a = { Authorization: `Bearer ${alice.json.token}` };
+    assert.equal((await req('GET', '/api/users', undefined, a)).status, 404, 'no account management');
+    assert.equal((await req('POST', '/api/users', { username: 'bob', password: 'battery staple' }, a)).status, 404);
 
-    const list = await req('GET', '/api/users', undefined, a);
-    assert.deepEqual(list.json.map((u: any) => u.username), ['alice']);
-    const bob = await req('POST', '/api/users', { username: 'bob', password: 'battery staple' }, a);
-    assert.equal(bob.status, 200);
-    assert.deepEqual(Object.keys(bob.json).sort(), ['createdAt', 'id', 'permissions', 'role', 'username']);
-    assert.equal(bob.json.role, 'admin', 'new accounts are admins unless a role is given');
-    assert.equal((await req('POST', '/api/users', { username: 'BOB', password: 'battery staple' }, a)).status, 409);
-    assert.equal((await req('POST', '/api/users', { username: 'carol', password: '1234567' }, a)).status, 400, 'at least 8 characters');
-    assert.equal((await req('POST', '/api/users', { username: 'carol', password: 'battery staple' })).status, 401, 'needs a session');
-
-    const bobLogin = await login('bob', 'battery staple');
-    const b = { Authorization: `Bearer ${bobLogin.json.token}` };
-    // an admin may set another account's password; it ends that account's sessions
-    assert.equal((await req('PUT', `/api/users/${bob.json.id}/password`, { password: 'new staple!' }, a)).status, 200);
-    assert.equal((await req('GET', '/api/projects', undefined, b)).status, 401);
-    assert.equal((await login('bob', 'battery staple')).status, 401);
-    assert.equal((await login('bob', 'new staple!')).status, 200);
-
-    // your own password needs the current one (403, not 401: the session is fine)
-    const me = alice.json.user.id;
-    assert.equal((await req('PUT', `/api/users/${me}/password`, { password: 'horse correct' }, a)).status, 403);
-    assert.equal((await req('PUT', `/api/users/${me}/password`, { password: 'horse correct', currentPassword: 'nope nope' }, a)).status, 403);
+    // a new password needs the current one (403, not 401: the session is fine)
+    const change = (body: object, h: Record<string, string> = a) => req('PUT', '/api/auth/password', body, h);
+    assert.equal((await change({ currentPassword: 'correct horse', password: 'horse correct' }, {})).status, 401, 'needs a session');
+    assert.equal((await change({ currentPassword: 'nope nope', password: 'horse correct' })).status, 403);
+    assert.equal((await change({ currentPassword: 'correct horse', password: 'short' })).status, 400, 'at least 8 characters');
+    assert.equal((await change({ password: 'horse correct' })).status, 400, 'the current password is required');
     const other = await login('alice', 'correct horse');
-    assert.equal((await req('PUT', `/api/users/${me}/password`, { password: 'horse correct', currentPassword: 'correct horse' }, a)).status, 200);
+    assert.equal((await change({ currentPassword: 'correct horse', password: 'horse correct' })).status, 200);
     assert.equal((await req('GET', '/api/projects', undefined, a)).status, 200, 'the session that changed it stays');
     assert.equal((await req('GET', '/api/projects', undefined, { Authorization: `Bearer ${other.json.token}` })).status, 401, 'other sessions end');
-    assert.equal((await req('PUT', '/api/users/nope/password', { password: 'whatever!' }, a)).status, 404);
-
-    const bobAgain = await login('bob', 'new staple!');
-    assert.equal((await req('DELETE', `/api/users/${bob.json.id}`, undefined, a)).status, 200);
-    assert.equal((await req('GET', '/api/projects', undefined, { Authorization: `Bearer ${bobAgain.json.token}` })).status, 401, 'a deleted account is signed out');
-    assert.equal((await req('DELETE', `/api/users/${me}`, undefined, a)).status, 409, 'the last account stays');
-    assert.equal((await req('DELETE', '/api/users/nope', undefined, a)).status, 404);
+    assert.equal((await login('alice', 'correct horse')).status, 401);
+    assert.equal((await login('alice', 'horse correct')).status, 200);
 
     // the CLI works on the same database while the hub runs
-    userCli(dataDir, ['add', 'carol'], 'carol password\n');
-    assert.match(userCli(dataDir, ['list']), /alice\t.*\ncarol\t/);
-    assert.equal((await login('carol', 'carol password')).status, 200);
-    userCli(dataDir, ['passwd', 'carol'], 'carol changed\n');
-    assert.equal((await login('carol', 'carol password')).status, 401);
-    userCli(dataDir, ['rm', 'carol']);
-    assert.equal((await login('carol', 'carol changed')).status, 401);
-    assert.throws(() => userCli(dataDir, ['rm', 'alice']), /last account/);
-    assert.throws(() => userCli(dataDir, ['add', 'dave'], 'short\n'), /at least 8/);
+    assert.match(userCli(dataDir, ['show']), /^alice\t/);
+    userCli(dataDir, ['passwd'], 'reset password\n');
+    assert.equal((await req('GET', '/api/projects', undefined, a)).status, 401, 'a reset signs out everywhere');
+    assert.equal((await login('alice', 'reset password')).status, 200);
+    assert.throws(() => userCli(dataDir, ['rm', 'alice']), /unrecognized subcommand/);
 
     // a growing pause after repeated failures for one username
     for (let i = 0; i < 5; i++) assert.equal((await login('ghost', 'wrong password')).status, 401);
@@ -2633,76 +2611,10 @@ test('accounts: users CRUD, password changes, the last account stays, failed sig
   }
 });
 
-test('accounts: roles and member permissions', rustOnly, async () => {
-  const dataDir = join(tmp, 'auth-roles');
-  userCli(dataDir, ['add', 'alice'], 'correct horse\n');
-  const { srv, req } = await startAuthServer(dataDir);
+test('accounts: changing the password of an open hub is refused', rustOnly, async () => {
+  const { srv, req } = await startAuthServer(join(tmp, 'auth-open'));
   try {
-    const login = async (username: string, password: string) => req('POST', '/api/auth/login', { username, password });
-    const a = { Authorization: `Bearer ${(await login('alice', 'correct horse')).json.token}` };
-    const projects = (await req('GET', '/api/projects', undefined, a)).json as any[];
-    const home = projects[0].id as string;
-    const other = (await req('POST', '/api/projects/new-repo', { name: 'other' }, a)).json.id as string;
-
-    const bob = await req('POST', '/api/users', { username: 'bob', password: 'battery staple', role: 'member' }, a);
-    assert.equal(bob.status, 200);
-    assert.equal(bob.json.role, 'member');
-    assert.deepEqual(bob.json.permissions, { projects: [], sections: ['files', 'git'], agents: null, models: null }, 'the minimal default');
-    const b = { Authorization: `Bearer ${(await login('bob', 'battery staple')).json.token}` };
-    assert.equal((await req('GET', '/api/auth/status', undefined, b)).json.user.role, 'member');
-
-    // nothing until projects are given; admin routes stay closed
-    assert.deepEqual((await req('GET', '/api/projects', undefined, b)).json, []);
-    assert.equal((await req('GET', `/api/projects/${home}`, undefined, b)).status, 403);
-    assert.equal((await req('GET', '/api/users', undefined, b)).status, 403);
-    assert.equal((await req('PUT', `/api/users/${bob.json.id}/access`, { role: 'admin' }, b)).status, 403, 'no self-promotion');
-    assert.equal((await req('GET', '/api/system/overview', undefined, b)).status, 403);
-    assert.equal((await req('GET', '/api/harness', undefined, b)).status, 403);
-    assert.equal((await req('GET', '/api/fs/browse', undefined, b)).status, 403);
-    assert.equal((await req('POST', '/api/projects/new-repo', { name: 'x' }, b)).status, 403);
-
-    const access = (permissions: object) => req('PUT', `/api/users/${bob.json.id}/access`, { role: 'member', permissions }, a);
-    const set = await access({ projects: [home], sections: ['git'], agents: ['claude-code'], models: null });
-    assert.equal(set.status, 200);
-    assert.deepEqual((await req('GET', '/api/projects', undefined, b)).json.map((p: any) => p.id), [home], 'the session sees the change at once');
-    assert.equal((await req('GET', `/api/projects/${home}`, undefined, b)).status, 200);
-    assert.equal((await req('GET', `/api/projects/${other}`, undefined, b)).status, 403);
-    assert.equal((await req('GET', `/api/projects/${home}/git/status`, undefined, b)).status !== 403, true, 'git is given');
-    assert.equal((await req('GET', `/api/projects/${home}/tree`, undefined, b)).status, 403, 'files are not');
-    assert.equal((await req('GET', `/api/projects/${home}/runs`, undefined, b)).status, 403, 'nor the terminal');
-    assert.equal((await req('GET', `/api/projects/${home}/secrets`, undefined, b)).status, 403, 'secrets are for admins');
-
-    // sessions: scope and agent are checked, lists are filtered
-    assert.equal((await req('POST', '/api/sessions', { projectId: other, agent: { kind: 'claude-code' } }, b)).status, 403);
-    assert.equal((await req('POST', '/api/sessions', { projectId: home, agent: { kind: 'codex' } }, b)).status, 403);
-    const mine = await req('POST', '/api/sessions', { projectId: home, agent: { kind: 'claude-code' } }, b);
-    assert.equal(mine.status, 201);
-    const chat = await req('POST', '/api/sessions', { agent: { kind: 'claude-code' } }, b);
-    assert.equal(chat.status, 201);
-    const hidden = (await req('POST', '/api/sessions', { projectId: other, agent: { kind: 'claude-code' } }, a)).json.id;
-    const adminChat = (await req('POST', '/api/sessions', { agent: { kind: 'claude-code' } }, a)).json.id;
-    const seen = (await req('GET', '/api/sessions?all=1', undefined, b)).json.map((x: any) => x.id).sort();
-    assert.deepEqual(seen, [mine.json.id, chat.json.id].sort(), 'only its projects and its own chats');
-    assert.equal((await req('GET', `/api/sessions/${hidden}`, undefined, b)).status, 403);
-    assert.equal((await req('GET', `/api/sessions/${adminChat}/events`, undefined, b)).status, 403);
-    assert.equal((await req('GET', `/api/sessions/${mine.json.id}`, undefined, b)).status, 200);
-    const all = (await req('GET', '/api/sessions?all=1', undefined, a)).json.length;
-    assert.equal(all, 4, 'an admin sees everything');
-
-    await access({ projects: null, sections: [], agents: null, models: ['opus'] });
-    assert.equal((await req('GET', `/api/projects/${other}`, undefined, b)).status, 200, 'null — every project');
-    assert.equal((await req('POST', '/api/sessions', { projectId: other, agent: { kind: 'claude-code', model: 'haiku' } }, b)).status, 403);
-    assert.equal((await req('POST', '/api/sessions', { projectId: other, agent: { kind: 'claude-code', model: 'opus' } }, b)).status, 201);
-
-    // own password only; the last admin stays
-    const me = (await req('GET', '/api/auth/status', undefined, a)).json.user.id;
-    assert.equal((await req('PUT', `/api/users/${me}/password`, { password: 'whatever!!' }, b)).status, 403);
-    assert.equal((await req('PUT', `/api/users/${me}/access`, { role: 'member' }, a)).status, 409);
-    assert.equal((await req('PUT', `/api/users/${bob.json.id}/access`, { role: 'admin' }, a)).json.permissions, null);
-    assert.equal((await req('GET', '/api/system/overview', undefined, b)).status !== 403, true, 'now an admin');
-    userCli(dataDir, ['role', 'bob', 'member']);
-    assert.match(userCli(dataDir, ['list']), /bob\tmember\t/);
-    assert.equal((await req('GET', '/api/users', undefined, b)).status, 403);
+    assert.equal((await req('PUT', '/api/auth/password', { currentPassword: 'x', password: 'whatever!!' })).status, 409);
   } finally {
     srv.kill('SIGTERM');
   }

@@ -187,6 +187,8 @@ pub enum Request {
     OpenUrl(String),
     /// Leave this hub for a saved one (`None` — the connect screen, to add one).
     SwitchHub(Option<String>),
+    /// End the session on the hub and show the sign-in screen.
+    LogOut,
 }
 
 /// What a screen acts through.
@@ -364,6 +366,11 @@ impl Ctx {
     /// Leave this hub for a saved one (`None` — the connect screen, to add one).
     pub fn switch_hub(&mut self, url: Option<String>) {
         self.requests.push(Request::SwitchHub(url));
+    }
+
+    /// Log out of the hub (the app shows the sign-in screen).
+    pub fn log_out(&mut self) {
+        self.requests.push(Request::LogOut);
     }
 
     pub fn open_url(&mut self, url: impl Into<String>) {

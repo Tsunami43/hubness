@@ -19,13 +19,13 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use axum::extract::{ConnectInfo, Path, Request};
+use axum::extract::{ConnectInfo, Request};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Extension, Json};
-use hubness_core::{AuthStatus, LoginResponse, Permissions, Role, User};
+use hubness_core::{AuthStatus, LoginResponse, User};
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::json;
@@ -76,14 +76,14 @@ pub struct Caller {
 }
 
 impl Caller {
-    pub fn user(&self) -> Option<&User> {
+    fn user(&self) -> Option<&User> {
         match &self.principal {
             Some(Principal::User { user, .. }) => Some(user),
             _ => None,
         }
     }
 
-    pub fn token(&self) -> Option<&str> {
+    fn token(&self) -> Option<&str> {
         match &self.principal {
             Some(Principal::User { token, .. }) => Some(token),
             _ => None,
@@ -93,11 +93,6 @@ impl Caller {
 
 fn db() -> Option<std::sync::MutexGuard<'static, Connection>> {
     DB.get().map(|d| d.lock().unwrap_or_else(|e| e.into_inner()))
-}
-
-/// The accounts database (`None` until `init`).
-pub fn db_conn() -> Option<std::sync::MutexGuard<'static, Connection>> {
-    db()
 }
 
 fn eq(a: &str, b: &str) -> bool {
@@ -205,10 +200,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/auth/login", post(login))
         .route("/auth/setup", post(setup))
         .route("/auth/logout", post(logout))
-        .route("/users", get(list_users).post(create_user))
-        .route("/users/{id}", delete(delete_user))
-        .route("/users/{id}/password", put(change_password))
-        .route("/users/{id}/access", put(change_access))
+        .route("/auth/password", put(change_password))
 }
 
 fn with_db<T>(f: impl FnOnce(&Connection) -> ApiResult<T>) -> ApiResult<T> {
@@ -332,77 +324,32 @@ async fn logout(headers: HeaderMap, Extension(c): Extension<Caller>) -> Response
     (StatusCode::OK, [(header::SET_COOKIE, cookie(&headers, "", 0))], Json(json!({ "ok": true }))).into_response()
 }
 
-async fn list_users() -> ApiResult<Json<Vec<User>>> {
-    with_db(|db| Ok(users::list(db)?)).map(Json)
-}
-
-#[derive(Deserialize)]
-struct NewUser {
-    username: String,
-    password: String,
-    #[serde(default)]
-    role: Role,
-    #[serde(default)]
-    permissions: Option<Permissions>,
-}
-
-async fn create_user(JsonBody(b): JsonBody<NewUser>) -> ApiResult<Json<User>> {
-    let username = users::check_username(&b.username)?;
-    users::check_password(&b.password)?;
-    if with_db(|db| Ok(users::find(db, &username)?))?.is_some() {
-        return Err(HttpError::new(409, format!("The username {username} is taken")));
-    }
-    let hash = hash(b.password).await?;
-    with_db(|db| users::create_with(db, &username, &hash, b.role, b.permissions)).map(Json)
-}
-
-#[derive(Deserialize)]
-struct AccessBody {
-    role: Role,
-    #[serde(default)]
-    permissions: Option<Permissions>,
-}
-
-/// An account's role and permissions (admins only, see `permissions.rs`).
-async fn change_access(Path(id): Path<String>, JsonBody(b): JsonBody<AccessBody>) -> ApiResult<Json<User>> {
-    if let Some(p) = &b.permissions {
-        let long = |l: &Option<Vec<String>>| l.as_ref().is_some_and(|l| l.len() > 10_000 || l.iter().any(|v| v.len() > 200));
-        if long(&p.projects) || long(&p.agents) || long(&p.models) {
-            return Err(HttpError::bad_request("permissions: lists too long"));
-        }
-    }
-    with_db(|db| users::set_access(db, &id, b.role, b.permissions)).map(Json)
-}
-
-async fn delete_user(Path(id): Path<String>) -> ApiResult<Json<serde_json::Value>> {
-    with_db(|db| users::delete(db, &id))?;
-    Ok(Json(json!({ "ok": true })))
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PasswordBody {
+    current_password: String,
     password: String,
-    #[serde(default)]
-    current_password: Option<String>,
 }
 
-/// A new password for any account; your own needs the current one. Ends the account's other
-/// sessions.
-async fn change_password(
-    Extension(c): Extension<Caller>,
-    Path(id): Path<String>,
-    JsonBody(b): JsonBody<PasswordBody>,
-) -> ApiResult<Json<serde_json::Value>> {
+/// A new password for the hub's account (the current one is required). Ends its other
+/// sessions; the one that changed it stays signed in.
+async fn change_password(Extension(c): Extension<Caller>, JsonBody(b): JsonBody<PasswordBody>) -> ApiResult<Json<serde_json::Value>> {
+    let Some(user) = c.user().cloned() else {
+        // /auth/* is open: without a session it's a sign-in that is missing — unless there is no account
+        return Err(if with_db(|db| Ok(has_users(db)))? {
+            HttpError::new(401, "Sign in first")
+        } else {
+            HttpError::new(409, "The hub has no account: create it first")
+        });
+    };
     users::check_password(&b.password)?;
-    let Some(stored) = with_db(|db| Ok(users::password_hash(db, &id)?))? else { return Err(HttpError::not_found("No such user")) };
-    let own = c.user().is_some_and(|u| u.id == id);
+    let Some(stored) = with_db(|db| Ok(users::password_hash(db, &user.id)?))? else { return Err(HttpError::not_found("No such account")) };
     // 403, not 401: a wrong current password must not look like a lost session
-    if own && !verify(b.current_password.unwrap_or_default(), Some(stored)).await {
+    if !verify(b.current_password, Some(stored)).await {
         return Err(HttpError::new(403, "The current password is wrong"));
     }
     let hash = hash(b.password).await?;
-    with_db(|db| users::set_password(db, &id, &hash, if own { c.token() } else { None }))?;
+    with_db(|db| users::set_password(db, &user.id, &hash, c.token()))?;
     Ok(Json(json!({ "ok": true })))
 }
 

@@ -22,9 +22,9 @@ by default so `cargo build` and `cargo test` need no web build; release builds (
 
 ## Remote access
 
-Sign-in uses user accounts (username + password, argon2id; all accounts have the same
-rights). Without accounts the hub listens on 127.0.0.1 and asks for nothing; the web app
-offers to create the first account, which is accepted only from the hub's own machine.
+hubness is single-user: one account (username + password, argon2id), set at the first
+sign-in. Without it the hub listens on 127.0.0.1 and asks for nothing; the web app offers to
+create the account, which is accepted only from the hub's own machine.
 To reach the hub from another machine:
 
 ```sh
@@ -33,15 +33,16 @@ HUBNESS_HOST=0.0.0.0 hubness serve
 # or, for the service: hubness server config host 0.0.0.0 && hubness server restart
 ```
 
-The hub refuses a non-loopback `HUBNESS_HOST` while it has no accounts. Once an account
+The hub refuses a non-loopback `HUBNESS_HOST` while it has no account. Once the account
 exists every `/api` request and every preview port needs a session: `POST /api/auth/login`
 `{username, password}` returns `{token, user}` for API clients (`Authorization: Bearer`;
 the TUI asks on start and keeps the token per hub URL in `~/.config/hubness/tui.json`,
 mode 0600) and sets an HttpOnly `SameSite=Lax` cookie for browsers. Failed sign-ins back
-off per username and address. Accounts are managed in Settings → Users (web and TUI),
-through `/api/users`, or with `hubness user add|passwd|rm|list` on the data folder
-(`HUBNESS_DATA_DIR`, also while the hub runs). A password change or a deleted account ends
-its sessions; the last account can't be deleted. The hub's own children (the MCP server)
+off per username and address. Settings → Account (web and TUI) changes the password
+(`PUT /api/auth/password` with the current one) and signs out; `hubness user add|passwd|show`
+works on the data folder (`HUBNESS_DATA_DIR`, also while the hub runs) — `passwd` is the way
+back in after a forgotten password. A password change ends the account's other sessions.
+Migration v7 keeps only the first account of hubs that had several. The hub's own children (the MCP server)
 call it back with a random per-process service token from their environment.
 
 The hub speaks plain HTTP — across untrusted networks put it behind an HTTPS reverse proxy
@@ -63,7 +64,7 @@ v4).
 | Area | Routes | State |
 | --- | --- | --- |
 | Core | `GET /health`, CSRF guard, `{error}` responses, web app + SPA fallback | done |
-| Auth | accounts: `/auth/status`, `/auth/login`, `/auth/setup`, `/auth/logout`, `GET/POST /users`, `DELETE /users/:id`, `PUT /users/:id/password`; `hubness user …` — Rust only | done |
+| Auth | accounts: `/auth/status`, `/auth/login`, `/auth/setup`, `/auth/logout`, `PUT /auth/password` (one account); `hubness user add|passwd|show` — Rust only | done |
 | Database | open, WAL, migrations v1–v4 | done |
 | Projects | `GET /projects`, `GET /projects/discover`, `POST /projects/import`, `PATCH /projects/:id`, `DELETE /projects/:id` | done (incl. `?files=1&confirm=` with the TS safety checks) |
 | Settings | `GET /settings`, `PUT /settings` | done |

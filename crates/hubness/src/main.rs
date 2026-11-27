@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 const EXAMPLES: &str = "\
 Examples:
   hubness server start         run the hub in the background (systemd user service)
-  hubness user add alice       create an account (needed to use the hub from elsewhere)
+  hubness user add alice       create the hub's account (needed to use the hub from elsewhere)
   hubness server status        is it up? URL, data folder, accounts
   hubness tui                  open the terminal UI
   hubness webapp               open the web app in the browser
@@ -62,7 +62,7 @@ enum Command {
         after_help = "Examples:\n  hubness server start\n  hubness server start --data-dir ~/old-hub/.data\n  hubness server logs -f\n  hubness server config port 9000 && hubness server restart"
     )]
     Server(service::ServerCommand),
-    /// Manage hub accounts: add | passwd | rm | role | list
+    /// The hub's one account: add | passwd | show
     #[cfg(feature = "server")]
     #[command(subcommand)]
     User(UserCommand),
@@ -94,20 +94,16 @@ enum Command {
 #[command(after_help = "Passwords are asked for (hidden), or read from stdin when it is not a terminal.\n\
                         Works on the service's data folder (or HUBNESS_DATA_DIR), also while the hub runs.")]
 enum UserCommand {
-    /// Create an admin account (the first one turns sign-in on)
+    /// Create the hub's account (turns sign-in on; hubness has one account)
     Add { name: String },
-    /// Set a new password (signs the account out everywhere)
-    Passwd { name: String },
-    /// Delete an account
-    Rm { name: String },
-    /// Make an account an admin or a member (a member's permissions are set in the web app)
-    Role {
-        name: String,
-        #[arg(value_parser = ["admin", "member"])]
-        role: String,
+    /// Set a new password for the account (signs it out everywhere)
+    Passwd {
+        /// Ignored (older instructions name the account)
+        name: Option<String>,
     },
-    /// List the accounts
-    List,
+    /// Show the account
+    #[command(alias = "list")]
+    Show,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -161,10 +157,8 @@ fn serve() -> anyhow::Result<()> {
 fn user(cmd: UserCommand) -> anyhow::Result<()> {
     let args: Vec<String> = match cmd {
         UserCommand::Add { name } => vec!["add".into(), name],
-        UserCommand::Passwd { name } => vec!["passwd".into(), name],
-        UserCommand::Rm { name } => vec!["rm".into(), name],
-        UserCommand::Role { name, role } => vec!["role".into(), name, role],
-        UserCommand::List => vec!["list".into()],
+        UserCommand::Passwd { .. } => vec!["passwd".into()],
+        UserCommand::Show => vec!["show".into()],
     };
     // accounts live where the service keeps its data, unless HUBNESS_DATA_DIR says otherwise
     if std::env::var_os("HUBNESS_DATA_DIR").is_none_or(|v| v.is_empty())

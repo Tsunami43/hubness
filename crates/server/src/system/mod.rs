@@ -135,13 +135,7 @@ async fn package_info(Path(name): Path<String>) -> Json<Value> {
 }
 
 /// “Ask about this”: an agent session with the object's context attached.
-async fn handle_ask(
-    State(s): State<AppState>,
-    c: Option<axum::Extension<crate::auth::Caller>>,
-    JsonBody(body): JsonBody<Value>,
-) -> ApiResult<(StatusCode, Json<Session>)> {
+async fn handle_ask(State(s): State<AppState>, JsonBody(body): JsonBody<Value>) -> ApiResult<(StatusCode, Json<Session>)> {
     let req = ask::parse_request(&body)?;
-    let session = ask::ask_about(&s, req).await?;
-    crate::permissions::set_owner(&*s.db()?, &session.id, c.as_deref())?;
-    Ok((StatusCode::CREATED, Json(session)))
+    Ok((StatusCode::CREATED, Json(ask::ask_about(&s, req).await?)))
 }

@@ -21,9 +21,7 @@ import { Select } from '../components/Select';
 import { confirmDialog } from '../components/Confirm';
 import { t } from '../i18n';
 import { closePlace, usePlace } from '../lib/places';
-import { useAccess } from '../components/AuthGate';
 
-const NO_REPOS: { id: string; name: string; path: string }[] = [];
 
 /** Project = one git repository: code and tools (Sessions, Git, Run, Preview, Shell, Secrets, Settings) as tabs. */
 export function ProjectPage() {
@@ -33,10 +31,9 @@ export function ProjectPage() {
   const [focus, setFocus] = useState<string | null>(null);
   // Run state is polled often only while a Run/Preview tab is open
   const [openTools, setOpenTools] = useState<string[]>([]);
-  const access = useAccess();
-  const { runs, reload: reloadRuns } = useRuns(id, openTools.includes('run') || openTools.includes('preview'), access.can('terminal'));
+  const { runs, reload: reloadRuns } = useRuns(id, openTools.includes('run') || openTools.includes('preview'));
   const repos = useMemo(() => (project ? [{ id: project.id, name: project.name, path: project.path }] : []), [project?.id, project?.name, project?.path]);
-  const { git, refresh: refreshGit } = useGitByRepo(access.can('git') ? repos : NO_REPOS);
+  const { git, refresh: refreshGit } = useGitByRepo(repos);
   // phone: the simple chat-first view unless the full workspace was asked for
   const desktop = useDesktop();
   const [full, setFull] = useLocalStorage('hub.mobile.full', false);
@@ -71,12 +68,11 @@ export function ProjectPage() {
       goto('run');
     });
   const normal = project.kind === 'normal';
-  const terminal = access.can('terminal');
   const repo = project.repo;
 
   const tools: Tool[] = [
     { id: 'sessions', label: t('tab.sessions'), icon: MessagesSquare, render: () => <SessionsTool scope={{ projectId: project.id }} root={project.path} title={project.name} /> },
-    ...(normal && terminal
+    ...(normal
       ? [
           {
             id: 'run',
@@ -88,13 +84,14 @@ export function ProjectPage() {
           { id: 'preview', label: t('preview.title'), icon: AppWindow, render: () => <PreviewPanel projectId={project.id} runs={runs} onStartRun={run} /> },
         ]
       : []),
-    ...(terminal ? [{ id: 'shell', label: t('shell.title'), icon: SquareTerminal, render: () => <ShellPanel scope={{ projectId: project.id }} /> }] : []),
-    // secrets and project settings are for admins
-    ...(normal && access.admin ? [{ id: 'secrets', label: t('secrets.title'), icon: KeyRound, render: () => <SecretsPanel projectId={project.id} /> }] : []),
-    ...(normal && access.admin ? [{ id: 'ssh', label: 'SSH', icon: Server, render: () => <SshBindingsPanel scope={{ projectId: project.id }} /> }] : []),
-    ...(access.admin
-      ? [{ id: 'settings', label: t('ws.settings'), icon: Settings2, render: () => <ProjectSettings project={project} onSaved={() => void reload()} /> }]
+    { id: 'shell', label: t('shell.title'), icon: SquareTerminal, render: () => <ShellPanel scope={{ projectId: project.id }} /> },
+    ...(normal
+      ? [
+          { id: 'secrets', label: t('secrets.title'), icon: KeyRound, render: () => <SecretsPanel projectId={project.id} /> },
+          { id: 'ssh', label: 'SSH', icon: Server, render: () => <SshBindingsPanel scope={{ projectId: project.id }} /> },
+        ]
       : []),
+    { id: 'settings', label: t('ws.settings'), icon: Settings2, render: () => <ProjectSettings project={project} onSaved={() => void reload()} /> },
   ];
 
   if (!desktop && !full)
@@ -139,7 +136,7 @@ export function ProjectPage() {
       tools={tools}
       sessions={{ scope: { projectId: project.id }, root: project.path, title: project.name }}
       onOpenTools={setOpenTools}
-      actions={!desktop ? <SimpleViewButton onClick={() => setFull(false)} /> : normal && terminal ? <RunButton runs={runs} onOpen={() => goto('run')} onRun={run} onStop={(r) => void api.stopRun(project.id, r.id).then(() => void reloadRuns())} /> : null}
+      actions={!desktop ? <SimpleViewButton onClick={() => setFull(false)} /> : normal ? <RunButton runs={runs} onOpen={() => goto('run')} onRun={run} onStop={(r) => void api.stopRun(project.id, r.id).then(() => void reloadRuns())} /> : null}
     />
   );
 }

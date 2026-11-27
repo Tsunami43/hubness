@@ -1,41 +1,19 @@
-/** What an account may do: an admin everything (including accounts), a member what its permissions allow. */
-export type Role = 'admin' | 'member';
-
-/**
- * Parts of the hub a member can be given (chats in its projects are always available):
- * `terminal` — run commands, shells, preview and the environment; `settings` — hub-wide
- * settings (defaults, git access, voice input).
- */
-export type Section = 'git' | 'files' | 'terminal' | 'kanban' | 'system' | 'harness' | 'settings';
-
-/** A member's permissions; a `null` list means "all". */
-export interface Permissions {
-  /** Projects the member can open (and groups made only of them). */
-  projects: string[] | null;
-  sections: Section[];
-  /** Agent kinds the member can start sessions with. */
-  agents: string[] | null;
-  models: string[] | null;
-}
-
-/** A hub account; `permissions` is set for members only. */
+/** The hub's one account (hubness is single-user: it is set at the first sign-in). */
 export interface User {
   id: string;
   username: string;
   createdAt: string;
-  role: Role;
-  permissions: Permissions | null;
 }
 
-/** `PUT /api/users/:id/access` (admins only). */
-export interface UserAccess {
-  role: Role;
-  permissions?: Permissions | null;
+/** `PUT /api/auth/password`: a new password for the account; ends its other sessions. */
+export interface PasswordChange {
+  currentPassword: string;
+  password: string;
 }
 
 /**
- * `GET /api/auth/status`: `required` — the hub has accounts and asks for a sign-in; `setup` —
- * no accounts yet (the first one can be created from the hub's own machine); `user` — who is
+ * `GET /api/auth/status`: `required` — the hub has its account and asks for a sign-in; `setup` —
+ * no account yet (it can be created from the hub's own machine); `user` — who is
  * signed in with this request.
  */
 export interface AuthStatus {

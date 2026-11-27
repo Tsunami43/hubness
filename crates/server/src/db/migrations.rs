@@ -20,6 +20,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 4, name: "user accounts and their sign-in sessions", up: user_accounts },
     Migration { version: 5, name: "user roles, permissions and session owners", up: user_permissions },
     Migration { version: 6, name: "SSH connections and their project / group bindings", up: ssh_connections },
+    Migration { version: 7, name: "one account: the first one stays", up: single_account },
 ];
 
 const BASELINE_SQL: &str = r#"
@@ -280,6 +281,17 @@ CREATE INDEX IF NOT EXISTS ssh_bindings_group ON ssh_bindings(group_id);
     )
 }
 
+/// v7 — hubness is single-user: one account (the first one created) stays, any other
+/// account goes with its sessions. Roles and permissions (v5 columns) are no longer read.
+fn single_account(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "
+DELETE FROM auth_sessions WHERE user_id NOT IN (SELECT id FROM users ORDER BY created_at, rowid LIMIT 1);
+DELETE FROM users WHERE id NOT IN (SELECT id FROM users ORDER BY created_at, rowid LIMIT 1);
+",
+    )
+}
+
 pub fn schema_version(db: &Connection) -> rusqlite::Result<i64> {
     db.query_row("PRAGMA user_version", [], |r| r.get(0))
 }
@@ -314,10 +326,28 @@ mod tests {
     #[test]
     fn fresh_database_reaches_the_latest_version_once() {
         let db = Connection::open_in_memory().unwrap();
-        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4, 5, 6]);
-        assert_eq!(schema_version(&db).unwrap(), 6);
+        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(schema_version(&db).unwrap(), 7);
         assert!(migrate(&db, MIGRATIONS).unwrap().is_empty());
         assert!(has_column(&db, "sessions", "archived_at").unwrap());
+    }
+
+    #[test]
+    fn only_the_first_account_stays() {
+        let db = Connection::open_in_memory().unwrap();
+        migrate(&db, &MIGRATIONS[..6]).unwrap();
+        db.execute_batch(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES
+               ('b', 'bob', 'h', '2026-02-01T00:00:00Z'), ('a', 'ann', 'h', '2026-01-01T00:00:00Z'), ('c', 'cy', 'h', '2026-03-01T00:00:00Z');
+             INSERT INTO auth_sessions (token_hash, user_id, created_at, last_seen, expires) VALUES ('t1', 'a', 't', 't', 't'), ('t2', 'b', 't', 't', 't');",
+        )
+        .unwrap();
+        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![7]);
+        let ids: Vec<String> =
+            db.prepare("SELECT id FROM users").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(ids, ["a"]);
+        let sessions: i64 = db.query_row("SELECT COUNT(*) FROM auth_sessions", [], |r| r.get(0)).unwrap();
+        assert_eq!(sessions, 1);
     }
 
     #[test]
