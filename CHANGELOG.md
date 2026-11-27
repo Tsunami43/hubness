@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-27
+
+### Changed
+
+- Voice input setup is one click: choosing any model downloads it (with a percentage),
+  chooses it and builds whisper.cpp if the hub has none, all in one overlay that waits for
+  the steps; a failed step shows its log.
+
 ## [0.3.4] - 2026-11-27
 
 ### Added
