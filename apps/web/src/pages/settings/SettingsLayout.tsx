@@ -1,6 +1,6 @@
 import { Bot, GitBranch, HardDrive, Keyboard, Languages, Mic, Palette, Users } from 'lucide-react';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../../components/SubmenuLayout';
-import { t } from '../../i18n';
+import { getLang, LANGUAGES, t } from '../../i18n';
 import { useAccess } from '../../components/AuthGate';
 
 type Item = SubmenuItem & { need?: 'settings' | 'admin' };
@@ -62,9 +62,9 @@ const items = (): Item[] => [
   {
     to: 'language',
     label: t('settings.language'),
-    hint: t('settings.languageItemHint'),
+    hint: LANGUAGES.find((l) => l.id === getLang())?.label,
     icon: <Languages className="size-4 text-accent" />,
-    keywords: ['language', 'english', 'russian', 'locale', 'язык', 'русский', 'английский'],
+    keywords: ['language', 'locale', 'translation', 'язык', 'перевод', ...LANGUAGES.map((l) => l.label.toLowerCase())],
   },
 ];
 

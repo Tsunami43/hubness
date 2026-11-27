@@ -1,5 +1,5 @@
-// English UI strings. To add a language: copy this file (e.g. ru.ts), translate
-// the values and register it in ../i18n/index.ts. Placeholders: {name}.
+// English UI strings. To add a language: copy this file (e.g. de.ts), translate
+// the values and register it in ./index.ts. Placeholders: {name}.
 export const en = {
   // navigation
   'nav.new': 'New',
@@ -454,7 +454,8 @@ export const en = {
   'limit.seven_day_sonnet': 'Weekly · Sonnet',
   'settings.language': 'Language',
   'settings.languageHint': 'The page reloads to switch the language. Messages from the server and agents stay as they are.',
-  'settings.languageItemHint': 'English, Русский',
+  'settings.languageSearch': 'Search languages',
+  'settings.languageNone': 'No such language yet.',
   'files.unsaved': 'Unsaved changes',
   'files.discard': 'Discard changes',
   'files.gone': 'The file was deleted on disk.',
