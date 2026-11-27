@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { AuthStatus, Section, User } from '@hubness/shared';
+import type { AuthStatus, User } from '@hubness/shared';
 import { t } from '../i18n';
 import { Button, ErrorLine, Field, inputCls, Spinner } from './ui';
 
@@ -14,7 +14,7 @@ type State = 'checking' | 'open' | 'login' | 'setup';
 interface Auth {
   /** The signed-in user; `null` on a hub without accounts. */
   user: User | null;
-  /** The hub has accounts (sign-in is on). */
+  /** The hub has its account (sign-in is on). */
   required: boolean;
   logout: () => Promise<void>;
   /** Re-read the status (after the accounts changed). */
@@ -24,21 +24,6 @@ interface Auth {
 const AuthContext = createContext<Auth>({ user: null, required: false, logout: async () => {}, refresh: async () => {} });
 
 export const useAuth = () => useContext(AuthContext);
-
-/**
- * What the signed-in account may do (the server checks the same rules; this only hides what
- * would answer 403). No account (a hub without sign-in) and admins may do everything.
- */
-export function useAccess() {
-  const { user } = useAuth();
-  const p = user?.role === 'member' ? (user.permissions ?? { projects: [], sections: [], agents: [], models: [] }) : null;
-  return {
-    admin: p === null,
-    can: (s: Section) => p === null || p.sections.includes(s),
-    agent: (kind: string) => p === null || p.agents === null || p.agents.includes(kind),
-    model: (id: string) => p === null || p.models === null || p.models.includes(id),
-  };
-}
 
 const skipped = () => {
   try {

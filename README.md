@@ -115,7 +115,7 @@ ssh -N -L 8787:127.0.0.1:8787 you@server    # on your laptop, then: hubness tui 
 ```
 
 To listen on the network, create an account first and set the host — hubness refuses a
-public address while there are no accounts:
+public address while there is no account:
 
 ```sh
 hubness user add alice

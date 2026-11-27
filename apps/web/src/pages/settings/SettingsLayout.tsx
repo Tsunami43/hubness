@@ -1,14 +1,10 @@
-import { Bot, GitBranch, HardDrive, Keyboard, Languages, Mic, Palette, Users } from 'lucide-react';
+import { Bot, GitBranch, HardDrive, Keyboard, Languages, Mic, Palette, UserRound } from 'lucide-react';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../../components/SubmenuLayout';
 import { getLang, LANGUAGES, t } from '../../i18n';
-import { useAccess } from '../../components/AuthGate';
 
-type Item = SubmenuItem & { need?: 'settings' | 'admin' };
-
-const items = (): Item[] => [
+const items = (): SubmenuItem[] => [
   {
     to: 'agent',
-    need: 'settings',
     label: t('settings.agent'),
     hint: t('settings.agentHint'),
     icon: <Bot className="size-4 text-accent" />,
@@ -23,7 +19,6 @@ const items = (): Item[] => [
   },
   {
     to: 'voice',
-    need: 'settings',
     label: t('voice.title'),
     hint: t('voice.itemHint'),
     icon: <Mic className="size-4 text-accent" />,
@@ -31,22 +26,20 @@ const items = (): Item[] => [
   },
   {
     to: 'git',
-    need: 'settings',
     label: t('gitauth.title'),
     hint: t('gitauth.itemHint'),
     icon: <GitBranch className="size-4 text-accent" />,
     keywords: ['git', 'login', 'password', 'token', 'https', 'auth', 'github', 'gitlab', 'credentials', 'доступ', 'вход', 'логин', 'пароль', 'токен', 'авторизация'],
   },
   {
-    to: 'users',
-    label: t('users.title'),
-    hint: t('users.itemHint'),
-    icon: <Users className="size-4 text-accent" />,
-    keywords: ['users', 'accounts', 'password', 'login', 'logout', 'sign in', 'пользователи', 'учётные записи', 'пароль', 'вход', 'выход'],
+    to: 'account',
+    label: t('account.title'),
+    hint: t('account.itemHint'),
+    icon: <UserRound className="size-4 text-accent" />,
+    keywords: ['account', 'user', 'password', 'login', 'logout', 'sign in', 'sign out', 'аккаунт', 'учётная запись', 'пароль', 'вход', 'выход', 'выйти'],
   },
   {
     to: 'storage',
-    need: 'admin',
     label: t('storage.title'),
     hint: t('storage.itemHint'),
     icon: <HardDrive className="size-4 text-accent" />,
@@ -69,18 +62,10 @@ const items = (): Item[] => [
 ];
 
 /** Settings: submenu with search. */
-/** The settings this account may open (members: hub-wide ones only with the settings section). */
-function useItems(): SubmenuItem[] {
-  const access = useAccess();
-  return items()
-    .filter((i) => !i.need || (i.need === 'admin' ? access.admin : access.can(i.need)))
-    .map(({ need: _, ...i }) => i);
-}
-
 export function SettingsLayout() {
-  return <SubmenuLayout base="/settings" title={t('settings.title')} items={useItems()} searchPlaceholder={t('settings.search')} />;
+  return <SubmenuLayout base="/settings" title={t('settings.title')} items={items()} searchPlaceholder={t('settings.search')} />;
 }
 
 export function SettingsIndex() {
-  return <SubmenuIndex to={useItems()[0]?.to} />;
+  return <SubmenuIndex to={items()[0]?.to} />;
 }

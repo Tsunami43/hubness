@@ -367,6 +367,7 @@ impl App {
                 }
                 Request::OpenUrl(url) => open_url(&url, &mut self.ctx),
                 Request::SwitchHub(url) => self.switch_hub(url),
+                Request::LogOut => self.log_out(),
             }
         }
     }

@@ -6,7 +6,6 @@ import { api } from '../lib/api';
 import { pushDraft } from '../lib/ask';
 import type { SessionScope } from '../lib/hooks';
 import { t } from '../i18n';
-import { useAccess } from './AuthGate';
 import { DiffView } from './DiffView';
 import { FileViewer } from './FileViewer';
 import { GitAuthNotice, GitLoginSheet } from './GitLogin';
@@ -49,7 +48,6 @@ export function MobileWorkspace({
   onFull: () => void;
 }) {
   const [params, setParams] = useSearchParams();
-  const access = useAccess();
   const tab = (params.get('m') as Tab | null) ?? 'chat';
   const sessionOpen = tab === 'chat' && params.has('s');
   const scopeKey = 'projectId' in scope ? scope.projectId : `group:${scope.groupId}`;
@@ -72,8 +70,8 @@ export function MobileWorkspace({
 
   const tabs: { id: Tab; label: string; icon: typeof MessagesSquare; badge?: number }[] = [
     { id: 'chat', label: t('mobile.chat'), icon: MessagesSquare },
-    ...(access.can('git') ? [{ id: 'changes' as const, label: t('mobile.changes'), icon: GitBranch, badge: changedFiles(repos, git) }] : []),
-    ...(access.can('files') ? [{ id: 'files' as const, label: t('mobile.files'), icon: Folder }] : []),
+    { id: 'changes', label: t('mobile.changes'), icon: GitBranch, badge: changedFiles(repos, git) },
+    { id: 'files', label: t('mobile.files'), icon: Folder },
     { id: 'more', label: t('mobile.more'), icon: LayoutPanelLeft },
   ];
 

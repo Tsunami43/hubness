@@ -258,6 +258,17 @@ CREATE INDEX IF NOT EXISTS ssh_bindings_group ON ssh_bindings(group_id);
 `);
 }
 
+/**
+ * v7 — hubness is single-user: one account (the first one created) stays, any other
+ * account goes with its sessions. Roles and permissions (v5 columns) are no longer read.
+ */
+export function singleAccount(db: DatabaseSync) {
+  db.exec(`
+DELETE FROM auth_sessions WHERE user_id NOT IN (SELECT id FROM users ORDER BY created_at, rowid LIMIT 1);
+DELETE FROM users WHERE id NOT IN (SELECT id FROM users ORDER BY created_at, rowid LIMIT 1);
+`);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'baseline schema', up: baseline },
   { version: 2, name: 'legacy groups (projects.kind = group) → project_groups', up: migrateLegacyGroups },
@@ -265,6 +276,7 @@ export const MIGRATIONS: Migration[] = [
   { version: 4, name: 'user accounts and their sign-in sessions', up: userAccounts },
   { version: 5, name: 'user roles, permissions and session owners', up: userPermissions },
   { version: 6, name: 'SSH connections and their project / group bindings', up: sshConnections },
+  { version: 7, name: 'one account: the first one stays', up: singleAccount },
 ];
 
 export const schemaVersion = (db: DatabaseSync) => Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);

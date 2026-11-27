@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 
 use hubness_core::{
     AgentConfig, ApiError, AuthStatus, GlobalStreamMsg, LoginResponse, PermissionMode, Project, Session, SessionStreamMsg, SshBinding,
-    SshConnection, SshTestResult, User,
+    SshConnection, SshTestResult,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -129,8 +129,11 @@ impl Client {
         r
     }
 
-    pub async fn users(&self) -> anyhow::Result<Vec<User>> {
-        self.get("/users").await
+    /// A new password for the hub's account (ends its other sessions; 403 on a wrong current one).
+    pub async fn change_password(&self, current: &str, new: &str) -> anyhow::Result<()> {
+        self.send::<Value, _>(reqwest::Method::PUT, "/auth/password", &json!({ "currentPassword": current, "password": new }))
+            .await
+            .map(|_| ())
     }
 
     pub async fn projects(&self) -> anyhow::Result<Vec<Project>> {
