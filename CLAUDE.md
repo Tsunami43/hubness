@@ -66,8 +66,9 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
 - `main.tsx` — routes; `pages/` — top-level screens (chats, projects, groups, git,
   harness, system, settings); `components/` — UI building blocks.
 - `lib/api.ts` and `lib/query.ts` — API client and TanStack Query hooks; `lib/stream.ts` — SSE.
-- `i18n/` — `en.ts` and `ru.ts`. Every user-facing string goes through i18n and must be
-  added to both files.
+- `i18n/` — `en.ts` (reference, built in) and one dictionary per language (`ru`, `uk`, `de`, `fr`,
+  `es`, `it`, `pt`, `pl`, `tr`, `zh`, `ja`, `ko`), each loaded only when chosen (`index.ts`). Every
+  user-facing string goes through i18n and must be added to every dictionary.
 - Vite proxies `/api` to the server in dev; in production the server serves `apps/web/dist`.
 
 ### Rust (`crates/`)
@@ -82,6 +83,9 @@ both servers, backed by a contract test.
   a new migration is added to both servers. `README.md` lists the domains and deviations.
   `web.rs` serves the web app: `HUBNESS_WEB_DIST` when set, else the copy compiled in with
   the `embed-web` feature (`build.rs`, off by default, needs `pnpm build`), else `apps/web/dist`.
+  Accounts (`users.rs`, `auth.rs`) are admins or members; `permissions.rs` checks what a member
+  may open (projects, sections, agents, models) in an `/api` middleware and in the list/stream
+  handlers. A new route is admin-only for members until it is mapped in `permissions::need`.
 - `client` — HTTP + SSE client of the API (`hubness-client`).
 - `tui` — ratatui terminal UI on top of the client (`hubness-tui`).
 - `hubness` — the one installed command: `serve` (foreground), `server start|stop|restart|

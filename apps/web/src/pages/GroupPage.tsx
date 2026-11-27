@@ -15,6 +15,9 @@ import { GroupFolderField, ProjectPicker } from './ProjectsPage';
 import { Section } from './ProjectPage';
 import { t } from '../i18n';
 import { closePlace, usePlace } from '../lib/places';
+import { useAccess } from '../components/AuthGate';
+
+const NO_REPOS: { id: string; name: string; path: string }[] = [];
 
 /** Project group: code of all repositories and tools (Sessions, Git, Shell, Settings) as tabs. */
 export function GroupPage() {
@@ -24,7 +27,8 @@ export function GroupPage() {
   const repoKey = group?.projects.map((p) => p.id).join(',') ?? '';
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const repos = useMemo(() => (group ? group.projects.map((p) => ({ id: p.id, name: p.name, path: p.path })) : []), [repoKey]);
-  const { git, refresh } = useGitByRepo(repos);
+  const access = useAccess();
+  const { git, refresh } = useGitByRepo(access.can('git') ? repos : NO_REPOS);
   usePlace(group && group.id === id ? { key: `group:${id}`, kind: 'group', title: group.name, path: `/groups/${id}` } : null);
   useEffect(() => {
     if (error) closePlace(`group:${id}`);
@@ -45,13 +49,18 @@ export function GroupPage() {
 
   const tools: Tool[] = [
     { id: 'sessions', label: t('tab.sessions'), icon: MessagesSquare, render: () => <SessionsTool scope={{ groupId: group.id }} root={group.workspace.path} title={group.name} /> },
-    { id: 'shell', label: t('shell.title'), icon: SquareTerminal, render: () => <ShellPanel scope={{ groupId: group.id }} /> },
-    {
-      id: 'settings',
-      label: t('ws.settings'),
-      icon: Settings2,
-      render: () => <GroupSettings group={group} onSaved={() => void reload()} onAddProject={() => setAdding(true)} />,
-    },
+    ...(access.can('terminal') ? [{ id: 'shell', label: t('shell.title'), icon: SquareTerminal, render: () => <ShellPanel scope={{ groupId: group.id }} /> }] : []),
+    // group settings are for admins
+    ...(access.admin
+      ? [
+          {
+            id: 'settings',
+            label: t('ws.settings'),
+            icon: Settings2,
+            render: () => <GroupSettings group={group} onSaved={() => void reload()} onAddProject={() => setAdding(true)} />,
+          },
+        ]
+      : []),
   ];
 
   return (

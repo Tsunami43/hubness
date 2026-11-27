@@ -18,6 +18,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 2, name: "legacy groups (projects.kind = group) → project_groups", up: migrate_legacy_groups },
     Migration { version: 3, name: "drop auto-imported projects", up: prune_auto_imported },
     Migration { version: 4, name: "user accounts and their sign-in sessions", up: user_accounts },
+    Migration { version: 5, name: "user roles, permissions and session owners", up: user_permissions },
 ];
 
 const BASELINE_SQL: &str = r#"
@@ -234,6 +235,17 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions(user_id);
 "#;
 
+/// v5 — user permissions: a role (`admin` — everything, `member` — what `permissions`, a JSON
+/// object, allows) and the account that started each session (null for older sessions and
+/// hubs without accounts). Existing accounts stay admins.
+fn user_permissions(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin';
+ALTER TABLE users ADD COLUMN permissions TEXT;
+ALTER TABLE sessions ADD COLUMN created_by TEXT;",
+    )
+}
+
 pub fn schema_version(db: &Connection) -> rusqlite::Result<i64> {
     db.query_row("PRAGMA user_version", [], |r| r.get(0))
 }
@@ -268,8 +280,8 @@ mod tests {
     #[test]
     fn fresh_database_reaches_the_latest_version_once() {
         let db = Connection::open_in_memory().unwrap();
-        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4]);
-        assert_eq!(schema_version(&db).unwrap(), 4);
+        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4, 5]);
+        assert_eq!(schema_version(&db).unwrap(), 5);
         assert!(migrate(&db, MIGRATIONS).unwrap().is_empty());
         assert!(has_column(&db, "sessions", "archived_at").unwrap());
     }

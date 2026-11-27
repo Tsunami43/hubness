@@ -8,9 +8,10 @@ import { Button, ErrorLine, Field, inputCls, Spinner, Checkbox } from '../ui';
 import { ptySize } from './shell';
 
 /** Project run commands; polled every 3 s while something is running or the panel is open. */
-export function useRuns(projectId: string, active: boolean) {
+/** Run commands of a project; `enabled: false` (no terminal access) never asks the server. */
+export function useRuns(projectId: string, active: boolean, enabled = true) {
   const [runs, setRuns] = useState<RunState[] | null>(null);
-  const reload = useCallback(() => api.runs(projectId).then(setRuns, () => {}), [projectId]);
+  const reload = useCallback(() => (enabled ? api.runs(projectId).then(setRuns, () => {}) : Promise.resolve()), [projectId, enabled]);
   useEffect(() => {
     void reload();
   }, [reload]);

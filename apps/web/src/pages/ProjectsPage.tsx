@@ -12,6 +12,7 @@ import { LanguageDot } from '../components/LanguageBar';
 import { Button, Empty, ErrorLine, Field, IconButton, inputCls, Sheet, Spinner, TopBar } from '../components/ui';
 import { t } from '../i18n';
 import { Select } from '../components/Select';
+import { useAccess } from '../components/AuthGate';
 
 const rel = (root: string | null | undefined, p: string) => (root && p.startsWith(root + '/') ? p.slice(root.length + 1) : p);
 
@@ -28,6 +29,8 @@ type Sort = 'updated' | 'name';
  */
 export function ProjectsPage() {
   const settings = useHubSettings();
+  // adding projects and groups is for admins
+  const { admin } = useAccess();
   const [params, setParams] = useSearchParams();
   const { data, loading, error, reload } = useApi(['projects', 'with-groups'], () => Promise.all([api.projects(), api.groups()]));
   const [sheet, setSheet] = useState<'repo' | 'group' | null>(null);
@@ -66,9 +69,11 @@ export function ProjectsPage() {
         <aside className="min-w-0">
           <div className="mb-2 flex items-center gap-2">
             <h2 className="flex-1 text-sm font-semibold">{t('projects.tab.groups')}</h2>
-            <Button size="sm" variant="ghost" onClick={() => setSheet('group')}>
-              <Plus className="size-3.5" /> {t('groups.new')}
-            </Button>
+            {admin ? (
+              <Button size="sm" variant="ghost" onClick={() => setSheet('group')}>
+                <Plus className="size-3.5" /> {t('groups.new')}
+              </Button>
+            ) : null}
           </div>
           {groups.length ? (
             <ul className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] lg:block lg:space-y-1 lg:overflow-visible">
@@ -112,9 +117,11 @@ export function ProjectsPage() {
                 { value: 'name', label: t('projects.sortName') },
               ]}
             />
-            <Button variant="primary" size="sm" onClick={() => setSheet('repo')}>
-              <Plus className="size-4" /> {t('projects.new')}
-            </Button>
+            {admin ? (
+              <Button variant="primary" size="sm" onClick={() => setSheet('repo')}>
+                <Plus className="size-4" /> {t('projects.new')}
+              </Button>
+            ) : null}
           </div>
           <ErrorLine error={error} />
           {loading && !data ? (
@@ -129,9 +136,9 @@ export function ProjectsPage() {
             <Empty
               icon={<FolderGit2 className="size-8" />}
               title={filtered ? t('projects.noMatches') : t('projects.empty')}
-              hint={filtered ? undefined : t('projects.emptyHint')}
+              hint={filtered ? undefined : admin ? t('projects.emptyHint') : t('perm.noProjects')}
               action={
-                filtered ? undefined : (
+                filtered || !admin ? undefined : (
                   <Button variant="primary" onClick={() => setSheet('repo')}>
                     {t('projects.new')}
                   </Button>
