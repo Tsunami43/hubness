@@ -144,14 +144,17 @@ function Composer({
               <Square className="size-3 fill-current" />
             </IconButton>
           ) : (
-            <IconButton
-              label={t('session.send')}
+            // not an IconButton: its muted text and faded disabled state would wash out the accent fill
+            <button
+              type="button"
+              aria-label={t('session.send')}
+              title={t('session.send')}
               onClick={() => void send()}
               disabled={!ready || sending || disabled}
-              className={`size-8 ${ready || sending ? 'btn-accent' : 'border border-line disabled:opacity-100'}`}
+              className={`tap inline-flex size-8 shrink-0 items-center justify-center ${ready || sending ? 'btn-accent' : 'border border-line text-muted'}`}
             >
-              {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-            </IconButton>
+              {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.5} />}
+            </button>
           )}
         </div>
         </div>
