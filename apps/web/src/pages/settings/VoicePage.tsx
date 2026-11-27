@@ -5,27 +5,21 @@ import { api } from '../../lib/api';
 import { fmtSize } from '../../lib/format';
 import { useVoiceSettings } from '../../lib/voice';
 import { liveStream } from '../../lib/stream';
-import { Button, ErrorLine, Field, IconButton, inputCls, Spinner } from '../../components/ui';
+import { Button, ErrorLine, Field, IconButton, Layer, Spinner } from '../../components/ui';
 import { Select } from '../../components/Select';
 import { sheetTermSize } from '../../components/Terminal';
 import { confirmDialog } from '../../components/Confirm';
 import { getLang, t } from '../../i18n';
 import type { MessageKey } from '../../i18n/en';
 
-const PROVIDERS: VoiceProvider[] = ['off', 'local', 'api'];
+const PROVIDERS: VoiceProvider[] = ['off', 'local'];
 const LANGUAGES = ['auto', 'en', 'ru', 'uk', 'de', 'fr', 'es', 'it', 'pt', 'pl', 'tr', 'zh', 'ja', 'ko'];
 const RECOMMENDED_MODEL = 'large-v3-turbo-q5_0';
 
-/** OpenAI-compatible services: one click fills the URL and the model. */
-const PRESETS = [
-  { name: 'Groq', url: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo' },
-  { name: 'Mistral', url: 'https://api.mistral.ai/v1', model: 'voxtral-mini-latest' },
-];
-
 /**
  * Settings → Voice input: where speech from the microphone in the chat input is transcribed —
- * whisper.cpp on this machine (the hub builds it and downloads models) or an OpenAI-compatible
- * service. Stored on the server, the same on every device.
+ * whisper.cpp on this machine (the hub builds it and downloads models). Stored on the server,
+ * the same on every device.
  */
 export function VoicePage() {
   const { data: s, setData, error: loadError } = useVoiceSettings();
@@ -99,7 +93,6 @@ export function VoicePage() {
           }}
         />
       ) : null}
-      {s.provider === 'api' ? <ApiSection s={s} save={save} /> : null}
 
       <ErrorLine error={error} />
       {s.provider !== 'off' ? <p className="text-xs text-muted">{t('voice.httpsHint')}</p> : null}
@@ -131,7 +124,7 @@ function Status({ s }: { s: VoiceSettings }) {
     if (!s.local.binary) problem = t('voice.needWhisper');
     else if (!s.local.ffmpeg) problem = t('voice.needFfmpeg');
     else if (!s.local.models.find((m) => m.id === s.local.model)?.installed) problem = t('voice.needModel');
-  } else if (s.provider === 'api' && !s.ready) problem = t('voice.needApi');
+  }
   return problem ? (
     <p className="flex items-start gap-2 border border-warn/40 bg-warn/10 px-3 py-2 text-sm">
       <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" />
@@ -326,102 +319,38 @@ function SetupOverlay({ steps, onFinish }: { steps: Step[]; onFinish: () => void
   const title = step.kind === 'download' ? t('voice.downloading', { name: step.label }) : t('voice.building');
   const percent = step.kind === 'download' ? percentOf(lines.at(-1)) : null;
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={title}>
-      <div className="w-full max-w-md space-y-4 border border-line bg-surface p-5">
-        {failed !== null ? (
-          <>
-            <p className="flex items-center gap-2 font-semibold text-danger">
-              <CircleAlert className="size-5" /> {step.kind === 'download' ? t('voice.downloadFailed') : t('voice.buildFailed')}
-            </p>
-            <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed || lines.join('\n')}</pre>
-            <Button variant="primary" onClick={onFinish}>
-              {t('common.close')}
-            </Button>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center gap-4">
-              <Ring percent={percent} />
-              <div className="min-w-0">
-                {steps.length > 1 ? <p className="text-xs text-muted">{t('voice.step', { n: index + 1, total: steps.length })}</p> : null}
-                <p className="font-semibold">{title}</p>
-                <p className="text-xs text-muted">{step.kind === 'download' ? t('voice.downloadingHint') : t('voice.buildingHint')}</p>
+    <Layer>
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={title}>
+        <div className="ui-solid w-full max-w-md space-y-4 border border-line bg-surface p-5">
+          {failed !== null ? (
+            <>
+              <p className="flex items-center gap-2 font-semibold text-danger">
+                <CircleAlert className="size-5" /> {step.kind === 'download' ? t('voice.downloadFailed') : t('voice.buildFailed')}
+              </p>
+              <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed || lines.join('\n')}</pre>
+              <Button variant="primary" onClick={onFinish}>
+                {t('common.close')}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-4">
+                <Ring percent={percent} />
+                <div className="min-w-0">
+                  {steps.length > 1 ? <p className="text-xs text-muted">{t('voice.step', { n: index + 1, total: steps.length })}</p> : null}
+                  <p className="font-semibold">{title}</p>
+                  <p className="text-xs text-muted">{step.kind === 'download' ? t('voice.downloadingHint') : t('voice.buildingHint')}</p>
+                </div>
+                <span className="ml-auto font-mono text-sm text-muted tabular-nums">{clock(secs)}</span>
               </div>
-              <span className="ml-auto font-mono text-sm text-muted tabular-nums">{clock(secs)}</span>
-            </div>
-            {step.kind === 'build' ? <p className="truncate font-mono text-xs text-muted">{lines.at(-1) ?? ''}</p> : null}
-            <Button size="sm" disabled={!job} onClick={() => job && void api.jobKill(job.id)}>
-              <Square className="size-3.5" /> {t('term.stop')}
-            </Button>
-          </>
-        )}
+              {step.kind === 'build' ? <p className="truncate font-mono text-xs text-muted">{lines.at(-1) ?? ''}</p> : null}
+              <Button size="sm" disabled={!job} onClick={() => job && void api.jobKill(job.id)}>
+                <Square className="size-3.5" /> {t('term.stop')}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
-    </div>
-  );
-}
-
-function ApiSection({ s, save }: { s: VoiceSettings; save: (patch: VoiceSettingsInput) => Promise<boolean> }) {
-  const [url, setUrl] = useState(s.api.url);
-  const [model, setModel] = useState(s.api.model);
-  const [key, setKey] = useState('');
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    setUrl(s.api.url);
-    setModel(s.api.model);
-  }, [s.api.url, s.api.model]);
-  const dirty = url.trim() !== s.api.url || model.trim() !== s.api.model || key.trim() !== '';
-
-  const submit = async () => {
-    setBusy(true);
-    const ok = await save({ apiUrl: url, apiModel: model, ...(key.trim() ? { apiKey: key } : {}) });
-    setBusy(false);
-    if (ok) setKey('');
-  };
-
-  return (
-    <section className="space-y-3">
-      <h2 className="font-semibold">{t('voice.service')}</h2>
-      <div className="flex flex-wrap gap-2">
-        {PRESETS.map((p) => (
-          <Button
-            key={p.name}
-            size="sm"
-            variant={url === p.url ? 'primary' : 'secondary'}
-            onClick={() => {
-              setUrl(p.url);
-              setModel(p.model);
-            }}
-          >
-            {p.name}
-          </Button>
-        ))}
-      </div>
-      <Field label={t('voice.apiUrl')} hint={t('voice.apiUrlHint')}>
-        <input className={inputCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://api.groq.com/openai/v1" spellCheck={false} />
-      </Field>
-      <Field label={t('voice.apiModel')}>
-        <input className={inputCls} value={model} onChange={(e) => setModel(e.target.value)} placeholder="whisper-large-v3-turbo" spellCheck={false} />
-      </Field>
-      <Field label={t('voice.apiKey')} hint={t('voice.apiKeyHint')}>
-        <input
-          className={inputCls}
-          type="password"
-          autoComplete="off"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={s.api.hasKey ? t('voice.apiKeySaved') : ''}
-        />
-      </Field>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" onClick={() => void submit()} disabled={!dirty} loading={busy}>
-          {t('common.save')}
-        </Button>
-        {s.api.hasKey ? (
-          <Button variant="ghost" onClick={() => void save({ apiKey: null })}>
-            {t('voice.apiKeyRemove')}
-          </Button>
-        ) : null}
-      </div>
-    </section>
+    </Layer>
   );
 }

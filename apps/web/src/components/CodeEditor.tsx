@@ -341,7 +341,7 @@ export default function CodeEditor({
         onPointerDown={(e) => e.button === 0 && (e.target as Element).closest('.cm-content') && setDragging(true)}
       />
       {edge ? (
-        <div ref={askBar} className="absolute z-20 border border-line bg-surface text-xs shadow-xl shadow-black/40" style={{ left: edge.x, top: edge.bottom }}>
+        <div ref={askBar} className="ui-solid absolute z-20 border border-line bg-surface text-xs shadow-xl shadow-black/40" style={{ left: edge.x, top: edge.bottom }}>
           <AskActions text={snippet} up={edge.above} />
         </div>
       ) : null}

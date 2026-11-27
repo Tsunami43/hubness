@@ -55,8 +55,10 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   page per session, `HUBNESS_CHROME`, `HUBNESS_CHROME_ARGS`), driven by the hub MCP `preview_*` tools through
   `POST /sessions/:id/browser`; `localhost:<port>` of a project goes through its preview.
 - `git*.ts` — git operations, credentials helper and provider (GitHub/GitLab…) logins.
+  `git-login-check.ts` asks a host's API who a stored login is (status, account, picture kept
+  in the hub); `HUBNESS_GIT_API` puts every host's API under one address for tests.
 - `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models
-  downloaded into `<data>/whisper` as terminal jobs) or an OpenAI-compatible service.
+  downloaded into `<data>/whisper` as terminal jobs); the speech never leaves the host.
 - `ssh.ts` — SSH connections (System → SSH): keys the hub holds, bound to projects / groups;
   an agent turn gets a private ssh-agent, an ssh config with an alias per connection and
   ssh/scp wrappers, and the connections' descriptions (prod / dev) in its context.
@@ -154,6 +156,10 @@ Always run `pnpm check` and `pnpm test` before considering a change done; for ch
   `preview-inject.js` is tested in `preview-inject.test.ts` (a `vm` context).
 - A React effect without braces returns its expression: only state setters may be written
   that way (`web-logic.test.ts` checks it) — a returned Promise breaks the app on the next update.
+- A layer floating over the page (dialog, sheet, menu, popover, tooltip, toast) carries the
+  `ui-solid` class (opaque in the glass style) and, when `position: fixed`, renders through
+  `<Layer>` from `components/ui.tsx` (a portal to `<body>`): a glass panel's backdrop-filter
+  would otherwise trap it inside that panel.
 - Content that comes from a previewed page (logs, picked elements) is untrusted: it reaches an
   agent only fenced and marked as page content.
 - Local data lives in `.data/` (SQLite, logs, keys) and is git-ignored. Do not commit it.

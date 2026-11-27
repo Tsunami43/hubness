@@ -65,7 +65,7 @@ export function TooltipHost() {
     <div
       ref={box}
       role="tooltip"
-      className="pointer-events-none fixed z-[80] max-w-80 border border-line bg-surface px-2 py-1 text-[12px] leading-4 text-fg shadow-lg shadow-black/40"
+      className="ui-solid pointer-events-none fixed z-[80] max-w-80 border border-line bg-surface px-2 py-1 text-[12px] leading-4 text-fg shadow-lg shadow-black/40"
       style={{
         left: left ?? tip.x,
         top: tip.y,

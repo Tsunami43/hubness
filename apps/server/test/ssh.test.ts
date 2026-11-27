@@ -21,8 +21,8 @@ const status = (fn: () => unknown) => {
   return 200;
 };
 
-const binding = (name: string, environment: string, hostKeys: string): SshBinding => ({
-  connection: { id: name, name, host: '10.0.0.5', port: 2222, username: 'deploy', environment, description: 'Backend API', publicKey: '', hostKeys, createdAt: '', updatedAt: '' },
+const binding = (name: string, hostKeys: string): SshBinding => ({
+  connection: { id: name, name, host: '10.0.0.5', port: 2222, username: 'deploy', description: 'Backend API', publicKey: '', hostKeys, createdAt: '', updatedAt: '' },
   note: 'deploy only after tests pass',
 });
 
@@ -36,7 +36,7 @@ test('ssh: names are aliases an agent can type, nothing ssh would read as an opt
 });
 
 test('ssh: the session config pins tested hosts and keeps the user’s own hosts (same text as ssh.rs)', () => {
-  const list = [binding('prod-api', 'prod', '10.0.0.5 ssh-ed25519 AAAA'), binding('dev-api', 'dev', '')];
+  const list = [binding('prod-api', '10.0.0.5 ssh-ed25519 AAAA'), binding('dev-api', '')];
   const cfg = sessionConfig(list, '/d');
   assert.ok(
     cfg.includes(
@@ -49,17 +49,17 @@ test('ssh: the session config pins tested hosts and keeps the user’s own hosts
   assert.equal(sessionConfig([], '/d').includes('Host '), false);
 });
 
-test('ssh: the agent context names each connection with its environment, description and note', () => {
-  const ctx = sessionContext([binding('prod-api', 'prod', ''), { ...binding('box', '', ''), note: '' }]);
+test('ssh: the agent context names each connection with its description and note', () => {
+  const ctx = sessionContext([binding('prod-api', ''), { ...binding('box', ''), note: '' }]);
   assert.ok(ctx.startsWith('## SSH connections\n'));
-  assert.ok(ctx.includes('- `prod-api` [prod] — deploy@10.0.0.5:2222 — Backend API In this project: deploy only after tests pass'));
-  assert.ok(ctx.includes('- `box` — deploy@10.0.0.5:2222 — Backend API'), 'no brackets without an environment, no note part without a note');
-  const multi = sessionContext([{ ...binding('m', 'dev', ''), connection: { ...binding('m', 'dev', '').connection, description: 'line one\nline two' }, note: 'a\nb' }]);
+  assert.ok(ctx.includes('- `prod-api` — deploy@10.0.0.5:2222 — Backend API In this project: deploy only after tests pass'));
+  assert.ok(ctx.includes('- `box` — deploy@10.0.0.5:2222 — Backend API'), 'no note part without a note');
+  const multi = sessionContext([{ ...binding('m', ''), connection: { ...binding('m', '').connection, description: 'line one\nline two' }, note: 'a\nb' }]);
   assert.ok(multi.includes('line one line two In this project: a b'), 'one line per connection');
 });
 
 test('ssh: storage — the private key is encrypted at rest, edits validate, a new address unpins the host', () => {
-  const made = createSsh({ name: 'store-a', host: 'example.com', username: 'root', environment: 'prod', description: ' API ' });
+  const made = createSsh({ name: 'store-a', host: 'example.com', username: 'root', description: ' API ' });
   assert.equal(made.port, 22);
   assert.equal(made.description, 'API');
   assert.match(made.publicKey, /^ssh-ed25519 \S+ hubness:store-a$/);
@@ -69,7 +69,7 @@ test('ssh: storage — the private key is encrypted at rest, edits validate, a n
   assert.equal(existsSync(join(tmp, 'data', 'ssh')), false, 'keys never touch the data folder in the clear');
 
   assert.equal(status(() => createSsh({ name: 'STORE-A', host: 'h', username: 'u' })), 409);
-  for (const bad of [{ host: 'a b' }, { host: '-oProxyCommand=x' }, { username: 'a@b' }, { username: '-l' }, { environment: 'x'.repeat(33) }, { description: 'x'.repeat(4001) }, { privateKey: 'not a key' }])
+  for (const bad of [{ host: 'a b' }, { host: '-oProxyCommand=x' }, { username: 'a@b' }, { username: '-l' }, { description: 'x'.repeat(4001) }, { privateKey: 'not a key' }])
     assert.equal(status(() => createSsh({ name: 'store-bad', host: 'h', username: 'u', ...bad })), 400, JSON.stringify(bad));
   assert.equal(listSsh().some((c) => c.name === 'store-bad'), false, 'nothing is created by a refused request');
 
@@ -107,7 +107,7 @@ test('ssh: an agent turn gets an ssh-agent with the keys, aliases and wrappers; 
   } catch (e) {
     if ((e as { code?: string }).code === 'ENOENT') return t.skip('OpenSSH is not installed');
   }
-  const c = createSsh({ name: 'turn-prod', host: '203.0.113.10', port: 2222, username: 'deploy', environment: 'prod', description: 'API' });
+  const c = createSsh({ name: 'turn-prod', host: '203.0.113.10', port: 2222, username: 'deploy', description: 'API' });
   const p = projects.create('ssh-turn', join(tmp, 'ssh-turn'));
   assert.equal(sessionSetup([{ project: p.id }], 'sess-none'), null, 'no bindings: nothing is started');
   setSshBindings({ project: p.id }, { bindings: [{ connectionId: c.id, note: 'read only' }] });
@@ -118,7 +118,7 @@ test('ssh: an agent turn gets an ssh-agent with the keys, aliases and wrappers; 
 
   const s = sessionSetup([{ project: p.id }, { project: p.id }], 'sess-0001-abcd-efgh')!;
   try {
-    assert.ok(s.context.includes('`turn-prod` [prod] — deploy@203.0.113.10:2222 — API In this project: read only'));
+    assert.ok(s.context.includes('`turn-prod` — deploy@203.0.113.10:2222 — API In this project: read only'));
     const sock = s.sock;
     assert.equal(s.env.SSH_AUTH_SOCK, undefined, 'the user’s own agent is not hidden');
     assert.deepEqual(s.failed, []);

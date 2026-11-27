@@ -1,10 +1,7 @@
 // Voice input: speech to text for the chat input (Settings → Voice input).
 
-/**
- * Where speech is transcribed: off, a local whisper.cpp run by the hub, or any
- * OpenAI-compatible `/audio/transcriptions` endpoint (OpenAI, Groq, speaches, whisper-server…).
- */
-export type VoiceProvider = 'off' | 'local' | 'api';
+/** Where speech is transcribed: off, or a local whisper.cpp run by the hub. */
+export type VoiceProvider = 'off' | 'local';
 
 /** A whisper.cpp (ggml) model the hub can download. */
 export interface VoiceModel {
@@ -34,23 +31,13 @@ export interface VoiceSettings {
     missingBuildTools: string[];
     models: VoiceModel[];
   };
-  api: {
-    /** Base URL (`https://api.groq.com/openai/v1`) or the full `/audio/transcriptions` URL. */
-    url: string;
-    model: string;
-    /** A key is stored (the key itself never leaves the server). */
-    hasKey: boolean;
-  };
 }
 
-/** PUT /api/voice: only the given fields change; `apiKey: null` removes the stored key. */
+/** PUT /api/voice: only the given fields change. */
 export interface VoiceSettingsInput {
   provider?: VoiceProvider;
   language?: string;
   localModel?: string;
-  apiUrl?: string;
-  apiModel?: string;
-  apiKey?: string | null;
 }
 
 export interface TranscriptionResult {

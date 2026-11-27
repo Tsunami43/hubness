@@ -364,7 +364,7 @@ function HarnessSelect({ value, kinds, onChange, onConnect }: { value: AgentKind
         <ChevronDown className={`size-3.5 text-muted transition ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
-        <div role="listbox" className="absolute right-0 bottom-full z-30 mb-1 w-56 border border-line bg-surface py-1 shadow-xl shadow-black/40">
+        <div role="listbox" className="ui-solid absolute right-0 bottom-full z-30 mb-1 w-56 border border-line bg-surface py-1 shadow-xl shadow-black/40">
           {kinds.map((k) => (
             <button
               key={k}

@@ -132,6 +132,22 @@ const registryServer = createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'application/json' }).end(readFileSync(join(import.meta.dirname, 'fixtures', 'mcp-registry.json')));
 });
 await new Promise<void>((ok) => registryServer.listen(0, '127.0.0.1', ok));
+
+// git hosts' "who am I" APIs (git-login-check): every host lives under one address,
+// <base>/<api host>/…; what each one answers is set by the test
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63fcffff3f030005fe02fea7359a810000000049454e44ae426082', 'hex');
+const gitApi: { seen: { path: string; auth: string }[]; routes: Record<string, (auth: string) => { status: number; type?: string; body: string | Buffer; headers?: Record<string, string> }> } = { seen: [], routes: {} };
+const gitApiServer = createServer((req, res) => {
+  const path = req.url ?? '';
+  const auth = String(req.headers.authorization ?? '');
+  gitApi.seen.push({ path, auth });
+  const r = gitApi.routes[path]?.(auth) ?? { status: 404, body: '{"message":"404 Not Found"}' };
+  res.writeHead(r.status, { 'content-type': r.type ?? 'application/json', ...r.headers });
+  res.end(r.body);
+});
+await new Promise<void>((ok) => gitApiServer.listen(0, '127.0.0.1', ok));
+const gitApiBase = `http://127.0.0.1:${(gitApiServer.address() as AddressInfo).port}`;
+process.env.HUBNESS_GIT_API = gitApiBase;
 process.env.HUBNESS_MCP_REGISTRY = `http://127.0.0.1:${(registryServer.address() as AddressInfo).port}/`;
 // skills import: file:// repositories are allowed only with this flag (https otherwise)
 process.env.HUBNESS_ALLOW_FILE_GIT = '1';
@@ -164,6 +180,8 @@ process.env.PATH = `${voiceBin}:${process.env.PATH}`;
 after(() => {
   registryServer.closeAllConnections();
   registryServer.close();
+  gitApiServer.closeAllConnections();
+  gitApiServer.close();
 });
 
 const { call, raw } = await makeClient();
@@ -1270,7 +1288,11 @@ test('git logins per host: the secret never leaves the server', async () => {
   assert.equal(saved.status, 200);
   assert.equal(saved.json.length, 1);
   const [c] = saved.json;
-  assert.deepEqual({ ...c, updatedAt: undefined }, { host: 'gitlab.example.com', username: 'me', kind: 'token', updatedAt: undefined });
+  assert.deepEqual(
+    { ...c, updatedAt: undefined },
+    { host: 'gitlab.example.com', username: 'me', kind: 'token', updatedAt: undefined, status: 'unknown', checkedAt: null, account: '', error: '', avatar: false },
+    'a new login has not been checked yet',
+  );
   assert.match(c.updatedAt, /^\d{4}-\d\d-\d\dT/);
   assert.ok(!JSON.stringify(saved.json).includes('s3cr3t'));
   await call('PUT', '/git-credentials/codeberg.org', { username: 'u', kind: 'password', secret: 'pw' });
@@ -1283,12 +1305,101 @@ test('git logins per host: the secret never leaves the server', async () => {
   assert.deepEqual((await call('DELETE', '/git-credentials/codeberg.org')).json, []);
 });
 
+test('git logins: a check asks the host who the login is, and keeps the account picture in the hub', async () => {
+  const json = (o: object) => ({ status: 200, body: JSON.stringify(o) });
+  const login = async (host: string) => (await call('GET', '/git-credentials')).json.find((x: any) => x.host === host);
+  const check = async (host: string) => {
+    const r = await call('POST', `/git-credentials/${host}/check`, {});
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return r.json.find((x: any) => x.host === host);
+  };
+  const avatar = (host: string) => raw(`/api/git-credentials/${host}/avatar`);
+  try {
+    assert.equal((await call('POST', '/git-credentials/github.com/check', {})).status, 404, 'no login for the host');
+    assert.equal((await avatar('github.com')).status, 404);
+
+    // GitHub: the public API host, a bearer token, the picture from another host — without the token
+    gitApi.routes['/api.github.com/user'] = (auth) => (auth === 'Bearer gho_good' ? json({ login: 'octocat', name: 'The Octocat', avatar_url: `${gitApiBase}/avatars.example/u/1.png` }) : { status: 401, body: '{"message":"Bad credentials"}' });
+    gitApi.routes['/avatars.example/u/1.png'] = () => ({ status: 200, type: 'image/png', body: PNG });
+    await call('PUT', '/git-credentials/github.com', { username: 'someone', kind: 'token', secret: 'gho_good' });
+    gitApi.seen.length = 0;
+    const gh = await check('github.com');
+    assert.deepEqual([gh.status, gh.account, gh.error, gh.avatar], ['ok', 'octocat', '', true]);
+    assert.match(gh.checkedAt, /^\d{4}-\d\d-\d\dT/);
+    assert.equal(gh.username, 'someone', 'the name git signs in with is not rewritten');
+    assert.deepEqual(gitApi.seen, [
+      { path: '/api.github.com/user', auth: 'Bearer gho_good' },
+      { path: '/avatars.example/u/1.png', auth: '' },
+    ]);
+    const pic = await avatar('github.com');
+    assert.equal(pic.status, 200);
+    assert.equal(pic.headers.get('content-type'), 'image/png');
+    assert.equal(pic.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(Buffer.from(await pic.arrayBuffer()), PNG);
+    assert.ok(!JSON.stringify(gh).includes('gho_good'));
+
+    // the token was revoked: refused — it is still that account, with its picture
+    gitApi.routes['/api.github.com/user'] = () => ({ status: 401, body: '{"message":"Bad credentials"}' });
+    const revoked = await check('github.com');
+    assert.deepEqual([revoked.status, revoked.account, revoked.avatar], ['failed', 'octocat', true]);
+    assert.equal(revoked.error, 'github.com refused the login (401): the token is wrong, expired or revoked.');
+    // a new login starts clean
+    await call('PUT', '/git-credentials/github.com', { username: 'someone', kind: 'token', secret: 'gho_new' });
+    assert.deepEqual(await login('github.com').then((x) => [x.status, x.checkedAt, x.account, x.error, x.avatar]), ['unknown', null, '', '', false]);
+    assert.equal((await avatar('github.com')).status, 404);
+
+    // a GitLab of one's own: an uploaded picture is a path on the host, served only with the login
+    gitApi.routes['/gitlab.corp.example/api/v4/user'] = (auth) => (auth === 'Bearer glpat-1' ? json({ username: 'r.denis', name: 'Denis', avatar_url: '/gitlab.corp.example/uploads/user/avatar/7/a.png' }) : { status: 401, body: '{}' });
+    gitApi.routes['/gitlab.corp.example/uploads/user/avatar/7/a.png'] = (auth) => (auth === 'Bearer glpat-1' ? { status: 200, type: 'image/png', body: PNG } : { status: 302, body: '', headers: { location: '/users/sign_in' } });
+    await call('PUT', '/git-credentials/gitlab.corp.example', { username: 'r.denis', kind: 'token', secret: 'glpat-1' });
+    const gl = await check('gitlab.corp.example');
+    assert.deepEqual([gl.status, gl.account, gl.avatar], ['ok', 'r.denis', true]);
+    assert.equal((await avatar('gitlab.corp.example')).status, 200);
+
+    // …and a password there: git may take it, the API doesn't — nothing is claimed either way
+    await call('PUT', '/git-credentials/gitlab.corp.example', { username: 'r.denis', kind: 'password', secret: 'hunter2' });
+    const pw = await check('gitlab.corp.example');
+    assert.equal(pw.status, 'unknown');
+    assert.equal(pw.error, 'gitlab.corp.example doesn’t check passwords through its API: the login is checked by the first fetch or push.');
+
+    // a host by another name: GitLab's API is tried, then Gitea's (name and password there)
+    gitApi.routes['/git.acme.example/api/v1/user'] = (auth) => (auth === `Basic ${Buffer.from('ann:pw1').toString('base64')}` ? json({ login: 'ann', avatar_url: `${gitApiBase}/git.acme.example/avatars/x` }) : { status: 401, body: '{}' });
+    gitApi.routes['/git.acme.example/avatars/x'] = () => ({ status: 200, type: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' });
+    await call('PUT', '/git-credentials/git.acme.example', { username: 'ann', kind: 'password', secret: 'pw1' });
+    gitApi.seen.length = 0;
+    const gitea = await check('git.acme.example');
+    assert.deepEqual([gitea.status, gitea.account, gitea.avatar], ['ok', 'ann', false], 'an SVG is not kept: it would be a document served from the hub');
+    assert.deepEqual(gitApi.seen.map((x) => x.path).slice(0, 2), ['/git.acme.example/api/v4/user', '/git.acme.example/api/v1/user']);
+
+    // Bitbucket: the app password with the name
+    gitApi.routes['/api.bitbucket.org/2.0/user'] = (auth) => (auth === `Basic ${Buffer.from('bb:app').toString('base64')}` ? json({ username: 'bb-user', display_name: 'B B', links: { avatar: { href: `${gitApiBase}/avatars.example/u/1.png` } } }) : { status: 401, body: '{}' });
+    await call('PUT', '/git-credentials/bitbucket.org', { username: 'bb', kind: 'password', secret: 'app' });
+    assert.deepEqual(await check('bitbucket.org').then((x) => [x.status, x.account, x.avatar]), ['ok', 'bb-user', true]);
+
+    // nothing the hub knows answers there: said so, not called a failure
+    await call('PUT', '/git-credentials/plain.example', { username: 'u', kind: 'token', secret: 't' });
+    const plain = await check('plain.example');
+    assert.equal(plain.status, 'unknown');
+    assert.equal(plain.error, 'plain.example has no API hubness knows: the login is checked by the first fetch or push.');
+
+    // a picture that is too big, or not a picture, is not kept
+    gitApi.routes['/api.github.com/user'] = () => json({ login: 'octocat', avatar_url: `${gitApiBase}/avatars.example/big` });
+    gitApi.routes['/avatars.example/big'] = () => ({ status: 200, type: 'image/png', body: Buffer.alloc(600 * 1024) });
+    assert.deepEqual(await check('github.com').then((x) => [x.status, x.avatar]), ['ok', false]);
+    gitApi.routes['/avatars.example/big'] = () => ({ status: 200, type: 'text/html', body: '<html>sign in</html>' });
+    assert.deepEqual(await check('github.com').then((x) => [x.status, x.avatar]), ['ok', false]);
+  } finally {
+    for (const k of Object.keys(gitApi.routes)) delete gitApi.routes[k];
+    for (const h of ['github.com', 'gitlab.corp.example', 'git.acme.example', 'bitbucket.org', 'plain.example']) await call('DELETE', `/git-credentials/${h}`);
+  }
+});
+
 test('SSH connections in a turn: the agent process gets the wrappers and the context, never a key', async () => {
   useFixture('claude-tool-turn.jsonl');
   const project = (await call('POST', '/projects/new-repo', { name: 'ssh-turn' })).json;
   // the fake agent lives in /tmp, which the sandbox of project sessions hides
   assert.equal((await call('PUT', `/projects/${project.id}/environment`, { sandbox: false })).status, 200);
-  const conn = (await call('POST', '/ssh', { name: 'turn-box', host: '203.0.113.7', port: 2200, username: 'deploy', environment: 'prod', description: 'The API box' })).json;
+  const conn = (await call('POST', '/ssh', { name: 'turn-box', host: '203.0.113.7', port: 2200, username: 'deploy', description: 'The API box' })).json;
   const lastEnv = () => Object.fromEntries(readFileSync(join(tmp, 'claude-last-env'), 'utf8').split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
   const turn = async () => {
     const s = (await call('POST', '/sessions', { projectId: project.id, agent: { kind: 'claude-code' } })).json;
@@ -1324,7 +1435,7 @@ test('SSH connections in a turn: the agent process gets the wrappers and the con
   assert.equal(env.SSH_AUTH_SOCK, plain.SSH_AUTH_SOCK, 'the user’s own ssh-agent is not hidden');
   const args = readFileSync(join(tmp, 'claude-last-args'), 'utf8');
   assert.ok(args.includes('## SSH connections'), 'the agent is told about them');
-  assert.ok(args.includes('- `turn-box` [prod] — deploy@203.0.113.7:2200 — The API box In this project: read only'));
+  assert.ok(args.includes('- `turn-box` — deploy@203.0.113.7:2200 — The API box In this project: read only'));
   const dump = readFileSync(join(tmp, 'claude-last-env'), 'utf8') + args;
   assert.ok(!dump.includes('PRIVATE KEY'), 'no key in the environment or the arguments');
   for (const name of Object.keys(env)) assert.ok(!/^HUBNESS_(SECRET|DATA|HOME|PORT|HOST)/.test(name), `${name} is the hub's own setting`);
@@ -1536,10 +1647,11 @@ test('agent browser: validation, and a real page when Chromium is installed', as
 
 test('SSH connections: generated and imported keys, bindings, the private key stays on the server', async () => {
   const base = { host: '127.0.0.1', port: 1, username: 'deploy' };
+  // `environment` (an old client's field) is ignored: what a server is goes into the description
   const made = await call('POST', '/ssh', { ...base, name: 'prod-api', environment: 'prod', description: 'Backend API' });
   assert.equal(made.status, 201);
   const a = made.json;
-  assert.deepEqual(Object.keys(a).sort(), ['createdAt', 'description', 'environment', 'host', 'hostKeys', 'id', 'name', 'port', 'publicKey', 'updatedAt', 'username']);
+  assert.deepEqual(Object.keys(a).sort(), ['createdAt', 'description', 'host', 'hostKeys', 'id', 'name', 'port', 'publicKey', 'updatedAt', 'username']);
   assert.match(a.publicKey, /^ssh-ed25519 AAAA\S+ hubness:prod-api$/, 'the hub generated an ed25519 key');
   assert.equal(a.hostKeys, '');
   assert.equal((await call('POST', '/ssh', { ...base, name: 'PROD-API' })).status, 409, 'names ignore case');
@@ -1552,7 +1664,7 @@ test('SSH connections: generated and imported keys, bindings, the private key st
   const dir = join(tmp, 'ssh-import');
   mkdirSync(dir, { recursive: true });
   execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'mine', '-f', join(dir, 'k')]);
-  const imported = await call('POST', '/ssh', { ...base, name: 'dev-api', environment: 'dev', privateKey: readFileSync(join(dir, 'k'), 'utf8') });
+  const imported = await call('POST', '/ssh', { ...base, name: 'dev-api', privateKey: readFileSync(join(dir, 'k'), 'utf8') });
   assert.equal(imported.status, 201);
   assert.equal(imported.json.publicKey.split(' ').slice(0, 2).join(' '), readFileSync(join(dir, 'k.pub'), 'utf8').split(' ').slice(0, 2).join(' '));
 
@@ -1580,19 +1692,20 @@ test('SSH connections: generated and imported keys, bindings, the private key st
 
   // both servers agree on the edges
   const post = (extra: object) => call('POST', '/ssh', { ...base, name: 'edge', ...extra });
-  for (const bad of [{ port: 0 }, { port: 65536 }, { port: -1 }, { port: 1.5 }, { port: '22' }, { host: '[::1]' }, { host: 'a b' }, { privateKey: 123 }, { environment: 5 }, { description: 'x'.repeat(4001) }])
+  for (const bad of [{ port: 0 }, { port: 65536 }, { port: -1 }, { port: 1.5 }, { port: '22' }, { host: '[::1]' }, { host: 'a b' }, { privateKey: 123 }, { description: 'x'.repeat(4001) }])
     assert.equal((await post(bad)).status, 400, JSON.stringify(bad));
   assert.equal((await call('GET', '/ssh')).json.some((c: any) => c.name === 'edge'), false, 'a refused request creates nothing');
-  const edge = await post({ port: null, environment: null, description: null, privateKey: null, host: '::1' });
+  const edge = await post({ port: null, description: null, privateKey: null, host: '::1' });
   assert.equal(edge.status, 201, 'null is "not given"; a bare IPv6 address is a host');
-  assert.deepEqual([edge.json.port, edge.json.environment, edge.json.description, edge.json.host], [22, '', '', '::1']);
+  assert.deepEqual([edge.json.port, edge.json.description, edge.json.host], [22, '', '::1']);
   const patch = (body: object) => call('PATCH', `/ssh/${edge.json.id}`, body);
   for (const bad of [{ port: 0 }, { port: 65536 }, { port: '22' }, { name: 5 }, { name: 'bad name' }, { host: '-oProxyCommand=x' }, { username: 'a@b' }])
     assert.equal((await patch(bad)).status, 400, JSON.stringify(bad));
-  const kept = await patch({ name: null, host: null, username: null, port: null, environment: null, description: null });
+  const kept = await patch({ name: null, host: null, username: null, port: null, description: null });
   assert.equal(kept.status, 200);
   assert.deepEqual([kept.json.name, kept.json.host, kept.json.port], ['edge', '::1', 22], 'null changes nothing');
-  assert.equal((await patch({ description: 'd', environment: 'dev' })).json.description, 'd');
+  const old = await patch({ description: 'd', environment: 'dev' });
+  assert.deepEqual([old.json.description, old.json.environment], ['d', undefined], 'an old client’s environment is ignored');
   assert.equal((await patch({ description: null })).json.description, 'd', 'null keeps the text; an empty string clears it');
   assert.equal((await patch({ description: '' })).json.description, '');
   assert.equal((await patch({ port: 2022 })).json.port, 2022);
@@ -2949,7 +3062,7 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
     [['tiny', false], ['base', false], ['small', false], ['large-v3-turbo-q5_0', false], ['large-v3-turbo', false]],
   );
   assert.ok(s0.local.models.every((m: any) => m.size > 0 && m.label));
-  assert.deepEqual(s0.api, { url: '', model: '', hasKey: false });
+  assert.equal('api' in s0, false, 'no cloud service: speech never leaves the host');
 
   const transcribe = (body: Uint8Array, type = 'audio/webm;codecs=opus') =>
     raw('/api/voice/transcribe', { method: 'POST', headers: { 'X-Hubness-Request': '1', 'Content-Type': type }, body: new Blob([body as Uint8Array<ArrayBuffer>]) });
@@ -2958,11 +3071,13 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
   assert.equal((await transcribe(new Uint8Array())).status, 400, 'empty');
 
   assert.equal((await call('PUT', '/voice', { provider: 'cloud' })).status, 400);
+  assert.equal((await call('PUT', '/voice', { provider: 'api' })).status, 400, 'the cloud service is gone');
   assert.equal((await call('PUT', '/voice', { language: 'Russian' })).status, 400);
   assert.equal((await call('PUT', '/voice', { localModel: 'huge' })).status, 400);
-  assert.equal((await call('PUT', '/voice', { apiUrl: 'ftp://x' })).status, 400);
-  assert.equal((await call('PUT', '/voice', { apiModel: 'a\nb' })).status, 400);
-  assert.equal((await call('PUT', '/voice', { apiKey: 42 })).status, 400);
+  // an older client's cloud fields are ignored
+  const old = await call('PUT', '/voice', { apiUrl: 'https://api.groq.com/openai/v1', apiModel: 'm', apiKey: 'sk-x' });
+  assert.equal(old.status, 200);
+  assert.equal(JSON.stringify(old.json).includes('sk-x') || 'api' in old.json, false);
   assert.equal((await call('POST', '/voice/models/huge', {})).status, 404);
   assert.equal((await call('DELETE', '/voice/models/huge')).status, 404);
 
@@ -2992,49 +3107,5 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
   s = (await call('DELETE', '/voice/models/tiny')).json;
   assert.equal(s.ready, false);
   assert.equal(existsSync(join(models, 'ggml-tiny.bin')), false);
-
-  // api: multipart to <url>/audio/transcriptions with the stored key
-  const hits: { auth?: string; path?: string; body: string; type?: string }[] = [];
-  const svc = createServer((req, res) => {
-    let body = '';
-    req.setEncoding('latin1');
-    req.on('data', (d) => (body += d));
-    req.on('end', () => {
-      hits.push({ auth: req.headers.authorization, path: req.url, body, type: req.headers['content-type'] });
-      if (req.headers.authorization !== 'Bearer sk-good') {
-        res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: 'Invalid API key' } }));
-        return;
-      }
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ text: ' Привет, мир. ' }));
-    });
-  });
-  await new Promise<void>((r) => svc.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${(svc.address() as AddressInfo).port}/v1/`;
-  try {
-    s = (await call('PUT', '/voice', { provider: 'api', apiUrl: `  ${base}  `, apiModel: ' whisper-large-v3-turbo ', apiKey: 'sk-bad' })).json;
-    assert.deepEqual(s.api, { url: base, model: 'whisper-large-v3-turbo', hasKey: true });
-    assert.equal(s.ready, true);
-    assert.equal(JSON.stringify(s).includes('sk-bad'), false, 'the key never leaves the server');
-    const denied = await transcribe(audio);
-    assert.equal(denied.status, 502);
-    assert.match(((await denied.json()) as any).error, /401.*Invalid API key/);
-    await call('PUT', '/voice', { apiKey: 'sk-good', language: 'auto' });
-    const done = await transcribe(audio, 'audio/ogg;codecs=opus');
-    assert.equal(done.status, 200);
-    assert.deepEqual(await done.json(), { text: 'Привет, мир.' });
-    const hit = hits.at(-1)!;
-    assert.equal(hit.path, '/v1/audio/transcriptions');
-    assert.match(hit.type ?? '', /^multipart\/form-data; boundary=/);
-    assert.match(hit.body, /name="file"; filename="recording\.ogg"/);
-    assert.match(hit.body, /voice-bytes/);
-    assert.match(hit.body, /name="model"\r\n\r\nwhisper-large-v3-turbo\r\n/);
-    assert.doesNotMatch(hit.body, /name="response_format"/, 'JSON is the default everywhere; Mistral does not list the field');
-    assert.doesNotMatch(hit.body, /name="language"/, 'auto sends no language');
-    s = (await call('PUT', '/voice', { apiKey: null, provider: 'off' })).json;
-    assert.equal(s.api.hasKey, false);
-    assert.equal(s.provider, 'off');
-  } finally {
-    svc.closeAllConnections();
-    svc.close();
-  }
+  assert.equal((await call('PUT', '/voice', { provider: 'off' })).json.provider, 'off');
 });

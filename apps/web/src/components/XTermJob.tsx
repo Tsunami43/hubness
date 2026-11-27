@@ -229,7 +229,7 @@ export default function XTermJob({
         <div ref={box} className={`overflow-hidden border border-line bg-surface p-1.5 ${fill ? 'min-h-0 flex-1' : className}`} />
         {selection.trim() && !dragging ? (
           <div ref={bar} className="absolute z-10" style={at ? { left: at.x, top: at.bottom } : { top: 6, right: 16 }}>
-            <TerminalAskBar text={selection} title={job.title} className="border border-line bg-surface px-2 py-1 shadow-xl shadow-black/40" />
+            <TerminalAskBar text={selection} title={job.title} className="ui-solid border border-line bg-surface px-2 py-1 shadow-xl shadow-black/40" />
           </div>
         ) : null}
       </div>

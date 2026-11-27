@@ -7,12 +7,6 @@ import { Button, Empty, ErrorLine, Field, IconButton, inputCls, Sheet, Spinner }
 import { t } from '../../i18n';
 import { Header } from './parts';
 import { copyText } from '../../lib/clipboard';
-import { envCls } from '../../lib/sshEnv';
-
-export function EnvBadge({ env }: { env: string }) {
-  if (!env) return null;
-  return <span className={`rounded-md px-1.5 py-0.5 font-mono text-[11px] ${envCls(env)}`}>{env}</span>;
-}
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
@@ -87,7 +81,6 @@ export function SshSection() {
               <div className="flex flex-wrap items-center gap-2">
                 <KeyRound className="size-4 shrink-0 text-accent" />
                 <span className="font-mono font-medium">{c.name}</span>
-                <EnvBadge env={c.environment} />
                 <span className="min-w-0 truncate font-mono text-xs text-muted">
                   {c.username}@{c.host}
                   {c.port !== 22 ? `:${c.port}` : ''}
@@ -194,14 +187,11 @@ function PublicKey({ c }: { c: SshConnection }) {
   );
 }
 
-const ENVS = ['prod', 'staging', 'dev'];
-
 function SshForm({ initial, onClose, onSaved }: { initial: SshConnection | null; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [host, setHost] = useState(initial?.host ?? '');
   const [port, setPort] = useState(String(initial?.port ?? 22));
   const [username, setUsername] = useState(initial?.username ?? 'root');
-  const [environment, setEnvironment] = useState(initial?.environment ?? '');
   const [description, setDescription] = useState(initial?.description ?? '');
   const [importKey, setImportKey] = useState(false);
   const [privateKey, setPrivateKey] = useState('');
@@ -211,7 +201,7 @@ function SshForm({ initial, onClose, onSaved }: { initial: SshConnection | null;
   const save = async () => {
     setBusy(true);
     setError(null);
-    const body = { name: name.trim(), host: host.trim(), port: Number(port) || 22, username: username.trim(), environment: environment.trim(), description };
+    const body = { name: name.trim(), host: host.trim(), port: Number(port) || 22, username: username.trim(), description };
     try {
       if (initial) await api.updateSsh(initial.id, body);
       else await api.createSsh({ ...body, ...(importKey && privateKey.trim() ? { privateKey } : {}) });
@@ -252,21 +242,6 @@ function SshForm({ initial, onClose, onSaved }: { initial: SshConnection | null;
         </div>
         <Field label={t('ssh.user')}>
           <input className={`${inputCls} font-mono`} value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="off" spellCheck={false} />
-        </Field>
-        <Field label={t('ssh.environment')} hint={t('ssh.environmentHint')}>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {ENVS.map((e) => (
-              <button
-                key={e}
-                type="button"
-                onClick={() => setEnvironment(environment === e ? '' : e)}
-                className={`rounded-lg px-2.5 py-1 font-mono text-xs ${environment === e ? envCls(e) + ' ring-1 ring-current' : 'bg-sunken text-muted hover:text-fg'}`}
-              >
-                {e}
-              </button>
-            ))}
-            <input className={`${inputCls} w-32 font-mono text-sm`} value={environment} onChange={(e) => setEnvironment(e.target.value)} placeholder={t('ssh.environmentOther')} />
-          </div>
         </Field>
         <Field label={t('ssh.description')} hint={t('ssh.descriptionHint')}>
           <textarea className={`${inputCls} min-h-24`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t('ssh.descriptionPlaceholder')} />

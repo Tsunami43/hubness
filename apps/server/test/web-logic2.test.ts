@@ -8,7 +8,6 @@ import assert from 'node:assert/strict';
 import type { PreviewLog } from '@hubness/shared';
 import { emptyLogs, isError, markSeen, mergeLogs, unseenErrors, MAX_SHOWN } from '../../web/src/lib/previewLogs.ts';
 import { fenced, logsDraft, pickDraft, type PickedElement } from '../../web/src/lib/previewDrafts.ts';
-import { envCls, envTone } from '../../web/src/lib/sshEnv.ts';
 import { gitMark } from '../../web/src/lib/gitMark.ts';
 import { parseFrameMessage, safePath, typedPath } from '../../web/src/lib/previewMessages.ts';
 
@@ -114,15 +113,6 @@ test('drafts: the console goes to the agent as errors and warnings, the newest l
   assert.ok(many.includes('e199') && !many.includes('e139\n'));
   const huge = logsDraft(Array.from({ length: 60 }, (_, i) => log(i, 'error', 'x'.repeat(4000) + `#${i}`)), 'x', NOTE);
   assert.ok(huge.length < 15_100 && huge.includes('#59'), 'cut from the old end');
-});
-
-test('ssh: the tone of an environment label goes by whole words', () => {
-  for (const env of ['prod', 'PROD', 'production', 'live', 'prod-eu', 'eu prod', 'Prod 2']) assert.equal(envTone(env), 'prod', env);
-  for (const env of ['staging', 'stage', 'test', 'testing', 'qa', 'uat', 'preview', 'pre', 'preprod', 'pre-prod', 'pre prod', 'Pre_Prod']) assert.equal(envTone(env), 'staging', env);
-  for (const env of ['', 'dev', 'local', 'express', 'reproduce', 'product-db', 'alive', 'latest', 'sandbox', 'квартал']) assert.equal(envTone(env), 'other', env);
-  assert.match(envCls('prod'), /danger/);
-  assert.match(envCls('staging'), /warn/);
-  assert.match(envCls('dev'), /muted/);
 });
 
 test('git: the letter of a change on each side of the index', () => {

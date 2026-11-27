@@ -17,7 +17,7 @@ import type { Repo } from '../lib/repo';
 import { api } from '../lib/api';
 import { useLocalStorage } from '../lib/hooks';
 import { t } from '../i18n';
-import { Button, ErrorLine, Spinner } from './ui';
+import { Button, ErrorLine, Layer, Spinner } from './ui';
 import { FileIcon } from './FileIcon';
 import { endDrag, getDrag, startDrag } from '../lib/dnd';
 import { useWorkbench } from '../lib/workbench';
@@ -589,27 +589,29 @@ function TreeMenu({ x, y, items, onClose }: { x: number; y: number; items: ({ la
     };
   }, [onClose]);
   return (
-    <div ref={ref} role="menu" className="fixed z-50 min-w-48 border border-line bg-surface py-1 text-[13px] shadow-lg" style={{ left: Math.min(x, window.innerWidth - 210), top: Math.min(y, window.innerHeight - 220) }}>
-      {items.map((it, i) =>
-        it ? (
-          <button
-            key={i}
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onClose();
-              it.run();
-            }}
-            className={`flex w-full items-center gap-4 px-3 py-1.5 text-left hover:bg-sunken ${it.danger ? 'text-danger' : ''}`}
-          >
-            <span className="flex-1">{it.label}</span>
-            {it.hint ? <span className="text-[11px] text-muted">{it.hint}</span> : null}
-          </button>
-        ) : (
-          <div key={i} className="my-1 h-px bg-line" />
-        ),
-      )}
-    </div>
+    <Layer>
+      <div ref={ref} role="menu" className="ui-solid fixed z-50 min-w-48 border border-line bg-surface py-1 text-[13px] shadow-lg" style={{ left: Math.min(x, window.innerWidth - 210), top: Math.min(y, window.innerHeight - 220) }}>
+        {items.map((it, i) =>
+          it ? (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onClose();
+                it.run();
+              }}
+              className={`flex w-full items-center gap-4 px-3 py-1.5 text-left hover:bg-sunken ${it.danger ? 'text-danger' : ''}`}
+            >
+              <span className="flex-1">{it.label}</span>
+              {it.hint ? <span className="text-[11px] text-muted">{it.hint}</span> : null}
+            </button>
+          ) : (
+            <div key={i} className="my-1 h-px bg-line" />
+          ),
+        )}
+      </div>
+    </Layer>
   );
 }
 

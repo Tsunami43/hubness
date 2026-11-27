@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-28
+
+### Added
+
+- Git logins show whether they still work: Settings → Git access asks the host who the login
+  is (GitHub, GitLab, Gitea / Forgejo, Bitbucket), shows the account's picture and name, and
+  says when the host refuses the token. A login is checked when it is saved and again with
+  the check button (TUI: `v`). The picture is kept by the hub, so a private host's works too.
+  A password can't be checked this way — the hosts' APIs take tokens only.
+
+### Changed
+
+- Voice input is local only: the cloud transcription service (Groq, Mistral or another
+  OpenAI-compatible server) is gone, speech never leaves the host. Settings that had it
+  chosen count as off — pick Local in Settings → Voice input; its URL, model and stored key
+  are dropped with the next save.
+- SSH connections no longer have an environment label (prod / staging / dev): the
+  description says what the server is, and whether it is prod or dev for a project goes into
+  the note of its binding to that project or group. The API ignores `environment` from older
+  clients and no longer returns it; the column stays in the database, unused.
+
+### Fixed
+
+- Phone, sessions list: "Move to archive" no longer shows around or through the rows (rounded
+  and see-through rows in the glass and expressive styles let it peek out) and it is a real
+  button now — a short swipe to the left leaves it open to tap, a long swipe archives at once,
+  a tap on the open row closes it. A swipe on a row no longer drags the drawer too.
+- Glass style: dialogs, sheets, menus, popovers, tooltips and toasts are opaque — the page's
+  text no longer shows through them. A dialog opened inside a glass panel (Harness → MCP →
+  Catalog / Add manually) covers the whole screen again instead of being trapped in that
+  panel under its neighbours.
+
 ## [0.4.0] - 2026-11-28
 
 ### Added

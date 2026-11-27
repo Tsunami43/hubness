@@ -31,6 +31,7 @@ import { createManifest, manifestResponse } from '../manifest.ts';
 import { stopProjectProcesses } from '../runs.ts';
 import { stopContainer } from '../environments.ts';
 import { deleteGitCredential, ghLogin, listGitCredentials, setGitCredential } from '../git-auth.ts';
+import { checkGitCredential, gitCredentialAvatar } from '../git-login-check.ts';
 import { createSsh, deleteSsh, listSsh, setSshBindings, SshBindings, sshBindings, SshCreate, SshPatch, testSsh, updateSsh } from '../ssh.ts';
 import { HttpError } from '../errors.ts';
 import { isActive } from '../runtime.ts';
@@ -130,6 +131,18 @@ projectRoutes.post('/projects/:id/manifest', async (c) => {
 projectRoutes.get('/git-credentials', (c) => c.json(listGitCredentials()));
 projectRoutes.put('/git-credentials/:host', async (c) => c.json(setGitCredential(c.req.param('host'), await parseBody(c, GitCredential))));
 projectRoutes.delete('/git-credentials/:host', (c) => c.json(deleteGitCredential(c.req.param('host'))));
+/** Ask the host whether it still accepts the login; refreshes the account name and picture. */
+projectRoutes.post('/git-credentials/:host/check', async (c) => c.json(await checkGitCredential(c.req.param('host'))));
+projectRoutes.get('/git-credentials/:host/avatar', (c) => {
+  const a = gitCredentialAvatar(c.req.param('host'));
+  // an image and nothing else, whatever the host sent
+  return c.body(a.data as Uint8Array<ArrayBuffer>, 200, {
+    'content-type': a.type,
+    'cache-control': 'private, max-age=86400',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
+  });
+});
 // ---------- SSH connections (Settings → SSH) and their project / group bindings ----------
 
 projectRoutes.get('/ssh', (c) => c.json(listSsh()));

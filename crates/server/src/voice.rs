@@ -1,22 +1,21 @@
 //! Voice input — a port of `voice.ts`.
 //!
-//! A recording from the browser becomes text for the chat input. Two providers:
-//! - `local` — whisper.cpp on this machine. The hub finds `whisper-cli` on PATH or builds its
-//!   own copy into `<data>/whisper/bin` (a terminal job: the source archive, and a portable
-//!   cmake into `<data>/whisper/cmake` when the host has none), downloads ggml models into
-//!   `<data>/whisper/models` and converts the recording to 16 kHz WAV with ffmpeg;
-//! - `api` — any OpenAI-compatible `/audio/transcriptions` endpoint (OpenAI, Groq, speaches,
-//!   whisper-server…); the key is encrypted like project secrets.
+//! A recording from the browser becomes text for the chat input, with whisper.cpp on this
+//! machine. The hub finds `whisper-cli` on PATH or builds its own copy into
+//! `<data>/whisper/bin` (a terminal job: the source archive, and a portable cmake into
+//! `<data>/whisper/cmake` when the host has none), downloads ggml models into
+//! `<data>/whisper/models` and converts the recording to 16 kHz WAV with ffmpeg. The speech
+//! never leaves the host.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
 
 use axum::extract::{Path as UrlPath, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use hubness_core::{JobInfo, TranscriptionResult, VoiceApi, VoiceLocal, VoiceModel, VoiceProvider, VoiceSettings};
+use hubness_core::{JobInfo, TranscriptionResult, VoiceLocal, VoiceModel, VoiceProvider, VoiceSettings};
 use regex::Regex;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -26,16 +25,12 @@ use crate::AppState;
 use crate::config::Config;
 use crate::db::kv;
 use crate::error::{ApiResult, HttpError};
-use crate::git_providers::js_trim;
 use crate::http::{JsonBody, LenientBody};
 use crate::runs::TermSize;
-use crate::secrets;
 use crate::terminal::{JobOpts, shq, start_job};
 
 pub const MAX_AUDIO: usize = 25 * 1024 * 1024;
 const KEY: &str = "settings.voice";
-/// AAD namespace of the encrypted API key (the "project id" of `secrets::encrypt`).
-const NS: &str = "voice";
 const MODELS_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const WHISPER_REPO: &str = "https://github.com/ggml-org/whisper.cpp";
 const WHISPER_ARCHIVE: &str = "https://github.com/ggml-org/whisper.cpp/archive/refs/heads/master.tar.gz";
@@ -53,10 +48,9 @@ pub const MODELS: &[(&str, &str, u64)] = &[
 ];
 
 static LANG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(auto|[a-z]{2,3})$").unwrap());
-static URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https?://[^\s/]+").unwrap());
-static ENDPOINT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/audio/transcriptions/?$").unwrap());
 
-/// The kv row, shared with the TS server.
+/// The kv row, shared with the TS server; the removed cloud service's fields (`apiUrl`,
+/// `apiModel`, the encrypted `apiKey`) of older settings are dropped by the next save.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct Stored {
@@ -66,13 +60,6 @@ struct Stored {
     language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    api_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    api_model: Option<String>,
-    /// Encrypted with `secrets::encrypt`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    api_key: Option<String>,
 }
 
 fn root(data_dir: &Path) -> PathBuf {
@@ -141,13 +128,8 @@ pub fn settings(db: &Connection, config: &Config) -> ApiResult<VoiceSettings> {
             installed: model_file(data, id).is_file(),
         })
         .collect();
-    let url = s.api_url.unwrap_or_default();
-    let api_model = s.api_model.unwrap_or_default();
-    let ready = match provider {
-        VoiceProvider::Local => bin.is_some() && ffmpeg && models.iter().any(|m| m.id == model && m.installed),
-        VoiceProvider::Api => !url.is_empty() && !api_model.is_empty(),
-        VoiceProvider::Off => false,
-    };
+    // a cloud service (`api`, removed) left in older settings counts as off
+    let ready = provider == VoiceProvider::Local && bin.is_some() && ffmpeg && models.iter().any(|m| m.id == model && m.installed);
     Ok(VoiceSettings {
         provider,
         language: s.language.unwrap_or_else(|| "auto".into()),
@@ -160,25 +142,15 @@ pub fn settings(db: &Connection, config: &Config) -> ApiResult<VoiceSettings> {
             missing_build_tools: missing_build_tools(),
             models,
         },
-        api: VoiceApi { url, model: api_model, has_key: s.api_key.is_some() },
     })
 }
 
-fn has_control(s: &str) -> bool {
-    s.chars().any(|c| (c as u32) < 0x20 || c == '\x7f')
-}
-fn js_len(s: &str) -> usize {
-    s.encode_utf16().count()
-}
-
-/// PUT /api/voice: only the given fields change; `apiKey: null` (or "") removes the key.
+/// PUT /api/voice: only the given fields change.
 pub fn set_settings(db: &Connection, config: &Config, b: &serde_json::Map<String, Value>) -> ApiResult<VoiceSettings> {
     let mut next = stored(db)?;
+    next.provider = next.provider.filter(|p| VoiceProvider::parse(p).is_some());
     if let Some(v) = b.get("provider") {
-        let p = v
-            .as_str()
-            .filter(|p| VoiceProvider::parse(p).is_some())
-            .ok_or_else(|| HttpError::bad_request("provider: off | local | api"))?;
+        let p = v.as_str().filter(|p| VoiceProvider::parse(p).is_some()).ok_or_else(|| HttpError::bad_request("provider: off | local"))?;
         next.provider = Some(p.into());
     }
     if let Some(v) = b.get("language") {
@@ -195,32 +167,6 @@ pub fn set_settings(db: &Connection, config: &Config, b: &serde_json::Map<String
             return Err(HttpError::bad_request(format!("Unknown model: {shown}")));
         };
         next.local_model = Some(m.into());
-    }
-    if let Some(v) = b.get("apiUrl") {
-        let url = v
-            .as_str()
-            .map(js_trim)
-            .filter(|u| js_len(u) <= 2000 && (u.is_empty() || URL_RE.is_match(u)))
-            .ok_or_else(|| HttpError::bad_request("apiUrl: an http:// or https:// URL"))?;
-        next.api_url = Some(url.into());
-    }
-    if let Some(v) = b.get("apiModel") {
-        let m = v
-            .as_str()
-            .map(js_trim)
-            .filter(|m| js_len(m) <= 200 && !has_control(m))
-            .ok_or_else(|| HttpError::bad_request("apiModel: at most 200 characters"))?;
-        next.api_model = Some(m.into());
-    }
-    if let Some(v) = b.get("apiKey") {
-        match v {
-            Value::Null => next.api_key = None,
-            Value::String(k) if js_trim(k).is_empty() => next.api_key = None,
-            Value::String(k) if js_len(js_trim(k)) <= 4096 && !has_control(js_trim(k)) => {
-                next.api_key = Some(secrets::encrypt(&secrets::keys(&config.data_dir)?, NS, "apiKey", js_trim(k))?);
-            }
-            _ => return Err(HttpError::bad_request("apiKey: at most 4096 characters")),
-        }
     }
     kv::set(db, KEY, &next)?;
     settings(db, config)
@@ -422,86 +368,6 @@ async fn transcribe_local(config: &Config, audio: &[u8], s: &VoiceSettings) -> A
     Ok(clean_transcript(&std::fs::read_to_string(&txt)?))
 }
 
-/// File name for the multipart upload: services tell the format by its extension.
-pub fn audio_file_name(mime: &str) -> String {
-    let base = mime.split(';').next().unwrap_or("").trim().to_lowercase();
-    let ext = match base.as_str() {
-        "audio/webm" | "video/webm" => "webm",
-        "audio/ogg" => "ogg",
-        "audio/mp4" | "audio/x-m4a" | "audio/aac" => "m4a",
-        "audio/mpeg" => "mp3",
-        "audio/wav" | "audio/x-wav" => "wav",
-        "audio/flac" => "flac",
-        "video/mp4" => "mp4",
-        _ => "webm",
-    };
-    format!("recording.{ext}")
-}
-
-pub fn transcription_url(url: &str) -> String {
-    if ENDPOINT_RE.is_match(url) { url.to_string() } else { format!("{}/audio/transcriptions", url.trim_end_matches('/')) }
-}
-
-/// A multipart/form-data body: text fields and one file.
-fn multipart(boundary: &str, fields: &[(&str, &str)], file: (&str, &str, &[u8])) -> Vec<u8> {
-    let mut body = Vec::new();
-    let (name, mime, bytes) = file;
-    body.extend(
-        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: {mime}\r\n\r\n")
-            .as_bytes(),
-    );
-    body.extend(bytes);
-    body.extend(b"\r\n");
-    for (k, v) in fields {
-        body.extend(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").as_bytes());
-    }
-    body.extend(format!("--{boundary}--\r\n").as_bytes());
-    body
-}
-
-async fn transcribe_api(config: &Config, key_blob: Option<String>, audio: &[u8], mime: &str, s: &VoiceSettings) -> ApiResult<String> {
-    if s.api.url.is_empty() || s.api.model.is_empty() {
-        return Err(HttpError::new(409, "The transcription service is not set up: Settings → Voice input"));
-    }
-    let key = match key_blob {
-        Some(blob) => Some(
-            secrets::decrypt(&secrets::keys(&config.data_dir)?, NS, "apiKey", &blob)
-                .map_err(|_| HttpError::new(409, "The stored API key can’t be decrypted: enter it again in Settings → Voice input"))?,
-        ),
-        None => None,
-    };
-    let base_mime = mime.split(';').next().map(str::trim).filter(|m| !m.is_empty()).unwrap_or("application/octet-stream");
-    let boundary = format!("hubness-{}", crate::db::new_id());
-    let mut fields = vec![("model", s.api.model.as_str())];
-    if s.language != "auto" {
-        fields.push(("language", s.language.as_str()));
-    }
-    let body = multipart(&boundary, &fields, (&audio_file_name(mime), base_mime, audio));
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(120)).build().map_err(|e| HttpError::new(500, e.to_string()))?;
-    let mut req =
-        client.post(transcription_url(&s.api.url)).header("content-type", format!("multipart/form-data; boundary={boundary}")).body(body);
-    if let Some(k) = key {
-        req = req.header("authorization", format!("Bearer {k}"));
-    }
-    let res = req.send().await.map_err(|e| HttpError::new(502, format!("The transcription service is unreachable: {e}")))?;
-    let status = res.status();
-    let text = res.text().await.unwrap_or_default();
-    let data: Option<Value> = serde_json::from_str(&text).ok();
-    if !status.is_success() {
-        let err = data.as_ref().and_then(|d| d.get("error"));
-        let msg = match err {
-            Some(Value::String(s)) => s.clone(),
-            Some(e) if e.get("message").is_some_and(Value::is_string) => e["message"].as_str().unwrap_or_default().to_string(),
-            _ => text.chars().take(300).collect(),
-        };
-        let msg = js_trim(&msg);
-        let msg = if msg.is_empty() { status.canonical_reason().unwrap_or("").to_string() } else { msg.to_string() };
-        return Err(HttpError::new(502, format!("The transcription service answered {}: {msg}", status.as_u16())));
-    }
-    let out = data.as_ref().and_then(|d| d.get("text")).and_then(Value::as_str).map(String::from).unwrap_or(text);
-    Ok(js_trim(&out).to_string())
-}
-
 // ---------- routes ----------
 
 pub fn routes() -> Router<AppState> {
@@ -541,24 +407,21 @@ async fn delete_route(State(s): State<AppState>, UrlPath(id): UrlPath<String>) -
 }
 
 /// The recording is the raw body (Content-Type: its audio type); answers `{ text }`.
-async fn transcribe_route(State(s): State<AppState>, headers: HeaderMap, body: axum::body::Bytes) -> ApiResult<Json<TranscriptionResult>> {
+async fn transcribe_route(State(s): State<AppState>, body: axum::body::Bytes) -> ApiResult<Json<TranscriptionResult>> {
     if body.is_empty() {
         return Err(HttpError::bad_request("The recording is empty"));
     }
     if body.len() > MAX_AUDIO {
         return Err(HttpError::new(413, format!("The recording is larger than {} MB", MAX_AUDIO / 1024 / 1024)));
     }
-    let mime = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
-    let (settings, key) = {
+    let settings = {
         let db = s.db()?;
-        (settings(&db, s.config())?, stored(&db)?.api_key)
+        settings(&db, s.config())?
     };
-    let text = match settings.provider {
-        VoiceProvider::Off => return Err(HttpError::new(409, "Voice input is off: Settings → Voice input")),
-        VoiceProvider::Local => transcribe_local(s.config(), &body, &settings).await?,
-        VoiceProvider::Api => transcribe_api(s.config(), key, &body, &mime, &settings).await?,
-    };
-    Ok(Json(TranscriptionResult { text }))
+    if settings.provider != VoiceProvider::Local {
+        return Err(HttpError::new(409, "Voice input is off: Settings → Voice input"));
+    }
+    Ok(Json(TranscriptionResult { text: transcribe_local(s.config(), &body, &settings).await? }))
 }
 
 #[cfg(test)]
@@ -576,12 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_and_names() {
+    fn transcript() {
         assert_eq!(clean_transcript(" [BLANK_AUDIO]\n Hello  there,\n world\n"), "Hello there, world");
-        assert_eq!(audio_file_name("audio/webm;codecs=opus"), "recording.webm");
-        assert_eq!(audio_file_name("audio/mp4"), "recording.m4a");
-        assert_eq!(audio_file_name(""), "recording.webm");
-        assert_eq!(transcription_url("https://api.groq.com/openai/v1/"), "https://api.groq.com/openai/v1/audio/transcriptions");
-        assert_eq!(transcription_url("http://x/v1/audio/transcriptions"), "http://x/v1/audio/transcriptions");
     }
 }
