@@ -48,6 +48,12 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   `workspaces/` — workspace providers (currently local only).
 - `runs.ts`, `terminal.ts`, `preview.ts` — named run commands, interactive shells and the
   per-port preview proxy (`HUBNESS_PREVIEW_PORTS`).
+  The proxy adds `packages/shared/assets/preview-inject.js` to previewed pages (console and
+  errors → `/projects/:id/previews/:port/logs`, address bar, element picker);
+  `HUBNESS_PREVIEW_INJECT=0` turns it off.
+- `browser.ts` — the agent's own headless Chromium (CDP over `--remote-debugging-pipe`, one
+  page per session, `HUBNESS_CHROME`), driven by the hub MCP `preview_*` tools through
+  `POST /sessions/:id/browser`; `localhost:<port>` of a project goes through its preview.
 - `git*.ts` — git operations, credentials helper and provider (GitHub/GitLab…) logins.
 - `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models
   downloaded into `<data>/whisper` as terminal jobs) or an OpenAI-compatible service.

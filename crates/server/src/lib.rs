@@ -6,6 +6,7 @@
 pub mod agents;
 pub mod attachments;
 pub mod auth;
+pub mod browser;
 pub mod bus;
 pub mod catalog;
 pub mod config;
@@ -142,6 +143,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             rt.stop_all();
+            crate::browser::shutdown();
             // dev servers and shells must not outlive the hub
             terminal::kill_all_jobs();
         })

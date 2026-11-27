@@ -49,6 +49,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions/{id}/file", get(pane_file))
         .route("/sessions/{id}/diff", get(pane_diff))
         .route("/sessions/{id}/pane", post(set_pane))
+        .route("/sessions/{id}/browser", post(browser_route))
         .route("/sessions/{id}/stream", get(session_stream))
         .route("/stream", get(global_stream))
 }
@@ -425,6 +426,29 @@ async fn set_pane(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b)
     }
     s.bus.emit_session(&id, SessionStreamMsg::Pane { pane });
     Ok(axum::Json(json!({ "ok": true })))
+}
+
+// ---------- the agent's headless browser (MCP preview_* tools) ----------
+
+async fn browser_route(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    JsonBody(b): JsonBody<crate::browser::BrowserRequest>,
+) -> ApiResult<axum::Json<hubness_core::BrowserResult>> {
+    let project = {
+        let db = s.db()?;
+        let session = session_or_404(&db, &id)?;
+        session.project_id.and_then(|pid| crate::catalog::project_or_404(&db, &pid).ok())
+    };
+    // http://localhost:<port> of a project session goes through the project's preview
+    let preview_for: Option<crate::browser::PreviewFor> = project.map(|p| {
+        let state = s.clone();
+        Box::new(move |port: u16| {
+            let db = state.db().ok()?;
+            crate::runs::preview_port_for(&db, state.config(), &p, port).ok()
+        }) as crate::browser::PreviewFor
+    });
+    Ok(axum::Json(crate::browser::browser_action(s.config(), &id, b, preview_for).await?))
 }
 
 // ---------- live streams ----------

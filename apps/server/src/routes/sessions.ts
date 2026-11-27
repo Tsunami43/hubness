@@ -15,6 +15,8 @@ import { readFileSafe, safeJoin } from '../fsops.ts';
 import * as git from '../git.ts';
 import { attachmentPath, MAX_ATTACHMENT, resolveAttachments, saveAttachment } from '../attachments.ts';
 import { isActive, respondApproval, sendMessage, sessionCwd, stopSession } from '../runtime.ts';
+import { browserAction } from '../browser.ts';
+import { previewPortFor } from '../runs.ts';
 import { AgentConfigSchema, parseBody, pumpSSE, shortText, validateAgent } from './http.ts';
 
 /** Sessions: CRUD, messages and attachments, approvals, live streams, Inbox → Project, the pane next to the chat. */
@@ -238,6 +240,29 @@ sessionRoutes.post('/sessions/:id/pane', async (c) => {
   kv.set(`pane:${id}`, pane);
   bus.emitSession(id, { type: 'pane', pane });
   return c.json({ ok: true });
+});
+
+// ---------- the agent's headless browser (MCP preview_* tools) ----------
+
+const BrowserBody = z.object({
+  action: z.enum(['open', 'screenshot', 'click', 'type', 'press', 'eval', 'console', 'close']),
+  url: z.string().max(4000).optional(),
+  width: z.number().int().min(240).max(3840).optional(),
+  height: z.number().int().min(240).max(4000).optional(),
+  selector: z.string().max(2000).optional(),
+  text: z.string().max(2000).optional(),
+  value: z.string().max(100_000).optional(),
+  key: z.string().max(40).optional(),
+  expression: z.string().max(100_000).optional(),
+  fullPage: z.boolean().optional(),
+  screenshot: z.boolean().optional(),
+});
+
+sessionRoutes.post('/sessions/:id/browser', async (c) => {
+  const s = sessionOr404(c.req.param('id'));
+  const b = await parseBody(c, BrowserBody);
+  const project = s.projectId ? projects.get(s.projectId) : null;
+  return c.json(await browserAction(s.id, b, project ? (port) => previewPortFor(project, port) : null));
 });
 
 /** File for the pane: relative to the session folder (or absolute inside it / the project folders). */

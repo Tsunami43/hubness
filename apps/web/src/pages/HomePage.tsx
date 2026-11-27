@@ -27,7 +27,7 @@ import { useRecentSessions } from '../lib/hooks';
 import { useHubSettings } from '../lib/hubSettings';
 import { t } from '../i18n';
 import { AttachButton, createWithFiles, PendingFiles, usePendingFiles } from '../lib/attachments';
-import { takeAskDraft } from '../lib/askDraft';
+import { takeAskDraft, takeAskProject } from '../lib/askDraft';
 import { MicButton } from '../lib/voice';
 
 interface HomeState {
@@ -83,6 +83,7 @@ export function HomePage() {
 
   // "Ask" from the System page: the input arrives filled in, aimed at the system project
   const [askDraft] = useState(takeAskDraft);
+  const [askProject] = useState(takeAskProject);
   useEffect(() => {
     if (!askDraft) return;
     setText(askDraft);
@@ -95,7 +96,7 @@ export function HomePage() {
     });
   }, [askDraft]);
   useEffect(() => {
-    const home = askDraft ? projects.find((p) => p.system) : null;
+    const home = askDraft ? (projects.find((p) => p.id === askProject) ?? projects.find((p) => p.system)) : null;
     if (home && state.projectId !== home.id) setState({ ...state, projectId: home.id });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [askDraft, projects]);

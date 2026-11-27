@@ -812,7 +812,7 @@ test('hub MCP server: open_pane and close_pane reach the session (rust: `hubness
   };
   assert.equal((await rpc(1, 'initialize', { protocolVersion: '2025-06-18' })).result.serverInfo.name, 'hubness');
   mcp.stdin!.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
-  assert.deepEqual((await rpc(2, 'tools/list')).result.tools.map((t: any) => t.name), ['open_pane', 'close_pane']);
+  assert.deepEqual((await rpc(2, 'tools/list')).result.tools.map((t: any) => t.name), ['open_pane', 'close_pane', 'preview_open', 'preview_screenshot', 'preview_click', 'preview_type', 'preview_press', 'preview_eval', 'preview_console', 'preview_close']);
   const bad = await rpc(3, 'tools/call', { name: 'open_pane', arguments: { kind: 'video', target: 'x' } });
   assert.equal(bad.result.isError, true);
   const opened = await rpc(4, 'tools/call', { name: 'open_pane', arguments: { kind: 'url', target: 'http://localhost:5173', title: 'App' } });
@@ -1164,6 +1164,103 @@ test('git logins per host: the secret never leaves the server', async () => {
   assert.deepEqual((await call('DELETE', '/git-credentials/gitlab.example.com')).json.map((x: any) => x.host), ['codeberg.org']);
   assert.equal((await call('DELETE', '/git-credentials/bad_host')).status, 200, 'an invalid host deletes nothing');
   assert.deepEqual((await call('DELETE', '/git-credentials/codeberg.org')).json, []);
+});
+
+test('preview: the proxy adds the helper to pages and collects what it reports', async () => {
+  const page = '<!doctype html><html><head><title>App</title></head><body>hi</body></html>';
+  const app = createServer((req, res) => {
+    if (req.url === '/data.json') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end('{"a":1}');
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': String(Buffer.byteLength(page)) });
+    res.end(page);
+  });
+  await new Promise<void>((r) => app.listen(0, '127.0.0.1', r));
+  try {
+    const appPort = (app.address() as AddressInfo).port;
+    const project = (await call('GET', '/projects')).json[0].id;
+    const { previewPort } = (await call('POST', `/projects/${project}/preview`, { port: appPort })).json;
+    const base = `http://127.0.0.1:${previewPort}`;
+
+    const html = await (await fetch(`${base}/`, { headers: { accept: 'text/html' } })).text();
+    assert.equal(html, page.replace('<head>', '<head><script src="/__hubness/preview.js"></script>'));
+    const asset = await fetch(`${base}/data.json`, { headers: { accept: 'text/html' } });
+    assert.equal(await asset.text(), '{"a":1}', 'only HTML is changed');
+    const js = await fetch(`${base}/__hubness/preview.js`);
+    assert.equal(js.status, 200);
+    assert.match(js.headers.get('content-type') ?? '', /javascript/);
+    assert.match(await js.text(), /__hubnessPreview/);
+
+    const logs = `/projects/${project}/previews/${previewPort}/logs`;
+    assert.deepEqual((await call('GET', logs)).json, { logs: [] });
+    const sent = await fetch(`${base}/__hubness/log`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify([
+        { level: 'error', text: 'boom', url: `${base}/`, ts: '2026-01-01T00:00:00.000Z' },
+        { level: 'weird', text: 'x'.repeat(5000) },
+      ]),
+    });
+    assert.equal(sent.status, 204);
+    const got = (await call('GET', logs)).json.logs;
+    assert.equal(got.length, 2);
+    assert.deepEqual(got[0], { seq: 1, ts: '2026-01-01T00:00:00.000Z', level: 'error', text: 'boom', url: `${base}/`, source: 'user' });
+    assert.equal(got[1].level, 'log', 'an unknown level is a plain log');
+    assert.equal(got[1].text.length, 4000);
+    assert.deepEqual((await call('GET', `${logs}?since=1`)).json.logs.map((l: any) => l.seq), [2]);
+    await fetch(`${base}/__hubness/log`, { method: 'POST', headers: { 'user-agent': 'Mozilla/5.0 Chrome hubness-agent' }, body: JSON.stringify([{ level: 'warn', text: 'mine' }]) });
+    assert.equal((await call('GET', `${logs}?since=2`)).json.logs[0].source, 'agent');
+    assert.equal((await call('DELETE', logs)).status, 200);
+    assert.deepEqual((await call('GET', logs)).json, { logs: [] });
+    assert.equal((await call('GET', `/projects/${project}/previews/1/logs`)).status, 404);
+  } finally {
+    app.close();
+  }
+});
+
+test('agent browser: validation, and a real page when Chromium is installed', async () => {
+  const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
+  const browser = `/sessions/${s.id}/browser`;
+  assert.equal((await call('POST', browser, { action: 'fly' })).status, 400);
+  assert.equal((await call('POST', '/sessions/missing/browser', { action: 'console' })).status, 404);
+  const idle = await call('POST', browser, { action: 'console' });
+  assert.equal(idle.status, 200);
+  assert.deepEqual(idle.json.logs, [], 'no page yet: nothing to report, no browser started');
+
+  const chrome = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'].some((b) => {
+    try {
+      execFileSync('which', [b], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!chrome) return;
+  const page = '<!doctype html><html><head><title>Probe</title></head><body><input placeholder="Name" id="n"><button onclick="document.title=\'Hi \'+n.value">Go</button><script>console.error("boom")</script></body></html>';
+  const app = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(page);
+  });
+  await new Promise<void>((r) => app.listen(0, '127.0.0.1', r));
+  try {
+    const url = `http://127.0.0.1:${(app.address() as AddressInfo).port}/`;
+    const opened = await call('POST', browser, { action: 'open', url, width: 800, height: 600, screenshot: true });
+    assert.equal(opened.status, 200, JSON.stringify(opened.json));
+    assert.equal(opened.json.title, 'Probe');
+    assert.equal(opened.json.url, url);
+    assert.ok(opened.json.logs.some((l: any) => l.level === 'error' && l.text.includes('boom') && l.source === 'agent'));
+    assert.match(opened.json.screenshot, /^iVBORw0KGgo/, 'a PNG');
+    assert.equal((await call('POST', browser, { action: 'type', text: 'Name', value: 'Ann' })).status, 200);
+    assert.equal((await call('POST', browser, { action: 'click', text: 'Go' })).json.title, 'Hi Ann');
+    assert.equal((await call('POST', browser, { action: 'eval', expression: '[innerWidth, 40 + 2]' })).json.text, '[\n  800,\n  42\n]');
+    assert.equal((await call('POST', browser, { action: 'click', selector: '#missing' })).status, 404);
+    assert.equal((await call('POST', browser, { action: 'press', key: 'NoSuchKey' })).status, 400);
+    assert.deepEqual((await call('POST', browser, { action: 'console' })).json.logs, [], 'reported once');
+    assert.equal((await call('POST', browser, { action: 'close' })).status, 200);
+  } finally {
+    app.close();
+  }
 });
 
 test('SSH connections: generated and imported keys, bindings, the private key stays on the server', async () => {
