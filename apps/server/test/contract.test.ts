@@ -142,6 +142,12 @@ writeFileSync(
   join(voiceBin, 'whisper-cli'),
   '#!/bin/sh\necho "$@" > "$(dirname "$0")/whisper-args"\nf=""; of=""; prev=""\nfor a; do [ "$prev" = "-f" ] && f="$a"; [ "$prev" = "-of" ] && of="$a"; prev="$a"; done\nprintf " [BLANK_AUDIO]\\n Hello  there,\\n %s\\n" "$(cat "$f")" > "$of.txt"\n',
 );
+// git logins: a fake GitHub CLI that "signs in" at once and hands out a token
+writeFileSync(
+  join(voiceBin, 'gh'),
+  '#!/bin/sh\ncase "$1 $2" in\n"auth login") echo "$@" > "$(dirname "$0")/gh-args"; echo "! One-time code (ABCD-1234) copied to clipboard"; echo "Open this URL to continue in your web browser: https://github.com/login/device"; mkdir -p "$GH_CONFIG_DIR"; echo gho_fake > "$GH_CONFIG_DIR/token" ;;\n"auth token") cat "$GH_CONFIG_DIR/token" ;;\n"api --hostname") echo octocat ;;\n*) exit 1 ;;\nesac\n',
+);
+chmodSync(join(voiceBin, 'gh'), 0o755);
 chmodSync(join(voiceBin, 'ffmpeg'), 0o755);
 chmodSync(join(voiceBin, 'whisper-cli'), 0o755);
 process.env.PATH = `${voiceBin}:${process.env.PATH}`;
@@ -1158,6 +1164,25 @@ test('git logins per host: the secret never leaves the server', async () => {
   assert.deepEqual((await call('DELETE', '/git-credentials/gitlab.example.com')).json.map((x: any) => x.host), ['codeberg.org']);
   assert.equal((await call('DELETE', '/git-credentials/bad_host')).status, 200, 'an invalid host deletes nothing');
   assert.deepEqual((await call('DELETE', '/git-credentials/codeberg.org')).json, []);
+});
+
+test('git logins: sign-in with the GitHub CLI saves its token and drops its config', async () => {
+  assert.equal((await call('POST', '/git-credentials/bad_host/gh-login', {})).status, 400);
+  const started = await call('POST', '/git-credentials/github.com/gh-login', { cols: 80, rows: 24 });
+  assert.equal(started.status, 201);
+  const { output, exit } = await readJob(started.json.id);
+  assert.equal(exit?.code, 0);
+  assert.match(output, /ABCD-1234/);
+  assert.match(output, /github\.com\/login\/device/);
+  const args = readFileSync(join(voiceBin, 'gh-args'), 'utf8');
+  assert.match(args, /--hostname github\.com/);
+  assert.match(args, /--insecure-storage/, 'the token stays out of the system keyring');
+  assert.match(args, /--git-protocol ssh --skip-ssh-key/, 'gh keeps away from the git config');
+  const list = (await call('GET', '/git-credentials')).json;
+  assert.deepEqual(list.map((c: any) => [c.host, c.username, c.kind]), [['github.com', 'octocat', 'token']]);
+  assert.ok(!existsSync(join(tmp, 'data', 'gh', 'config')), 'the throwaway gh config is removed');
+  assert.ok(!output.includes('gho_fake'), 'the token never shows in the output');
+  await call('DELETE', '/git-credentials/github.com');
 });
 
 test('new empty repository in the projects folder or a group folder', async () => {
