@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-27
+
+### Added
+
+- The git login form suggests hosts under the host field: the hosts of the projects'
+  remotes that have no login yet, then github.com, gitlab.com, codeberg.org and
+  bitbucket.org; a click fills the host in and shows its token link.
+
 ## [0.3.3] - 2026-11-27
 
 ### Added
