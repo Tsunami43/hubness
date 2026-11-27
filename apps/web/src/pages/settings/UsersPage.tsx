@@ -1,23 +1,31 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { KeyRound, LogOut, Plus, Trash2, UserRound } from 'lucide-react';
-import type { User } from '@hubness/shared';
+import { KeyRound, LogOut, Plus, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import type { Role, User } from '@hubness/shared';
 import { api } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { t } from '../../i18n';
-import { useAuth } from '../../components/AuthGate';
+import { useAccess, useAuth } from '../../components/AuthGate';
+import { AccessSheet } from './AccessSheet';
 import { Button, ErrorLine, Field, IconButton, inputCls, Sheet, Spinner } from '../../components/ui';
 import { confirmDialog } from '../../components/Confirm';
+import { Select } from '../../components/Select';
 
-/** Settings → Users: hub accounts (all with the same rights) and your own sign-in. */
+/** Settings → Users: hub accounts with their roles and permissions (admins), your own sign-in and password. */
 export function UsersPage() {
   const auth = useAuth();
+  const { admin } = useAccess();
+  const [access, setAccess] = useState<User | null>(null);
   const [list, setList] = useState<User[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [changing, setChanging] = useState<User | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = useCallback(() => api.users().then(setList, (e) => setError((e as Error).message)), []);
+  // a member sees only its own account
+  const load = useCallback(
+    () => (admin ? api.users().then(setList, (e) => setError((e as Error).message)) : Promise.resolve(setList(auth.user ? [auth.user] : []))),
+    [admin, auth.user],
+  );
   useEffect(() => {
     void load();
   }, [load]);
@@ -39,7 +47,7 @@ export function UsersPage() {
   const open = list !== null && list.length === 0;
   return (
     <div className="space-y-4">
-      <p className={`text-sm ${open ? 'text-warn' : 'text-muted'}`}>{open ? t('users.open') : t('users.intro')}</p>
+      <p className={`text-sm ${open ? 'text-warn' : 'text-muted'}`}>{open ? t('users.open') : admin ? t('users.intro') : t('users.memberIntro')}</p>
       {auth.user ? (
         <div className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2.5 text-sm">
           <UserRound className="size-4 shrink-0 text-accent" />
@@ -61,38 +69,64 @@ export function UsersPage() {
                 <div className="truncate font-mono text-sm">
                   {u.username}
                   {u.id === auth.user?.id ? <span className="ml-2 font-sans text-xs text-ok">{t('users.you')}</span> : null}
+                  <span className={`ml-2 font-sans text-xs ${u.role === 'admin' ? 'text-accent' : 'text-muted'}`}>
+                    {t(u.role === 'admin' ? 'users.role.admin' : 'users.role.member')}
+                  </span>
                 </div>
                 <div className="truncate text-xs text-muted">{t('users.created', { when: timeAgo(u.createdAt) })}</div>
               </div>
+              {admin ? (
+                <Button size="sm" variant="ghost" onClick={() => setAccess(u)}>
+                  <ShieldCheck className="size-3.5" />
+                  <span className="hidden sm:inline">{t('users.access')}</span>
+                </Button>
+              ) : null}
               <Button size="sm" variant="ghost" onClick={() => setChanging(u)}>
                 <KeyRound className="size-3.5" />
                 <span className="hidden sm:inline">{t('users.changePassword')}</span>
               </Button>
-              <IconButton
-                label={list.length === 1 ? t('users.lastOne') : t('common.delete')}
-                className="size-8"
-                disabled={list.length === 1}
-                onClick={() => void remove(u)}
-              >
-                <Trash2 className="size-3.5" />
-              </IconButton>
+              {admin ? (
+                <IconButton
+                  label={list.length === 1 ? t('users.lastOne') : t('common.delete')}
+                  className="size-8"
+                  disabled={list.length === 1}
+                  onClick={() => void remove(u)}
+                >
+                  <Trash2 className="size-3.5" />
+                </IconButton>
+              ) : null}
             </li>
           ))}
         </ul>
       ) : null}
       <ErrorLine error={error} />
       {notice ? <p className="text-sm text-ok">{notice}</p> : null}
-      <Button onClick={() => setAdding(true)}>
-        <Plus className="size-4" />
-        {t('users.add')}
-      </Button>
+      {admin ? (
+        <Button onClick={() => setAdding(true)}>
+          <Plus className="size-4" />
+          {t('users.add')}
+        </Button>
+      ) : null}
       <AddUserSheet
         open={adding}
+        first={open}
         onClose={() => setAdding(false)}
-        onAdded={async () => {
+        onAdded={async (u) => {
           setAdding(false);
           // the first account turns sign-in on: the gate asks for it right away
           if (!auth.required) return void auth.refresh();
+          await load();
+          // a new member has no projects yet: choose them right away
+          if (u.role === 'member') setAccess(u);
+        }}
+      />
+      <AccessSheet
+        user={access}
+        onClose={() => setAccess(null)}
+        onSaved={async (u) => {
+          setAccess(null);
+          setNotice(t('users.accessSaved'));
+          if (u.id === auth.user?.id) await auth.refresh();
           await load();
         }}
       />
@@ -109,8 +143,9 @@ export function UsersPage() {
   );
 }
 
-function AddUserSheet({ open, onClose, onAdded }: { open: boolean; onClose: () => void; onAdded: () => void }) {
+function AddUserSheet({ open, first, onClose, onAdded }: { open: boolean; first: boolean; onClose: () => void; onAdded: (u: User) => void }) {
   const [username, setUsername] = useState('');
+  const [role, setRole] = useState<Role>('member');
   const [password, setPassword] = useState('');
   const [repeat, setRepeat] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +157,7 @@ function AddUserSheet({ open, onClose, onAdded }: { open: boolean; onClose: () =
       setPassword('');
       setRepeat('');
       setError(null);
+      setRole('member');
     }
   }, [open]);
 
@@ -131,8 +167,8 @@ function AddUserSheet({ open, onClose, onAdded }: { open: boolean; onClose: () =
     setBusy(true);
     setError(null);
     try {
-      await api.createUser({ username: username.trim(), password });
-      onAdded();
+      // the first account is always an admin
+      onAdded(await api.createUser({ username: username.trim(), password, role: first ? 'admin' : role }));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -152,6 +188,18 @@ function AddUserSheet({ open, onClose, onAdded }: { open: boolean; onClose: () =
         <Field label={t('auth.repeat')}>
           <input className={inputCls} type="password" autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} />
         </Field>
+        {first ? null : (
+          <Field label={t('users.role')} hint={t(role === 'admin' ? 'users.roleAdminHint' : 'users.roleMemberHint')}>
+            <Select
+              value={role}
+              onChange={setRole}
+              options={[
+                { value: 'member', label: t('users.role.member') },
+                { value: 'admin', label: t('users.role.admin') },
+              ]}
+            />
+          </Field>
+        )}
         <ErrorLine error={error} />
         <Button type="submit" variant="primary" loading={busy} disabled={!username.trim() || !password || !repeat}>
           {t('users.add')}

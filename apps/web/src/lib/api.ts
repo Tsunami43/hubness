@@ -53,6 +53,7 @@ import type {
   SystemPlatform,
   UnitInfo,
   User,
+  UserAccess,
   VoiceSettings,
   VoiceSettingsInput,
 } from '@hubness/shared';
@@ -274,7 +275,8 @@ export const api = {
     return (data as { text: string }).text;
   },
   users: () => req<User[]>('GET', '/users'),
-  createUser: (body: { username: string; password: string }) => req<User>('POST', '/users', body),
+  createUser: (body: { username: string; password: string } & Partial<UserAccess>) => req<User>('POST', '/users', body),
+  setUserAccess: (id: string, body: UserAccess) => req<User>('PUT', `/users/${encodeURIComponent(id)}/access`, body),
   deleteUser: (id: string) => req<{ ok: true }>('DELETE', `/users/${encodeURIComponent(id)}`),
   /** Your own password needs `currentPassword`; ends the account's other sessions. */
   setUserPassword: (id: string, body: { password: string; currentPassword?: string }) =>

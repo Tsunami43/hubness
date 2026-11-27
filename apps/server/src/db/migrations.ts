@@ -213,11 +213,25 @@ CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions(user_id);
 `);
 }
 
+/**
+ * v5 — user permissions: a role (`admin` — everything, `member` — what `permissions`, a JSON
+ * object, allows) and the account that started each session (null for older sessions and
+ * hubs without accounts). Existing accounts stay admins.
+ */
+export function userPermissions(db: DatabaseSync) {
+  db.exec(`
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin';
+ALTER TABLE users ADD COLUMN permissions TEXT;
+ALTER TABLE sessions ADD COLUMN created_by TEXT;
+`);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'baseline schema', up: baseline },
   { version: 2, name: 'legacy groups (projects.kind = group) → project_groups', up: migrateLegacyGroups },
   { version: 3, name: 'drop auto-imported projects', up: pruneAutoImported },
   { version: 4, name: 'user accounts and their sign-in sessions', up: userAccounts },
+  { version: 5, name: 'user roles, permissions and session owners', up: userPermissions },
 ];
 
 export const schemaVersion = (db: DatabaseSync) => Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);

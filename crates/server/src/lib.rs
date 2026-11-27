@@ -28,6 +28,7 @@ mod languages_data;
 pub mod manifest;
 pub mod mcp;
 pub mod paths;
+pub mod permissions;
 pub mod preview;
 pub mod routes;
 pub mod runs;
@@ -106,6 +107,7 @@ pub fn app(state: AppState) -> Router {
     // messages (up to 1M characters) and file writes can exceed axum's default 2 MB limit
     let api = routes::api()
         .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
+        .layer(axum::middleware::from_fn(permissions::enforce))
         .layer(axum::middleware::from_fn(http::csrf_guard))
         .layer(axum::middleware::from_fn(auth::guard));
     let router = web::attach(Router::new().nest("/api", api), &state.config);

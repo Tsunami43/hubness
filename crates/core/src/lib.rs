@@ -552,13 +552,78 @@ pub struct GitCredentialInfo {
 
 // ---------- user accounts ----------
 
-/// A hub account (all accounts have the same rights; the password hash never leaves the server).
+/// What an account may do: an admin everything (including managing accounts), a member only
+/// what its `Permissions` allow.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    #[default]
+    Admin,
+    Member,
+}
+
+/// Parts of the hub a member can be given (chats in its projects are always available).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum Section {
+    /// The project's git client.
+    Git,
+    /// The file explorer and editor.
+    Files,
+    /// Run commands, shells, preview and the project environment.
+    Terminal,
+    /// The project board.
+    Kanban,
+    /// The host page (Docker, systemd, packages).
+    System,
+    /// Agents, MCP servers, skills and the agents' accounts.
+    Harness,
+    /// Hub-wide settings: defaults, git access, voice input.
+    Settings,
+}
+
+/// A member's permissions. `None` lists mean "all".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Permissions {
+    /// Projects the member can open (and groups made only of them); `None` — every project.
+    #[serde(default)]
+    pub projects: Option<Vec<String>>,
+    #[serde(default)]
+    pub sections: Vec<Section>,
+    /// Agent kinds the member can start sessions with; `None` — every agent.
+    #[serde(default)]
+    pub agents: Option<Vec<String>>,
+    /// Models the member can pick; `None` — every model.
+    #[serde(default)]
+    pub models: Option<Vec<String>>,
+}
+
+impl Default for Permissions {
+    /// A new member: no projects yet, files and git, every agent and model.
+    fn default() -> Self {
+        Self { projects: Some(vec![]), sections: vec![Section::Files, Section::Git], agents: None, models: None }
+    }
+}
+
+/// A hub account (the password hash never leaves the server). `permissions` is set for
+/// members only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: String,
     pub username: String,
     pub created_at: String,
+    #[serde(default)]
+    pub role: Role,
+    #[serde(default)]
+    pub permissions: Option<Permissions>,
+}
+
+impl User {
+    pub fn is_admin(&self) -> bool {
+        self.role == Role::Admin
+    }
 }
 
 /// `GET /api/auth/status`: `required` — the hub has accounts and asks for a sign-in;

@@ -183,6 +183,7 @@ struct StartBody {
 /// Start an agent from a card: a new project session, prompt = title + description.
 async fn start(
     State(s): State<AppState>,
+    c: Option<axum::Extension<crate::auth::Caller>>,
     Path(id): Path<String>,
     JsonBody(b): JsonBody<StartBody>,
 ) -> ApiResult<(StatusCode, axum::Json<Session>)> {
@@ -193,6 +194,7 @@ async fn start(
             let mode = catalog::settings(db, cfg)?.default_permission;
             let agent = agents::validate(&b.agent.kind, b.agent.model.as_deref(), b.agent.permission_mode, mode)
                 .ok_or_else(|| HttpError::bad_request("Agent is not specified"))?;
+            crate::permissions::Access::of(c.as_deref()).agent(&agent.kind, agent.model.as_deref())?;
             let workspace = workspaces::project_workspace(db, &project)?;
             let session = repo::create(
                 db,
@@ -207,6 +209,7 @@ async fn start(
                 },
             )?;
             db.execute("UPDATE sessions SET card_id = ? WHERE id = ?", (&card.id, &session.id))?;
+            crate::permissions::set_owner(db, &session.id, c.as_deref())?;
             update_card(
                 db,
                 &card.id,
