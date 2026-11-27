@@ -114,6 +114,7 @@ All settings are environment variables (see [`.env.example`](../.env.example)):
 | `HUBNESS_CLAUDE_BIN`, `HUBNESS_OPENCODE_BIN`, `HUBNESS_GROK_BIN` | binary name | Agent CLI paths |
 | `HUBNESS_CODEX_ACP` | pinned `npx` command | Codex ACP adapter command |
 | `HUBNESS_CHROME` | first Chromium on `PATH` | Browser for the agents' preview tools |
+| `HUBNESS_CHROME_ARGS` | none | Extra browser arguments, e.g. `--no-sandbox` where Chromium's sandbox can't start (Ubuntu 23.10+, containers) |
 | `HUBNESS_PREVIEW_INJECT` | on | `0` stops the preview proxy from adding its helper script to pages |
 
 > **Security.** hubness gives agents shell access to the host. Keep it on `127.0.0.1`
