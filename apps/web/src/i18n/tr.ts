@@ -581,8 +581,6 @@ export const tr: Record<MessageKey, string> = {
   'projects.sortUpdated': 'Son güncelleme',
   'projects.sortName': 'Ad',
   'projects.updated': '{time} güncellendi',
-  'settings.systemHint': 'Ana makine: Docker, servisler, paketler',
-  'settings.harnessHint': 'Ajanlar, MCP sunucuları, beceriler',
   'settings.style': 'Stil',
   'style.strict': 'Sade',
   'style.strictHint': 'Eş aralıklı yazı, köşeli, ince çizgiler: terminal gibi.',

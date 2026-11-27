@@ -134,7 +134,7 @@ function Composer({
         ) : null}
         <div
           {...att.dropProps}
-          className={`border bg-surface py-2 pr-2 pl-3 transition focus-within:border-accent ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
+          className={`border bg-surface py-2.5 pr-2.5 pl-4 transition pointer-coarse:pl-5 focus-within:border-accent ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
         >
         <PendingFiles files={att.files} onRemove={att.remove} />
         <div

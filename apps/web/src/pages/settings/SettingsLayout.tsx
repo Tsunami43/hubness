@@ -1,5 +1,4 @@
-import { Activity, Bot, Cpu, GitBranch, HardDrive, Keyboard, Languages, Mic, Palette, Users } from 'lucide-react';
-import { useDesktop } from '../../components/RepoWorkspace';
+import { Bot, GitBranch, HardDrive, Keyboard, Languages, Mic, Palette, Users } from 'lucide-react';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../../components/SubmenuLayout';
 import { getLang, LANGUAGES, t } from '../../i18n';
 import { useAccess } from '../../components/AuthGate';
@@ -73,20 +72,9 @@ const items = (): Item[] => [
 /** The settings this account may open (members: hub-wide ones only with the settings section). */
 function useItems(): SubmenuItem[] {
   const access = useAccess();
-  const desktop = useDesktop();
-  // phone: System and Harness are not in the bottom bar — they open from here
-  const phoneOnly: SubmenuItem[] = desktop
-    ? []
-    : [
-        ...(access.can('system') ? [{ to: '/system', label: t('nav.system'), hint: t('settings.systemHint'), icon: <Activity className="size-4 text-accent" /> }] : []),
-        ...(access.can('harness') ? [{ to: '/harness', label: t('nav.harness'), hint: t('settings.harnessHint'), icon: <Cpu className="size-4 text-accent" /> }] : []),
-      ];
-  return [
-    ...items()
-      .filter((i) => !i.need || (i.need === 'admin' ? access.admin : access.can(i.need)))
-      .map(({ need: _, ...i }) => i),
-    ...phoneOnly,
-  ];
+  return items()
+    .filter((i) => !i.need || (i.need === 'admin' ? access.admin : access.can(i.need)))
+    .map(({ need: _, ...i }) => i);
 }
 
 export function SettingsLayout() {

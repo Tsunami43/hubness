@@ -580,8 +580,6 @@ export const en = {
   'projects.sortUpdated': 'Last updated',
   'projects.sortName': 'Name',
   'projects.updated': 'Updated {time}',
-  'settings.systemHint': 'Host: Docker, services, packages',
-  'settings.harnessHint': 'Agents, MCP servers, skills',
   'settings.style': 'Style',
   'style.strict': 'Strict',
   'style.strictHint': 'Monospace, square, thin lines — like a terminal.',

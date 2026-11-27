@@ -581,8 +581,6 @@ export const pt: Record<MessageKey, string> = {
   'projects.sortUpdated': 'Atualização mais recente',
   'projects.sortName': 'Nome',
   'projects.updated': 'Atualizado {time}',
-  'settings.systemHint': 'Host: Docker, serviços, pacotes',
-  'settings.harnessHint': 'Agentes, servidores MCP, skills',
   'settings.style': 'Estilo',
   'style.strict': 'Estrito',
   'style.strictHint': 'Monoespaçado, cantos retos, linhas finas, como um terminal.',

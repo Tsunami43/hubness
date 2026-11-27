@@ -581,8 +581,6 @@ export const ko: Record<MessageKey, string> = {
   'projects.sortUpdated': '최근 업데이트',
   'projects.sortName': '이름',
   'projects.updated': '{time} 업데이트',
-  'settings.systemHint': '호스트: Docker, 서비스, 패키지',
-  'settings.harnessHint': '에이전트, MCP 서버, 스킬',
   'settings.style': '스타일',
   'style.strict': '엄격',
   'style.strictHint': '고정폭 글꼴, 각진 모서리, 얇은 선: 터미널처럼.',

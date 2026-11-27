@@ -581,8 +581,6 @@ export const ja: Record<MessageKey, string> = {
   'projects.sortUpdated': '最終更新',
   'projects.sortName': '名前',
   'projects.updated': '{time} に更新',
-  'settings.systemHint': 'ホスト：Docker、サービス、パッケージ',
-  'settings.harnessHint': 'エージェント、MCP サーバー、スキル',
   'settings.style': 'スタイル',
   'style.strict': 'ストリクト',
   'style.strictHint': '等幅フォント、角ばった形、細い線。ターミナルのように。',
