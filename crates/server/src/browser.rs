@@ -208,6 +208,36 @@ fn read_loop(cdp: Arc<Cdp>, out: std::fs::File) {
 struct Chrome {
     child: Child,
     cdp: Arc<Cdp>,
+    /// The tail of what the browser wrote to stderr: the only clue when it won't start.
+    said: Arc<Mutex<String>>,
+}
+
+/// `HUBNESS_CHROME_ARGS`: extra arguments for the browser (`--no-sandbox` where its sandbox
+/// can't start).
+pub fn chrome_args(raw: &str) -> Vec<String> {
+    raw.split_whitespace().map(String::from).collect()
+}
+
+/// Why the browser didn't start, for a person: the reason, what Chromium itself said last,
+/// and the way out when it is its sandbox (unprivileged user namespaces are restricted on
+/// Ubuntu 23.10+, in containers, and it refuses to run as root). The same text as
+/// `startupError` in browser.ts.
+pub fn startup_error(reason: &str, stderr: &str) -> String {
+    static NOISE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"^\[[^\]]*:(INFO|WARNING):").expect("a valid pattern"));
+    static SANDBOX: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?i)sandbox|namespace|setuid|as root").expect("a valid pattern"));
+    let lines: Vec<&str> =
+        stderr.lines().map(str::trim).filter(|l| !l.is_empty() && !NOISE.is_match(l) && !l.contains("DevTools listening")).collect();
+    let said = lines[lines.len().saturating_sub(3)..].join(" ");
+    let said: String = said.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
+    let mut out = format!("Chromium didn't start: {reason}");
+    if !said.is_empty() {
+        out.push_str(&format!(" — {said}"));
+    }
+    if SANDBOX.is_match(stderr) {
+        out.push_str(" Its sandbox can’t start on this system: set HUBNESS_CHROME_ARGS=--no-sandbox for the hub to run the agents’ browser without it.");
+    }
+    out
 }
 
 struct Page {
@@ -270,13 +300,14 @@ fn launch(config: &Config) -> ApiResult<Chrome> {
             "--disable-dev-shm-usage",
             "--hide-scrollbars",
             "--mute-audio",
-            "about:blank",
         ])
+        .args(chrome_args(&std::env::var("HUBNESS_CHROME_ARGS").unwrap_or_default()))
+        .arg("about:blank")
         .env_clear()
         .envs(crate::config::child_env())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         // own process group: shutdown takes the renderers along
         .process_group(0);
     // SAFETY: only async-signal-safe calls (fcntl, dup2) between fork and exec
@@ -291,8 +322,29 @@ fn launch(config: &Config) -> ApiResult<Chrome> {
             Ok(())
         });
     }
-    let child = command.spawn().map_err(|e| HttpError::new(503, format!("Chromium didn't start: {e}")))?;
+    let mut child = command.spawn().map_err(|e| HttpError::new(503, startup_error(&e.to_string(), "")))?;
     drop((cmd_r, out_w));
+    // keep the tail of stderr, and always drain it (a full pipe would stall the browser)
+    let said = Arc::new(Mutex::new(String::new()));
+    if let Some(mut err) = child.stderr.take() {
+        let said = said.clone();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = err.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let mut tail = lock(&said);
+                tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if tail.len() > 4000 {
+                    let cut = tail.len() - 4000;
+                    let cut = (cut..tail.len()).find(|i| tail.is_char_boundary(*i)).unwrap_or(tail.len());
+                    tail.drain(..cut);
+                }
+            }
+        });
+    }
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let cdp = Arc::new(Cdp { out: Mutex::new(tx), next: AtomicU64::new(0), pending: Mutex::default(), closed: AtomicBool::new(false) });
     // weak: the thread must not keep the Cdp (and with it its own sender) alive
@@ -312,7 +364,7 @@ fn launch(config: &Config) -> ApiResult<Chrome> {
     let reader = cdp.clone();
     let out = std::fs::File::from(out_r);
     std::thread::spawn(move || read_loop(reader, out));
-    Ok(Chrome { child, cdp })
+    Ok(Chrome { child, cdp, said })
 }
 
 async fn browser(config: &Config) -> ApiResult<Arc<Cdp>> {
@@ -326,10 +378,14 @@ async fn browser(config: &Config) -> ApiResult<Arc<Cdp>> {
     shutdown();
     let chrome = launch(config)?;
     let cdp = chrome.cdp.clone();
+    let said = chrome.said.clone();
     *lock(&CHROME) = Some(chrome);
     if let Err(e) = cdp.send_for("Browser.getVersion", json!({}), None, Duration::from_secs(15)).await {
+        // a moment for stderr to arrive after the pipe closed
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let said = lock(&said).clone();
         shutdown();
-        return Err(HttpError::new(503, format!("Chromium didn't start: {e}")));
+        return Err(HttpError::new(503, startup_error(&e.to_string(), &said)));
     }
     touch();
     // close the browser after a while without use
@@ -945,5 +1001,26 @@ mod tests {
         assert_eq!(u.origin().ascii_serialization(), "http://localhost:5173", "the user:password part is not part of the origin");
         assert_eq!(after_origin(&u), "/a/b?c=d#e");
         assert_eq!(after_origin(&parse_target("localhost:5173").unwrap()), "/");
+    }
+
+    #[test]
+    fn a_failed_start_says_why_and_what_to_do() {
+        assert_eq!(startup_error("The browser closed", ""), "Chromium didn't start: The browser closed");
+        let ubuntu = "[1:1:1128/1.0:WARNING:x.cc(1)] noise\n[2:2:1128/1.0:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox! If you are running on Ubuntu 23.10+ …\n";
+        let msg = startup_error("The browser closed", ubuntu);
+        assert!(
+            msg.starts_with(
+                "Chromium didn't start: The browser closed — [2:2:1128/1.0:FATAL:zygote_host_impl_linux.cc(132)] No usable sandbox!"
+            ),
+            "{msg}"
+        );
+        assert!(!msg.contains("noise"), "warnings are not the reason");
+        assert!(msg.ends_with("set HUBNESS_CHROME_ARGS=--no-sandbox for the hub to run the agents’ browser without it."));
+        let other =
+            startup_error("The browser closed", "error while loading shared libraries: libnss3.so: cannot open shared object file\n");
+        assert!(other.contains("libnss3.so") && !other.contains("HUBNESS_CHROME_ARGS"), "another cause gets no sandbox advice");
+        assert!(startup_error("x", &"é".repeat(5000)).chars().count() < 700);
+        assert_eq!(chrome_args("  --no-sandbox   --disable-foo=1 "), ["--no-sandbox", "--disable-foo=1"]);
+        assert!(chrome_args("").is_empty());
     }
 }

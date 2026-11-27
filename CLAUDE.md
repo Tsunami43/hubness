@@ -52,7 +52,7 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   errors → `/projects/:id/previews/:port/logs`, address bar, element picker);
   `HUBNESS_PREVIEW_INJECT=0` turns it off.
 - `browser.ts` — the agent's own headless Chromium (CDP over `--remote-debugging-pipe`, one
-  page per session, `HUBNESS_CHROME`), driven by the hub MCP `preview_*` tools through
+  page per session, `HUBNESS_CHROME`, `HUBNESS_CHROME_ARGS`), driven by the hub MCP `preview_*` tools through
   `POST /sessions/:id/browser`; `localhost:<port>` of a project goes through its preview.
 - `git*.ts` — git operations, credentials helper and provider (GitHub/GitLab…) logins.
 - `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models

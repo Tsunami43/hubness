@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-28
+
+### Fixed
+
+- The agents' browser says why Chromium didn't start (what it wrote itself) instead of a
+  bare "The browser closed", and names the way out when it is its sandbox: on Ubuntu 23.10+
+  and in containers set `HUBNESS_CHROME_ARGS=--no-sandbox` (extra browser arguments) for
+  the hub.
+
 ## [0.4.0] - 2026-11-28
 
 ### Added

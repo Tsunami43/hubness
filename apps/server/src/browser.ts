@@ -39,6 +39,30 @@ export function findChrome(): string | null {
   return null;
 }
 
+/** HUBNESS_CHROME_ARGS: extra arguments for the browser (`--no-sandbox` where its sandbox can't start). */
+export const chromeArgs = (raw = process.env.HUBNESS_CHROME_ARGS ?? '') => raw.split(/\s+/).filter(Boolean);
+
+/**
+ * Why the browser didn't start, for a person: the reason, what Chromium itself said last, and
+ * the way out when it is its sandbox (unprivileged user namespaces are restricted on Ubuntu
+ * 23.10+, in containers, and it refuses to run as root).
+ */
+export function startupError(reason: string, stderr: string): string {
+  const said = stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^\[[^\]]*:(INFO|WARNING):/.test(l) && !l.includes('DevTools listening'))
+    .slice(-3)
+    .join(' ')
+    .slice(-600);
+  const sandbox = /sandbox|namespace|setuid|as root/i.test(stderr);
+  return (
+    `Chromium didn't start: ${reason}` +
+    (said ? ` — ${said}` : '') +
+    (sandbox ? ' Its sandbox can’t start on this system: set HUBNESS_CHROME_ARGS=--no-sandbox for the hub to run the agents’ browser without it.' : '')
+  );
+}
+
 type Json = Record<string, any>;
 
 /** One DevTools connection over the pipe; commands of a page carry its sessionId. */
@@ -155,10 +179,14 @@ async function browser(): Promise<{ proc: ChildProcess; cdp: Cdp }> {
         '--disable-dev-shm-usage',
         '--hide-scrollbars',
         '--mute-audio',
+        ...chromeArgs(),
         'about:blank',
       ],
-      { env: childEnv(), stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] },
+      { env: childEnv(), stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] },
     );
+    // what it says is the only clue when it won't start; keep the tail, always drain
+    let said = '';
+    proc.stderr!.on('data', (d: Buffer) => (said = (said + d.toString()).slice(-4000)));
     const cdp = new Cdp(proc.stdio[3] as Writable, proc.stdio[4] as Readable);
     proc.on('exit', () => {
       cdp.closed = true;
@@ -169,8 +197,9 @@ async function browser(): Promise<{ proc: ChildProcess; cdp: Cdp }> {
     });
     try {
       await new Promise<void>((resolve, reject) => {
-        proc.once('error', (e) => reject(new HttpError(503, `Chromium didn't start: ${e.message}`)));
-        cdp.send('Browser.getVersion', {}, undefined, 15_000).then(() => resolve(), (e) => reject(new HttpError(503, `Chromium didn't start: ${(e as Error).message}`)));
+        proc.once('error', (e) => reject(new HttpError(503, startupError(e.message, said))));
+        // a moment for stderr to arrive after the pipe closed
+        cdp.send('Browser.getVersion', {}, undefined, 15_000).then(() => resolve(), (e) => setTimeout(() => reject(new HttpError(503, startupError((e as Error).message, said))), 100));
       });
     } catch (e) {
       proc.kill('SIGKILL');

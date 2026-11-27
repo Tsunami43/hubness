@@ -12,6 +12,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # the agents' browser in the tests: the runners restrict the user namespaces Chromium's
+  # sandbox needs (AppArmor on Ubuntu 23.10+), and the pages it opens are the tests' own
+  HUBNESS_CHROME_ARGS: --no-sandbox
+
 jobs:
   web:
     name: TypeScript (check, test, build, audit)
