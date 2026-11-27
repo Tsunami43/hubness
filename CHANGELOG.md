@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-28
+
 ### Added
 
 - SSH connections (System → SSH): the hub keeps a key per server — generated or imported,
