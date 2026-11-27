@@ -1,6 +1,4 @@
-import { useState } from 'react';
 import type { GitBranch as Branch } from '@hubness/shared';
-import { inputCls } from '../../components/ui';
 import { t } from '../../i18n';
 import { deleteBranch, mergeBranch, rebaseBranch, switchBranch } from './actions';
 import { type Ctx } from './types';
@@ -25,24 +23,6 @@ export function BranchLine({ b }: { b: Branch }) {
       </span>
       <span className="ml-auto shrink-0 text-[12px] text-muted">{b.lastCommit.replace(/ ago$/, '')}</span>
     </span>
-  );
-}
-
-export function NewBranch({ ctx }: { ctx: Ctx }) {
-  const [name, setName] = useState('');
-  return (
-    <form
-      className="flex gap-1.5 px-3 pb-1.5"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (name.trim() && (await ctx.run('checkout', t('git.switching', { branch: name.trim() }), { branch: name.trim(), create: true })).ok) setName('');
-      }}
-    >
-      <input className={`${inputCls} h-7 py-0 font-mono text-[13px]`} placeholder={t('git.newBranch')} value={name} onChange={(e) => setName(e.target.value)} autoCapitalize="off" />
-      <Act submit disabled={!name.trim() || ctx.busy}>
-        {t('git.create')}
-      </Act>
-    </form>
   );
 }
 
