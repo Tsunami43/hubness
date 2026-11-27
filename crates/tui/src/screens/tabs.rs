@@ -119,7 +119,22 @@ impl Tabs {
             }
         }
         let i = self.active;
-        self.call(i, ctx, |s, c| s.on_key(k, c)).unwrap_or(Handled::No)
+        let handled = self.call(i, ctx, |s, c| s.on_key(k, c)).unwrap_or(Handled::No);
+        // Tab / Shift+Tab switch tabs when the tab itself has no use for them (panes, forms)
+        if matches!(handled, Handled::No) && self.tabs.len() > 1 && !self.captures_text() {
+            match k.code {
+                KeyCode::Tab => {
+                    self.select((self.active + 1) % self.tabs.len(), ctx);
+                    return Handled::Yes;
+                }
+                KeyCode::BackTab => {
+                    self.select((self.active + self.tabs.len() - 1) % self.tabs.len(), ctx);
+                    return Handled::Yes;
+                }
+                _ => {}
+            }
+        }
+        handled
     }
 
     pub fn on_paste(&mut self, text: &str, ctx: &mut Ctx) {

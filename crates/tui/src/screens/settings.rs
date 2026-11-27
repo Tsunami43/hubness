@@ -9,14 +9,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph, Wrap};
 use serde_json::{Value, json};
 
 use super::kit::{Nav, Sections, row, s, since};
 use super::session::{MODES, enc};
 use super::tabs::Tab;
 use crate::core::{Action, Ctx, Handled, Screen};
-use crate::ui::{Theme, block};
+use crate::ui::term::JobTerm;
+use crate::ui::{Theme, block, centered};
 
 pub fn screen(section: Option<&str>) -> Box<dyn Screen> {
     let tabs = vec![
@@ -254,15 +255,44 @@ impl Screen for AgentSettings {
 
 // ---------- Git access ----------
 
-/// Where to create a personal access token on known hostings.
+/// Where to create a personal access token on known hostings, with the repository scopes
+/// filled in where the hosting allows it (the same pages as the web app's login form).
 pub fn token_page(host: &str) -> Option<String> {
+    let has = |name: &str| host.split(['.', '-']).any(|p| p == name);
     if host == "github.com" || host.starts_with("github.") {
-        Some(format!("https://{host}/settings/tokens"))
-    } else if host == "gitlab.com" || host.starts_with("gitlab.") {
-        Some(format!("https://{host}/-/user_settings/personal_access_tokens"))
+        Some(format!("https://{host}/settings/tokens/new?scopes=repo,workflow&description=hubness"))
+    } else if host == "gitlab.com" || has("gitlab") {
+        Some(format!("https://{host}/-/user_settings/personal_access_tokens?name=hubness&scopes=read_repository,write_repository"))
+    } else if host == "codeberg.org" || has("gitea") || has("forgejo") {
+        Some(format!("https://{host}/user/settings/applications"))
+    } else if host == "bitbucket.org" {
+        Some("https://id.atlassian.com/manage-profile/security/api-tokens".into())
     } else {
         None
     }
+}
+
+/// A GitHub host: the GitHub CLI can sign in to it with a one-time code.
+fn is_github(host: &str) -> bool {
+    host == "github.com" || host.starts_with("github.")
+}
+
+/// Public hostings offered when adding a login (the ones that already have a login are left out).
+const POPULAR_HOSTS: [&str; 4] = ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"];
+
+/// The one-time code GitHub's device flow shows (`ABCD-1234`) in the CLI's output.
+fn device_code(text: &str) -> Option<String> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).find_map(|w| {
+        let (a, b) = w.split_once('-')?;
+        let part = |p: &str| p.len() == 4 && p.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+        (part(a) && part(b)).then(|| w.to_string())
+    })
+}
+
+/// A sign-in with the GitHub CLI in progress: the hub's job and the host.
+struct GhLogin {
+    host: String,
+    term: JobTerm,
 }
 
 /// A login being entered: host, kind, username (the secret is asked last).
@@ -279,6 +309,7 @@ pub struct GitAccess {
     error: Option<String>,
     nav: Nav,
     draft: Option<Draft>,
+    gh: Option<GhLogin>,
 }
 
 impl GitAccess {
@@ -288,11 +319,38 @@ impl GitAccess {
 
     fn ask_kind(&self, ctx: &mut Ctx) {
         let Some(d) = &self.draft else { return };
-        let items = vec![
+        let mut items = vec![
             ("token".to_string(), "Token (recommended) — a personal access token with repository access".to_string()),
             ("password".to_string(), "Login + password — many hostings refuse passwords for git".to_string()),
         ];
+        if is_github(&d.host) {
+            // the code sign-in is the easy way here: the token stops being the recommended one
+            items[0].1 = "Token — a personal access token with repository access".to_string();
+            items.insert(0, ("gh".to_string(), "Sign in with GitHub — a one-time code, no token to paste (recommended)".to_string()));
+        }
         ctx.pick("kind", format!("How to sign in to {}", d.host), items);
+    }
+
+    /// The host is known: prefill the login stored for it and ask how to sign in.
+    fn set_host(&mut self, host: &str, ctx: &mut Ctx) {
+        let stored = self.list.iter().flatten().find(|c| c["host"] == host.trim().to_lowercase().as_str()).cloned();
+        let Some(d) = &mut self.draft else { return };
+        d.host = host.trim().to_lowercase();
+        if let Some(c) = stored {
+            d.kind = s(&c["kind"], "token").into();
+            d.username = s(&c["username"], "").into();
+        }
+        self.ask_kind(ctx);
+    }
+
+    /// Stop a sign-in nobody finished and forget it.
+    fn close_gh(&mut self, ctx: &mut Ctx) {
+        if let Some(gh) = self.gh.take() {
+            if gh.term.running {
+                ctx.send("gh-killed", Method::POST, format!("/jobs/{}/kill", gh.term.id), Value::Null);
+            }
+            ctx.close_stream("gh");
+        }
     }
 
     fn edit(&mut self, c: &Value, ctx: &mut Ctx) {
@@ -312,6 +370,11 @@ impl Screen for GitAccess {
     }
 
     fn actions(&self) -> Vec<Action> {
+        if let Some(gh) = &self.gh {
+            let mut a = vec![Action::new("o", "Open the GitHub page"), Action::new("c", "Copy the code")];
+            a.push(Action::new("w", if gh.term.running { "Cancel the sign-in" } else { "Close" }));
+            return a;
+        }
         let mut a = vec![Action::new("a", "Add a login"), Action::new("r", "Reload")];
         if let Some(c) = self.selected() {
             a.push(Action::new("e", "Edit the selected login"));
@@ -327,8 +390,26 @@ impl Screen for GitAccess {
         match key {
             "a" => {
                 self.draft = Some(Draft { kind: "token".into(), ..Default::default() });
-                ctx.prompt("host", "Host (e.g. gitlab.example.com — the login is used for every repository on it)", "");
+                let stored: Vec<&str> = self.list.iter().flatten().filter_map(|c| c["host"].as_str()).collect();
+                let mut items: Vec<(String, String)> =
+                    POPULAR_HOSTS.iter().filter(|h| !stored.contains(h)).map(|h| (h.to_string(), h.to_string())).collect();
+                items.push(("other".into(), "Another host…".into()));
+                ctx.pick("hostpick", "Which host? (the login is used for every repository on it)", items);
             }
+            "o" => {
+                let url = self.gh.as_ref().map(|gh| {
+                    super::harness::last_link(&gh.term.contents()).unwrap_or_else(|| format!("https://{}/login/device", gh.host))
+                });
+                if let Some(url) = url {
+                    ctx.open_url(url);
+                }
+            }
+            "c" => {
+                if let Some(code) = self.gh.as_ref().and_then(|gh| device_code(&gh.term.contents())) {
+                    super::kit::copy(ctx, &code);
+                }
+            }
+            "w" => self.close_gh(ctx),
             "r" => ctx.get("list", "/git-credentials"),
             "e" => {
                 if let Some(c) = self.selected() {
@@ -351,6 +432,16 @@ impl Screen for GitAccess {
     }
 
     fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
+        // the sign-in window takes the keys while it is open
+        if self.gh.is_some() {
+            match k.code {
+                KeyCode::Esc | KeyCode::Char('w') | KeyCode::Char('q') => self.close_gh(ctx),
+                KeyCode::Char('o') => self.on_action("o", ctx),
+                KeyCode::Char('c') => self.on_action("c", ctx),
+                _ => {}
+            }
+            return Handled::Yes;
+        }
         let n = self.list.as_ref().map_or(0, |l| l.len());
         if self.nav.key(&k, n) {
             return Handled::Yes;
@@ -362,6 +453,26 @@ impl Screen for GitAccess {
             return Handled::Yes;
         }
         Handled::No
+    }
+
+    fn on_stream(&mut self, key: &str, msg: Value, ctx: &mut Ctx) {
+        if key != "gh" || msg["type"] == "__ended" {
+            return;
+        }
+        let Some(gh) = &mut self.gh else { return };
+        let was_running = gh.term.running;
+        gh.term.on_stream(&msg);
+        if was_running && !gh.term.running {
+            ctx.close_stream("gh");
+            if gh.term.exit_code == Some(0) {
+                // the hub saved the token when the job ended: the new login is in the list
+                ctx.info(format!("Signed in to {} with GitHub", gh.host));
+                self.gh = None;
+                ctx.get("list", "/git-credentials");
+            } else {
+                ctx.error("The GitHub sign-in did not finish — w closes the window");
+            }
+        }
     }
 
     fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
@@ -376,18 +487,37 @@ impl Screen for GitAccess {
                 }
                 Err(e) => self.error = Some(e.to_string()),
             },
-            "host" => match (result, &mut self.draft) {
-                (Ok(Value::String(h)), Some(d)) if !h.trim().is_empty() => {
-                    d.host = h.trim().to_lowercase();
-                    // a login already stored for the host: prefill it
-                    if let Some(c) = self.list.iter().flatten().find(|c| c["host"] == d.host.as_str()) {
-                        d.kind = s(&c["kind"], "token").into();
-                        d.username = s(&c["username"], "").into();
-                    }
-                    self.ask_kind(ctx);
+            "hostpick" => match result {
+                Ok(Value::String(h)) if h == "other" => {
+                    ctx.prompt("host", "Host (e.g. gitlab.example.com — the login is used for every repository on it)", "")
                 }
+                Ok(Value::String(h)) => self.set_host(&h, ctx),
                 _ => self.draft = None,
             },
+            "host" => match result {
+                Ok(Value::String(h)) if !h.trim().is_empty() => self.set_host(&h, ctx),
+                _ => self.draft = None,
+            },
+            "kind" if matches!(&result, Ok(Value::String(k)) if k == "gh") => {
+                if let Some(d) = self.draft.take() {
+                    ctx.info(format!("Starting the GitHub sign-in for {}…", d.host));
+                    ctx.send(
+                        format!("gh-start:{}", d.host),
+                        Method::POST,
+                        format!("/git-credentials/{}/gh-login", enc(&d.host)),
+                        json!({ "cols": 100, "rows": 30 }),
+                    );
+                }
+            }
+            k if k.starts_with("gh-start:") => {
+                let Some(v) = ctx.ok(result) else { return };
+                if v["id"].is_string() {
+                    let term = JobTerm::new(&v);
+                    ctx.stream("gh", term.stream_path());
+                    self.gh = Some(GhLogin { host: k[9..].to_string(), term });
+                }
+            }
+            "gh-killed" => {}
             "kind" => match (result, &mut self.draft) {
                 (Ok(Value::String(k)), Some(d)) => {
                     d.kind = k;
@@ -433,6 +563,63 @@ impl Screen for GitAccess {
     }
 
     fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
+        self.draw_list(f, area);
+        if let Some(gh) = &self.gh {
+            draw_gh(f, area, gh);
+        }
+    }
+}
+
+/// The GitHub sign-in window: the one-time code, where to enter it and what happens.
+fn draw_gh(f: &mut Frame, area: Rect, gh: &GhLogin) {
+    let t = Theme::get();
+    let text = gh.term.contents();
+    let code = device_code(&text);
+    let last: Vec<String> = text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).map(String::from).collect();
+    let key =
+        |k: &str, label: &str| vec![Span::styled(format!(" {k} "), t.key_style()), Span::styled(format!(" {label}   "), t.muted_style())];
+    let mut lines = vec![Line::raw("")];
+    if !gh.term.running && gh.term.exit_code != Some(0) {
+        let code = gh.term.exit_code.map_or("?".into(), |c| c.to_string());
+        lines.push(Line::styled(format!("Sign-in failed (exit {code})"), Style::default().fg(t.danger)));
+        lines.push(Line::raw(""));
+        for l in last.iter().rev().take(6).rev() {
+            lines.push(Line::styled(l.clone(), t.muted_style()));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(key("w", "close")));
+    } else if let Some(code) = code {
+        lines.push(Line::styled("Enter this code on GitHub and approve access:", t.bold()));
+        lines.push(Line::raw(""));
+        let spaced: String = code.chars().map(|c| format!("{c} ")).collect();
+        lines.push(Line::styled(
+            format!("   {}", spaced.trim_end()),
+            Style::default().fg(t.accent).add_modifier(ratatui::style::Modifier::BOLD),
+        ));
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(format!("https://{}/login/device", gh.host), t.accent_style()));
+        lines.push(Line::raw(""));
+        let mut keys = key("o", "open the page");
+        keys.extend(key("c", "copy the code"));
+        keys.extend(key("w", "cancel"));
+        lines.push(Line::from(keys));
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Waiting for your approval… the login is saved by itself.", t.muted_style()));
+    } else {
+        lines.push(Line::styled("Preparing the GitHub CLI…", t.bold()));
+        lines.push(Line::raw(""));
+        if let Some(l) = last.last() {
+            lines.push(Line::styled(l.clone(), t.muted_style()));
+        }
+    }
+    let h = (lines.len() as u16 + 3).min(area.height);
+    let r = centered(area, 64.min(area.width), h);
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(block(format!("Sign in to {} with GitHub", gh.host), true)), r);
+}
+
+impl GitAccess {
+    fn draw_list(&mut self, f: &mut Frame, area: Rect) {
         let t = Theme::get();
         let [hint, body] = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).areas(area);
         let mut lines: Vec<Line> = wrap_words(
@@ -1066,9 +1253,18 @@ mod tests {
 
     #[test]
     fn token_pages() {
-        assert_eq!(token_page("github.com").as_deref(), Some("https://github.com/settings/tokens"));
+        assert_eq!(
+            token_page("github.com").as_deref(),
+            Some("https://github.com/settings/tokens/new?scopes=repo,workflow&description=hubness")
+        );
+        assert!(token_page("git.corp-gitlab.io").is_some_and(|u| u.contains("read_repository")));
+        assert_eq!(device_code("! One-time code (ABCD-12EF) copied to clipboard").as_deref(), Some("ABCD-12EF"));
+        assert_eq!(device_code("Open https://github.com/login/device"), None);
         assert_eq!(token_page("code.example.com"), None);
-        assert_eq!(token_page("gitlab.com").as_deref(), Some("https://gitlab.com/-/user_settings/personal_access_tokens"));
+        assert_eq!(
+            token_page("gitlab.com").as_deref(),
+            Some("https://gitlab.com/-/user_settings/personal_access_tokens?name=hubness&scopes=read_repository,write_repository")
+        );
     }
 
     #[test]
