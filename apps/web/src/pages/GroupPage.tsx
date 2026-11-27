@@ -4,7 +4,9 @@ import { Boxes, FolderGit2, MessagesSquare, Plus, Settings2, SquareTerminal, Tra
 import type { GroupDetail, Project } from '@hubness/shared';
 import { api } from '../lib/api';
 import { useApi } from '../lib/query';
-import { RepoWorkspace, useGitByRepo, type Tool } from '../components/RepoWorkspace';
+import { RepoWorkspace, useDesktop, useGitByRepo, type Tool } from '../components/RepoWorkspace';
+import { MobileWorkspace, SimpleViewButton } from '../components/MobileWorkspace';
+import { useLocalStorage } from '../lib/hooks';
 import { SessionsTool } from '../components/SessionsTool';
 import { Button, Empty, ErrorLine, Field, inputCls, Spinner } from '../components/ui';
 import { NewProject } from '../components/NewProject';
@@ -29,6 +31,9 @@ export function GroupPage() {
   const repos = useMemo(() => (group ? group.projects.map((p) => ({ id: p.id, name: p.name, path: p.path })) : []), [repoKey]);
   const access = useAccess();
   const { git, refresh } = useGitByRepo(access.can('git') ? repos : NO_REPOS);
+  // phone: the simple chat-first view unless the full workspace was asked for
+  const desktop = useDesktop();
+  const [full, setFull] = useLocalStorage('hub.mobile.full', false);
   usePlace(group && group.id === id ? { key: `group:${id}`, kind: 'group', title: group.name, path: `/groups/${id}` } : null);
   useEffect(() => {
     if (error) closePlace(`group:${id}`);
@@ -63,10 +68,29 @@ export function GroupPage() {
       : []),
   ];
 
+  if (!desktop && !full)
+    return (
+      <>
+        <MobileWorkspace
+          title={group.name}
+          badge={t('projects.kind.group')}
+          scope={{ groupId: group.id }}
+          root={group.workspace.path}
+          repos={repos}
+          git={git}
+          refreshGit={refresh}
+          tools={tools.filter((x) => x.id !== 'sessions')}
+          onFull={() => setFull(true)}
+        />
+        <NewProject open={adding} onClose={() => setAdding(false)} onCreated={() => void reload()} group={group} />
+      </>
+    );
+
   return (
     <>
       <RepoWorkspace
         storageKey={`group:${group.id}`}
+        actions={desktop ? undefined : <SimpleViewButton onClick={() => setFull(false)} />}
         title={group.name}
         badge={t('projects.kind.group')}
         subtitle={

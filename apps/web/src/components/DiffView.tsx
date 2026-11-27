@@ -65,25 +65,33 @@ const ROW: Record<Line['type'], string> = {
  * separately (context + removed / context + added) so the grammar
  * sees coherent code, then the tokens are mapped back to lines.
  */
-export function DiffView({ diff, maxHeight, path }: { diff: string; maxHeight?: string; path?: string }) {
+export function DiffView({ diff, maxHeight, path, wrap }: { diff: string; maxHeight?: string; path?: string; /** Wrap long lines (phone) instead of scrolling sideways. */ wrap?: boolean }) {
   const lines = useMemo(() => parse(diff), [diff]);
   const tokens = useDiffTokens(lines, path);
   if (!diff.trim()) return <div className="px-3 py-4 text-sm text-muted">{t('diff.none')}</div>;
   return (
     <div className="overflow-auto font-mono text-[length:var(--code-size,12px)] leading-[1.55] [tab-size:var(--code-tab,2)]" style={{ maxHeight }}>
-      <table className="min-w-full border-collapse">
+      <table className={`border-collapse ${wrap ? 'w-full table-fixed' : 'min-w-full'}`}>
+        {wrap ? (
+          // a fixed layout takes column widths from here: room for line numbers, the rest for code
+          <colgroup>
+            <col className="w-10" />
+            <col className="w-10" />
+            <col />
+          </colgroup>
+        ) : null}
         <tbody>
           {lines.map((l, i) => (
             <tr key={i} className={ROW[l.type]}>
               {l.type === 'hunk' || l.type === 'meta' ? (
-                <td colSpan={3} className="px-3 py-0.5 whitespace-pre">
+                <td colSpan={3} className={`px-3 py-0.5 ${wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
                   {l.text}
                 </td>
               ) : (
                 <>
                   <td className="w-px select-none px-1.5 text-right text-muted/70">{l.old ?? ''}</td>
                   <td className="w-px select-none px-1.5 text-right text-muted/70">{l.new ?? ''}</td>
-                  <td className="pr-4 pl-1 whitespace-pre">
+                  <td className={`pr-4 pl-1 ${wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
                     <span className="mr-1 select-none opacity-60">{l.type === 'add' ? '+' : l.type === 'del' ? '−' : ' '}</span>
                     <CodeLine tokens={tokens?.[i]} text={l.text} />
                   </td>

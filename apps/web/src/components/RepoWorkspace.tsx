@@ -92,7 +92,7 @@ type MobileView = SideView | 'editor';
 const DESKTOP = '(min-width: 1024px)';
 
 /** Re-render when the window width crosses the desktop/phone boundary. */
-function useDesktop() {
+export function useDesktop() {
   const [desk, setDesk] = useState(() => window.matchMedia(DESKTOP).matches);
   useEffect(() => {
     const m = window.matchMedia(DESKTOP);
