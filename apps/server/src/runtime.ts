@@ -14,6 +14,7 @@ import type { EventBody, McpServerSpec, RunContext, RunHandle } from './agents/t
 import { fileURLToPath } from 'node:url';
 import { agentWrap, runtimeOf } from './environments.ts';
 import { secretEnv } from './secrets.ts';
+import { sessionSetup, type Owner } from './ssh.ts';
 
 const active = new Map<string, RunHandle>();
 
@@ -107,6 +108,11 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
     bus.emitSession(sessionId, { type: 'event', event: ev });
   };
 
+  // SSH connections of the project (a group: its own and its repositories'), for this turn
+  const owners: Owner[] = project ? [{ project: project.id }] : group ? [{ group: group.id }, ...groupProjects(group).map((p) => ({ project: p.id }))] : [];
+  const ssh = sessionSetup(owners, sessionId);
+  const scopeContext = project ? projectContext(project) : group ? groupAgentContext(group) : null;
+  const baseWrap = agentWrap(project ? { kind: 'project', project } : group ? { kind: 'group', group, projects: groupProjects(group), cwd } : null);
   const ctx: RunContext = {
     session,
     cwd,
@@ -115,12 +121,18 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
     attachments,
     // a group session sees exactly the member repositories (real paths, not symlinks)
     extraDirs: group ? groupProjects(group).map((p) => p.path) : [],
-    systemPrompt: sessionSystemPrompt(sessionInstructions(), project ? projectContext(project) : group ? groupAgentContext(group) : null),
+    systemPrompt: sessionSystemPrompt(sessionInstructions(), ssh ? [scopeContext, ssh.context].filter(Boolean).join('\n\n') : scopeContext),
     mcpServers: [hubMcp(sessionId)],
-    env: project && runtimeOf(project).shareSecretsWithAgents ? secretEnv(project.id) : {},
-    wrap: agentWrap(
-      project ? { kind: 'project', project } : group ? { kind: 'group', group, projects: groupProjects(group), cwd } : null,
-    ),
+    env: { ...(project && runtimeOf(project).shareSecretsWithAgents ? secretEnv(project.id) : {}), ...(ssh?.env ?? {}) },
+    // the sandbox hides the hub's folders: show it the session's ssh folder, read-only
+    wrap:
+      baseWrap && ssh
+        ? (cmd, args) => {
+            const [bin, full] = baseWrap(cmd, args);
+            const at = full.indexOf('--');
+            return [bin, [...full.slice(0, at), '--ro-bind', ssh.mount, ssh.mount, ...full.slice(at)]];
+          }
+        : baseWrap,
     put,
     patch(uid, patch, opts) {
       const prev = cache.get(uid) ?? events.get(sessionId, uid);
@@ -165,6 +177,7 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
     put(`err:${Date.now()}`, { kind: 'notice', level: 'error', text: (err as Error).message });
     setSessionStatus(sessionId, 'error');
     closeLog();
+    ssh?.dispose();
     return sessions.get(sessionId)!;
   }
   active.set(sessionId, handle);
@@ -172,6 +185,8 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
   handle.done.finally(() => {
     active.delete(sessionId);
     closeLog();
+    // the turn is over: its ssh-agent and config go away
+    ssh?.dispose();
     const all = events.list(sessionId);
     const last = all[all.length - 1];
     const failed = last?.kind === 'notice' && last.level === 'error';

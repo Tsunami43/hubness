@@ -1,4 +1,4 @@
-//! A group of projects (the web app's group page): Sessions, Repositories, Shell and Settings
+//! A group of projects (the web app's group page): Sessions, Repositories, Shell, SSH and Settings
 
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
@@ -28,6 +28,7 @@ impl GroupScreen {
             Tab::new("sessions", "Sessions", Box::new(sessions::tab(id))),
             Tab::new("repos", "Repositories", Box::new(repos::ReposTab::new(id))),
             Tab::new("shell", "Shell", Box::new(shell::tab(id))),
+            Tab::new("ssh", "SSH", Box::new(crate::screens::ssh::Bindings::group(id))),
             Tab::new("settings", "Settings", Box::new(settings::SettingsTab::new(id))),
         ];
         Self { id: id.to_string(), group: Value::Null, tabs: Tabs::new(tabs) }

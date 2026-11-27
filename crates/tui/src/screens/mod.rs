@@ -13,6 +13,7 @@ pub mod project;
 pub mod projects;
 pub mod session;
 pub mod settings;
+pub mod ssh;
 pub mod system;
 pub mod tabs;
 

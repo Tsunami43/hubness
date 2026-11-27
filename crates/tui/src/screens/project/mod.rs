@@ -1,5 +1,5 @@
 //! A project (the web app's project workspace): Sessions, Files, Search, Git, Run, Shell,
-//! Secrets and Settings tabs. Each tab is its own screen in this folder.
+//! Secrets, SSH and Settings tabs. Each tab is its own screen in this folder.
 
 pub mod files;
 pub mod git;
@@ -75,6 +75,7 @@ impl ProjectScreen {
             Tab::new("run", "Run", Box::new(run::RunTab::new(id))),
             Tab::new("shell", "Shell", Box::new(shell::ShellTab::project(id))),
             Tab::new("secrets", "Secrets", Box::new(secrets::SecretsTab::new(id))),
+            Tab::new("ssh", "SSH", Box::new(crate::screens::ssh::Bindings::project(id))),
             Tab::new("settings", "Settings", Box::new(settings::SettingsTab::new(id))),
         ];
         Self { id: id.to_string(), project: Value::Null, tabs: Tabs::new(tabs), opener }

@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use hubness_core::{
-    AgentConfig, ApiError, AuthStatus, GlobalStreamMsg, LoginResponse, PermissionMode, Project, Session, SessionStreamMsg, User,
+    AgentConfig, ApiError, AuthStatus, GlobalStreamMsg, LoginResponse, PermissionMode, Project, Session, SessionStreamMsg, SshBinding,
+    SshConnection, SshTestResult, User,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -189,6 +190,50 @@ impl Client {
         self.decode(res).await
     }
 
+    // ---------- SSH connections (System → SSH) ----------
+
+    pub async fn list_ssh(&self) -> anyhow::Result<Vec<SshConnection>> {
+        self.get("/ssh").await
+    }
+
+    /// A new connection: `input` holds name, host, port, username, environment, description
+    /// and, to import a key, `privateKey` (without it the hub generates an ed25519 key).
+    pub async fn create_ssh(&self, input: &Value) -> anyhow::Result<SshConnection> {
+        self.send(reqwest::Method::POST, "/ssh", input).await
+    }
+
+    /// Change some fields (a new host or port drops the pinned host keys).
+    pub async fn update_ssh(&self, id: &str, patch: &Value) -> anyhow::Result<SshConnection> {
+        self.send(reqwest::Method::PATCH, &format!("/ssh/{}", seg(id)), patch).await
+    }
+
+    pub async fn delete_ssh(&self, id: &str) -> anyhow::Result<()> {
+        self.send::<Value, _>(reqwest::Method::DELETE, &format!("/ssh/{}", seg(id)), &json!({})).await.map(|_| ())
+    }
+
+    /// Connect once; the first success pins the server's host keys.
+    pub async fn test_ssh(&self, id: &str) -> anyhow::Result<SshTestResult> {
+        self.send(reqwest::Method::POST, &format!("/ssh/{}/test", seg(id)), &json!({})).await
+    }
+
+    pub async fn project_ssh(&self, project_id: &str) -> anyhow::Result<Vec<SshBinding>> {
+        self.get(&format!("/projects/{}/ssh", seg(project_id))).await
+    }
+
+    /// Replace a project's connections: `(connection id, note)` in order.
+    pub async fn set_project_ssh(&self, project_id: &str, bindings: &[(String, String)]) -> anyhow::Result<Vec<SshBinding>> {
+        self.send(reqwest::Method::PUT, &format!("/projects/{}/ssh", seg(project_id)), &bindings_body(bindings)).await
+    }
+
+    pub async fn group_ssh(&self, group_id: &str) -> anyhow::Result<Vec<SshBinding>> {
+        self.get(&format!("/groups/{}/ssh", seg(group_id))).await
+    }
+
+    /// Replace a group's connections: `(connection id, note)` in order.
+    pub async fn set_group_ssh(&self, group_id: &str, bindings: &[(String, String)]) -> anyhow::Result<Vec<SshBinding>> {
+        self.send(reqwest::Method::PUT, &format!("/groups/{}/ssh", seg(group_id)), &bindings_body(bindings)).await
+    }
+
     pub async fn archive(&self, session_id: &str) -> anyhow::Result<Session> {
         self.send(reqwest::Method::POST, &format!("/sessions/{session_id}/archive"), &json!({})).await
     }
@@ -275,6 +320,18 @@ fn parse_event(event: &str) -> Option<String> {
     }
     let joined = data.join("\n");
     (!joined.is_empty()).then_some(joined)
+}
+
+/// `encodeURIComponent` for a path segment.
+fn seg(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
+/// The body of `PUT /projects/:id/ssh` and `/groups/:id/ssh`.
+fn bindings_body(bindings: &[(String, String)]) -> Value {
+    json!({ "bindings": bindings.iter().map(|(id, note)| json!({ "connectionId": id, "note": note })).collect::<Vec<_>>() })
 }
 
 #[cfg(test)]

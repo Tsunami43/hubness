@@ -1166,6 +1166,63 @@ test('git logins per host: the secret never leaves the server', async () => {
   assert.deepEqual((await call('DELETE', '/git-credentials/codeberg.org')).json, []);
 });
 
+test('SSH connections: generated and imported keys, bindings, the private key stays on the server', async () => {
+  const base = { host: '127.0.0.1', port: 1, username: 'deploy' };
+  const made = await call('POST', '/ssh', { ...base, name: 'prod-api', environment: 'prod', description: 'Backend API' });
+  assert.equal(made.status, 201);
+  const a = made.json;
+  assert.deepEqual(Object.keys(a).sort(), ['createdAt', 'description', 'environment', 'host', 'hostKeys', 'id', 'name', 'port', 'publicKey', 'updatedAt', 'username']);
+  assert.match(a.publicKey, /^ssh-ed25519 AAAA\S+ hubness:prod-api$/, 'the hub generated an ed25519 key');
+  assert.equal(a.hostKeys, '');
+  assert.equal((await call('POST', '/ssh', { ...base, name: 'PROD-API' })).status, 409, 'names ignore case');
+  assert.equal((await call('POST', '/ssh', { ...base, name: 'bad name' })).status, 400);
+  assert.equal((await call('POST', '/ssh', { ...base, name: 'x', host: '-oProxyCommand=evil' })).status, 400);
+  assert.equal((await call('POST', '/ssh', { ...base, name: 'x', username: '-l' })).status, 400);
+  assert.equal((await call('POST', '/ssh', { ...base, name: 'x', privateKey: 'not a key' })).status, 400);
+
+  // an existing key: the hub derives its public half
+  const dir = join(tmp, 'ssh-import');
+  mkdirSync(dir, { recursive: true });
+  execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'mine', '-f', join(dir, 'k')]);
+  const imported = await call('POST', '/ssh', { ...base, name: 'dev-api', environment: 'dev', privateKey: readFileSync(join(dir, 'k'), 'utf8') });
+  assert.equal(imported.status, 201);
+  assert.equal(imported.json.publicKey.split(' ').slice(0, 2).join(' '), readFileSync(join(dir, 'k.pub'), 'utf8').split(' ').slice(0, 2).join(' '));
+
+  const list = (await call('GET', '/ssh')).json;
+  assert.deepEqual(list.map((c: any) => c.name), ['dev-api', 'prod-api']);
+  assert.ok(!JSON.stringify(list).includes('PRIVATE KEY'), 'the private key never leaves the server');
+  const patched = await call('PATCH', `/ssh/${a.id}`, { description: 'Backend API, docker compose in /srv/api' });
+  assert.equal(patched.json.description, 'Backend API, docker compose in /srv/api');
+  assert.equal((await call('PATCH', `/ssh/${a.id}`, { name: 'dev-api' })).status, 409);
+  assert.equal((await call('PATCH', '/ssh/missing', { description: 'x' })).status, 404);
+
+  // attached to a project, with what the connection is for there
+  const project = (await call('GET', '/projects')).json[0].id;
+  assert.deepEqual((await call('GET', `/projects/${project}/ssh`)).json, []);
+  const bound = await call('PUT', `/projects/${project}/ssh`, {
+    bindings: [{ connectionId: a.id, note: 'deploy only after tests pass' }, { connectionId: a.id, note: 'a duplicate is ignored' }, { connectionId: imported.json.id }],
+  });
+  assert.equal(bound.status, 200);
+  assert.deepEqual(bound.json.map((b: any) => [b.connection.name, b.note]), [['prod-api', 'deploy only after tests pass'], ['dev-api', '']]);
+  assert.deepEqual((await call('GET', `/projects/${project}/ssh`)).json, bound.json);
+  assert.equal((await call('PUT', `/projects/${project}/ssh`, { bindings: [{ connectionId: 'missing' }] })).status, 404);
+  assert.equal((await call('PUT', `/projects/${project}/ssh`, { bindings: 'x' })).status, 400);
+  assert.equal((await call('GET', '/projects/missing/ssh')).status, 404);
+  assert.equal((await call('GET', '/groups/missing/ssh')).status, 404);
+
+  // nothing listens on port 1: the test fails and pins nothing
+  const tested = await call('POST', `/ssh/${a.id}/test`, {});
+  assert.equal(tested.status, 200);
+  assert.equal(tested.json.ok, false);
+  assert.ok(tested.json.output.length > 0);
+  assert.equal(tested.json.connection.hostKeys, '');
+
+  assert.equal((await call('DELETE', `/ssh/${a.id}`)).status, 200);
+  assert.deepEqual((await call('GET', `/projects/${project}/ssh`)).json.map((b: any) => b.connection.name), ['dev-api'], 'a deleted connection leaves its projects');
+  await call('DELETE', `/ssh/${imported.json.id}`);
+  assert.equal((await call('DELETE', '/ssh/missing')).status, 404);
+});
+
 test('git logins: sign-in with the GitHub CLI saves its token and drops its config', async () => {
   assert.equal((await call('POST', '/git-credentials/bad_host/gh-login', {})).status, 400);
   const started = await call('POST', '/git-credentials/github.com/gh-login', { cols: 80, rows: 24 });

@@ -13,3 +13,4 @@ export type * from './voice.ts';
 export interface ApiError {
   error: string;
 }
+export type * from './ssh.ts';

@@ -19,6 +19,7 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 3, name: "drop auto-imported projects", up: prune_auto_imported },
     Migration { version: 4, name: "user accounts and their sign-in sessions", up: user_accounts },
     Migration { version: 5, name: "user roles, permissions and session owners", up: user_permissions },
+    Migration { version: 6, name: "SSH connections and their project / group bindings", up: ssh_connections },
 ];
 
 const BASELINE_SQL: &str = r#"
@@ -246,6 +247,39 @@ ALTER TABLE sessions ADD COLUMN created_by TEXT;",
     )
 }
 
+/// v6 — SSH connections: servers the hub reaches with keys it holds (the private key
+/// encrypted like project secrets), attached to projects and groups with a note on what they
+/// are for.
+fn ssh_connections(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS ssh_connections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 22,
+  username TEXT NOT NULL,
+  environment TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  public_key TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  host_keys TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ssh_bindings (
+  connection_id TEXT NOT NULL REFERENCES ssh_connections(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  group_id TEXT REFERENCES project_groups(id) ON DELETE CASCADE,
+  note TEXT NOT NULL DEFAULT '',
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ssh_bindings_project ON ssh_bindings(project_id);
+CREATE INDEX IF NOT EXISTS ssh_bindings_group ON ssh_bindings(group_id);
+"#,
+    )
+}
+
 pub fn schema_version(db: &Connection) -> rusqlite::Result<i64> {
     db.query_row("PRAGMA user_version", [], |r| r.get(0))
 }
@@ -280,8 +314,8 @@ mod tests {
     #[test]
     fn fresh_database_reaches_the_latest_version_once() {
         let db = Connection::open_in_memory().unwrap();
-        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4, 5]);
-        assert_eq!(schema_version(&db).unwrap(), 5);
+        assert_eq!(migrate(&db, MIGRATIONS).unwrap(), vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(schema_version(&db).unwrap(), 6);
         assert!(migrate(&db, MIGRATIONS).unwrap().is_empty());
         assert!(has_column(&db, "sessions", "archived_at").unwrap());
     }

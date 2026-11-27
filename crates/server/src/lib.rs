@@ -36,6 +36,7 @@ pub mod runtime;
 pub mod search;
 pub mod secrets;
 pub mod sessions;
+pub mod ssh;
 pub mod system;
 pub mod terminal;
 pub mod users;

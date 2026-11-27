@@ -24,6 +24,10 @@ import type {
   GitLogResponse,
   GitOpResult,
   GitCredentialInfo,
+  SshBinding,
+  SshConnection,
+  SshConnectionInput,
+  SshTestResult,
   GitCredentialKind,
   GitStash,
   GitStatus,
@@ -253,6 +257,15 @@ export const api = {
   gitStashes: (projectId: string) => req<GitStash[]>('GET', `/projects/${projectId}/git/stashes`),
   gitOp: (projectId: string, op: string, body?: Record<string, unknown>) =>
     req<GitOpResult>('POST', `/projects/${projectId}/git/${op}`, body ?? {}),
+  sshConnections: () => req<SshConnection[]>('GET', '/ssh'),
+  createSsh: (body: SshConnectionInput) => req<SshConnection>('POST', '/ssh', body),
+  updateSsh: (id: string, body: Partial<Omit<SshConnectionInput, 'privateKey'>>) => req<SshConnection>('PATCH', `/ssh/${id}`, body),
+  deleteSsh: (id: string) => req<{ ok: true }>('DELETE', `/ssh/${id}`),
+  testSsh: (id: string) => req<SshTestResult>('POST', `/ssh/${id}/test`, {}),
+  sshBindings: (scope: { projectId: string } | { groupId: string }) =>
+    req<SshBinding[]>('GET', 'projectId' in scope ? `/projects/${scope.projectId}/ssh` : `/groups/${scope.groupId}/ssh`),
+  setSshBindings: (scope: { projectId: string } | { groupId: string }, bindings: { connectionId: string; note: string }[]) =>
+    req<SshBinding[]>('PUT', 'projectId' in scope ? `/projects/${scope.projectId}/ssh` : `/groups/${scope.groupId}/ssh`, { bindings }),
   gitCredentials: () => req<GitCredentialInfo[]>('GET', '/git-credentials'),
   setGitCredential: (host: string, body: { username: string; kind: GitCredentialKind; secret: string }) =>
     req<GitCredentialInfo[]>('PUT', `/git-credentials/${encodeURIComponent(host)}`, body),
