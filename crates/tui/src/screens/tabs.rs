@@ -100,9 +100,18 @@ impl Tabs {
     }
 
     pub fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
-        // Alt+1…9 switch tabs; Alt+←/→ previous / next
+        // Alt+1…9 switch tabs; Alt+←/→ and Alt+Tab / Alt+Shift+Tab previous / next
         if k.modifiers.contains(KeyModifiers::ALT) {
             match k.code {
+                KeyCode::Tab if !k.modifiers.contains(KeyModifiers::SHIFT) => {
+                    self.select((self.active + 1) % self.tabs.len(), ctx);
+                    return Handled::Yes;
+                }
+                // terminals send Shift+Tab as BackTab
+                KeyCode::BackTab | KeyCode::Tab => {
+                    self.select((self.active + self.tabs.len() - 1) % self.tabs.len(), ctx);
+                    return Handled::Yes;
+                }
                 KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
                     self.select(c as usize - '1' as usize, ctx);
                     return Handled::Yes;
@@ -119,22 +128,7 @@ impl Tabs {
             }
         }
         let i = self.active;
-        let handled = self.call(i, ctx, |s, c| s.on_key(k, c)).unwrap_or(Handled::No);
-        // Tab / Shift+Tab switch tabs when the tab itself has no use for them (panes, forms)
-        if matches!(handled, Handled::No) && self.tabs.len() > 1 && !self.captures_text() {
-            match k.code {
-                KeyCode::Tab => {
-                    self.select((self.active + 1) % self.tabs.len(), ctx);
-                    return Handled::Yes;
-                }
-                KeyCode::BackTab => {
-                    self.select((self.active + self.tabs.len() - 1) % self.tabs.len(), ctx);
-                    return Handled::Yes;
-                }
-                _ => {}
-            }
-        }
-        handled
+        self.call(i, ctx, |s, c| s.on_key(k, c)).unwrap_or(Handled::No)
     }
 
     pub fn on_paste(&mut self, text: &str, ctx: &mut Ctx) {
