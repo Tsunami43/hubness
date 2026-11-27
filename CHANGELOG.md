@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-11-27
+
+### Changed
+
+- Voice input settings are simpler: Off / Local / Cloud service with one-line
+  descriptions, and Groq and Mistral (Voxtral) as the cloud presets. The request to a
+  service no longer sends `response_format`.
+- On a phone the sessions panel takes the whole screen, and project groups are a
+  full-width list whose project names end with an ellipsis instead of running off the
+  screen.
+
+### Fixed
+
+- The focused field stays in view when the phone keyboard opens, also low in a sheet.
+- The send button in the chat input is clearly visible on every theme.
+
 ## [0.3.7] - 2026-11-27
 
 ### Added
