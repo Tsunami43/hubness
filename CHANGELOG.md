@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-27
+
+### Added
+
+- Adding a git login links to the token page of the host — GitHub, GitLab (also
+  self-hosted), Gitea, Forgejo, Codeberg or Bitbucket — with the repository scopes already
+  filled in where the hosting allows it, so a login works with two-factor auth without
+  hunting through settings. An unknown domain gets the GitLab and Gitea links; a pasted URL
+  or `git@host:repo` remote is reduced to its host.
+
 ## [0.3.2] - 2026-11-27
 
 ### Changed
