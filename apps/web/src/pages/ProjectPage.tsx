@@ -4,7 +4,9 @@ import { AppWindow, Boxes, ExternalLink, GitBranch, GitPullRequest, KeyRound, Me
 import type { ProjectDetail, RunState } from '@hubness/shared';
 import { api } from '../lib/api';
 import { useApi } from '../lib/query';
-import { RepoWorkspace, useGitByRepo, type Tool } from '../components/RepoWorkspace';
+import { RepoWorkspace, useDesktop, useGitByRepo, type Tool } from '../components/RepoWorkspace';
+import { MobileWorkspace, SimpleViewButton } from '../components/MobileWorkspace';
+import { useLocalStorage } from '../lib/hooks';
 import { SessionsTool } from '../components/SessionsTool';
 import { ProviderIcon } from '../components/ProviderIcon';
 import { LanguageBar } from '../components/LanguageBar';
@@ -34,6 +36,9 @@ export function ProjectPage() {
   const { runs, reload: reloadRuns } = useRuns(id, openTools.includes('run') || openTools.includes('preview'), access.can('terminal'));
   const repos = useMemo(() => (project ? [{ id: project.id, name: project.name, path: project.path }] : []), [project?.id, project?.name, project?.path]);
   const { git, refresh: refreshGit } = useGitByRepo(access.can('git') ? repos : NO_REPOS);
+  // phone: the simple chat-first view unless the full workspace was asked for
+  const desktop = useDesktop();
+  const [full, setFull] = useLocalStorage('hub.mobile.full', false);
   usePlace(project && project.id === id ? { key: `project:${id}`, kind: 'project', title: project.name, path: `/projects/${id}` } : null);
   // a deleted project should not linger in the top bar tabs
   useEffect(() => {
@@ -90,6 +95,22 @@ export function ProjectPage() {
       : []),
   ];
 
+  if (!desktop && !full)
+    return (
+      <MobileWorkspace
+        title={project.name}
+        badge={project.kind === 'system' ? t('projects.kind.system') : undefined}
+        subtitle={repo.isRepo ? (repo.branch ?? 'detached') : project.path}
+        scope={{ projectId: project.id }}
+        root={project.path}
+        repos={repos}
+        git={git}
+        refreshGit={refreshGit}
+        tools={tools.filter((x) => x.id !== 'sessions')}
+        onFull={() => setFull(true)}
+      />
+    );
+
   return (
     <RepoWorkspace
       storageKey={project.id}
@@ -116,7 +137,7 @@ export function ProjectPage() {
       tools={tools}
       sessions={{ scope: { projectId: project.id }, root: project.path, title: project.name }}
       onOpenTools={setOpenTools}
-      actions={normal && terminal ? <RunButton runs={runs} onOpen={() => goto('run')} onRun={run} onStop={(r) => void api.stopRun(project.id, r.id).then(() => void reloadRuns())} /> : null}
+      actions={!desktop ? <SimpleViewButton onClick={() => setFull(false)} /> : normal && terminal ? <RunButton runs={runs} onOpen={() => goto('run')} onRun={run} onStop={(r) => void api.stopRun(project.id, r.id).then(() => void reloadRuns())} /> : null}
     />
   );
 }

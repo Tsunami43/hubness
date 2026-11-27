@@ -1084,6 +1084,24 @@ export const en = {
   'voice.failed': 'Couldn’t start recording.',
   'voice.nothing': 'No speech recognized.',
   'voice.insecure': 'The microphone needs HTTPS or localhost: pick or record an audio file instead.',
+  // phone workspace
+  'mobile.chat': 'Chat',
+  'mobile.changes': 'Changes',
+  'mobile.files': 'Files',
+  'mobile.more': 'More',
+  'mobile.allClean': 'No changes: everything is committed and pushed.',
+  'mobile.cleanRepos': '{n} without changes',
+  'mobile.filesChanged': '{n} files changed',
+  'mobile.allRepos': 'All repositories',
+  'mobile.noChanges': 'No uncommitted changes.',
+  'mobile.noGit': 'Not a git repository.',
+  'mobile.askCommit': 'Ask the agent to commit & push',
+  'mobile.commitPrompt': 'Commit the changes in {repo} with a clear message and push them.',
+  'mobile.pulled': 'Pulled.',
+  'mobile.pushed': 'Pushed.',
+  'mobile.fullWorkspace': 'Full workspace',
+  'mobile.fullWorkspaceHint': 'Editor, tabs and every tool, as on a computer.',
+  'mobile.simpleView': 'Simple view',
 } as const;
 
 export type MessageKey = keyof typeof en;
