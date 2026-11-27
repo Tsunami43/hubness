@@ -66,8 +66,9 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
 - `main.tsx` — routes; `pages/` — top-level screens (chats, projects, groups, git,
   harness, system, settings); `components/` — UI building blocks.
 - `lib/api.ts` and `lib/query.ts` — API client and TanStack Query hooks; `lib/stream.ts` — SSE.
-- `i18n/` — `en.ts` and `ru.ts`. Every user-facing string goes through i18n and must be
-  added to both files.
+- `i18n/` — `en.ts` (reference, built in) and one dictionary per language (`ru`, `uk`, `de`, `fr`,
+  `es`, `it`, `pt`, `pl`, `tr`, `zh`, `ja`, `ko`), each loaded only when chosen (`index.ts`). Every
+  user-facing string goes through i18n and must be added to every dictionary.
 - Vite proxies `/api` to the server in dev; in production the server serves `apps/web/dist`.
 
 ### Rust (`crates/`)
