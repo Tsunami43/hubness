@@ -65,7 +65,7 @@ export function InfoButton({ title, paragraphs }: { title: string; paragraphs: s
         <Info className="size-4" />
       </button>
       {open ? (
-        <div role="dialog" aria-label={title} className="absolute top-8 left-0 z-40 w-[min(26rem,calc(100vw-2rem))] border border-line bg-surface p-4 text-sm shadow-xl shadow-black/30 max-sm:-left-24">
+        <div role="dialog" aria-label={title} className="ui-solid absolute top-8 left-0 z-40 w-[min(26rem,calc(100vw-2rem))] border border-line bg-surface p-4 text-sm shadow-xl shadow-black/30 max-sm:-left-24">
           <div className="mb-2 flex items-start gap-2">
             <h3 className="flex-1 font-semibold">{title}</h3>
             <button type="button" aria-label={t('common.close')} onClick={() => setOpen(false)} className="text-muted hover:text-fg">
@@ -121,7 +121,7 @@ export function RowMenu({ label, items }: { label: string; items: MenuItem[] }) 
         <MoreHorizontal className="size-4" />
       </button>
       {open ? (
-        <div role="menu" className="absolute top-8 right-0 z-30 min-w-52 border border-line bg-surface py-1 text-left text-[13px] shadow-lg">
+        <div role="menu" className="ui-solid absolute top-8 right-0 z-30 min-w-52 border border-line bg-surface py-1 text-left text-[13px] shadow-lg">
           {items.map((it) => (
             <button
               key={it.label}

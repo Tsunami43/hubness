@@ -743,7 +743,7 @@ export function RepoWorkspace({
                 {toolMenu ? (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setToolMenu(false)} />
-                    <div className="absolute top-full right-0 z-40 min-w-44 border border-line bg-surface py-1 shadow-lg">
+                    <div className="ui-solid absolute top-full right-0 z-40 min-w-44 border border-line bg-surface py-1 shadow-lg">
                       {tools.map((x) => (
                         <button
                           key={x.id}

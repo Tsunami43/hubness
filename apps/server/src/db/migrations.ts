@@ -269,6 +269,22 @@ DELETE FROM users WHERE id NOT IN (SELECT id FROM users ORDER BY created_at, row
 `);
 }
 
+/**
+ * v8 — git logins remember their last check: whether the host accepted the login, who it is
+ * there, and the account's picture (kept in the hub: a private host serves it only with the
+ * login, and the browser has no business asking other servers).
+ */
+export function gitLoginChecks(db: DatabaseSync) {
+  db.exec(`
+ALTER TABLE git_credentials ADD COLUMN check_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE git_credentials ADD COLUMN checked_at TEXT;
+ALTER TABLE git_credentials ADD COLUMN check_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE git_credentials ADD COLUMN account TEXT NOT NULL DEFAULT '';
+ALTER TABLE git_credentials ADD COLUMN avatar BLOB;
+ALTER TABLE git_credentials ADD COLUMN avatar_type TEXT NOT NULL DEFAULT '';
+`);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'baseline schema', up: baseline },
   { version: 2, name: 'legacy groups (projects.kind = group) → project_groups', up: migrateLegacyGroups },
@@ -277,6 +293,7 @@ export const MIGRATIONS: Migration[] = [
   { version: 5, name: 'user roles, permissions and session owners', up: userPermissions },
   { version: 6, name: 'SSH connections and their project / group bindings', up: sshConnections },
   { version: 7, name: 'one account: the first one stays', up: singleAccount },
+  { version: 8, name: 'git logins: the last check and the account picture', up: gitLoginChecks },
 ];
 
 export const schemaVersion = (db: DatabaseSync) => Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);

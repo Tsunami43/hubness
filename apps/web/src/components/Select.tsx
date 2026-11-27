@@ -112,7 +112,7 @@ export function Select<T extends string>({
               ref={list}
               role="listbox"
               aria-label={label}
-              className="ui-pop fixed z-[70] max-h-64 overflow-y-auto border border-accent bg-surface py-1 shadow-xl shadow-black/40"
+              className="ui-solid ui-pop fixed z-[70] max-h-64 overflow-y-auto border border-accent bg-surface py-1 shadow-xl shadow-black/40"
               style={{
                 left: Math.min(pos.left, window.innerWidth - Math.max(pos.width, 160) - 8),
                 minWidth: Math.max(pos.width, 160),

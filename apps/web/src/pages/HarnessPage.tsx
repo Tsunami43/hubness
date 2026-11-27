@@ -21,7 +21,7 @@ import { reloadAgents, useAgents } from '../lib/agents';
 import { timeAgo, timeUntil } from '../lib/format';
 import { useApi, queryClient } from '../lib/query';
 import { AgentIcon, ProviderIcon } from '../components/AgentIcon';
-import { Button, ErrorLine, Spinner } from '../components/ui';
+import { Button, ErrorLine, Layer, Spinner } from '../components/ui';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../components/SubmenuLayout';
 import { sheetTermSize, TerminalSheet } from '../components/Terminal';
 import { ModelPicker } from '../components/ModelPicker';
@@ -113,14 +113,16 @@ export function HarnessLayout() {
         outletContext={{ run, reload } satisfies HarnessCtx}
       />
       {notice ? (
-        <div className="fixed inset-x-4 bottom-20 z-40 mx-auto max-w-lg rounded-xl border border-line bg-surface px-4 py-3 text-sm shadow-lg lg:bottom-6">
-          <div className="flex items-start gap-3">
-            <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{notice}</span>
-            <button type="button" className="text-muted hover:text-fg" onClick={() => setNotice(null)}>
-              {t('common.close')}
-            </button>
+        <Layer>
+          <div className="ui-solid fixed inset-x-4 bottom-20 z-40 mx-auto max-w-lg rounded-xl border border-line bg-surface px-4 py-3 text-sm shadow-lg lg:bottom-6">
+            <div className="flex items-start gap-3">
+              <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{notice}</span>
+              <button type="button" className="text-muted hover:text-fg" onClick={() => setNotice(null)}>
+                {t('common.close')}
+              </button>
+            </div>
           </div>
-        </div>
+        </Layer>
       ) : null}
       <TerminalSheet
         job={job}

@@ -29,7 +29,9 @@ import { HttpError } from './errors.ts';
 import { decrypt, encrypt } from './secrets.ts';
 
 const NS = 'ssh';
-const COLS = 'id, name, host, port, username, environment, description, public_key, host_keys, created_at, updated_at';
+// the `environment` column is no longer used: what a server is goes into its description
+// and into the note of its binding to a project or group
+const COLS = 'id, name, host, port, username, description, public_key, host_keys, created_at, updated_at';
 
 type Row = {
   id: string;
@@ -37,7 +39,6 @@ type Row = {
   host: string;
   port: number;
   username: string;
-  environment: string;
   description: string;
   public_key: string;
   host_keys: string;
@@ -51,7 +52,6 @@ const toConn = (r: Row): SshConnection => ({
   host: r.host,
   port: Math.min(65535, Math.max(1, Number(r.port))),
   username: r.username,
-  environment: r.environment,
   description: r.description,
   publicKey: r.public_key,
   hostKeys: r.host_keys,
@@ -68,7 +68,6 @@ export const SshCreate = z.object({
   host: z.string(),
   port: port.nullish(),
   username: z.string(),
-  environment: z.string().nullish(),
   description: z.string().nullish(),
   privateKey: z.string().nullish(),
 });
@@ -78,7 +77,6 @@ export const SshPatch = z.object({
   host: z.string().nullish(),
   port: port.nullish(),
   username: z.string().nullish(),
-  environment: z.string().nullish(),
   description: z.string().nullish(),
 });
 /** `PUT /projects/:id/ssh`, `/groups/:id/ssh`. */
@@ -211,7 +209,6 @@ export function createSsh(b: z.input<typeof SshCreate>): SshConnection {
   const name = checkName(b.name);
   const host = checkHost(b.host);
   const username = checkUser(b.username);
-  const environment = checkText('environment', b.environment ?? '', 32);
   const description = checkText('description', b.description ?? '', 4000);
   if (nameTaken(name)) throw new HttpError(409, `An SSH connection named ${name} exists`);
   const pasted = (b.privateKey ?? '').trim();
@@ -224,9 +221,9 @@ export function createSsh(b: z.input<typeof SshCreate>): SshConnection {
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(
-    `INSERT INTO ssh_connections (id, name, host, port, username, environment, description, public_key, private_key, host_keys, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)`,
-  ).run(id, name, host, b.port ?? 22, username, environment, description, keys.publicKey, encrypt(NS, id, keys.privateKey), now, now);
+    `INSERT INTO ssh_connections (id, name, host, port, username, description, public_key, private_key, host_keys, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)`,
+  ).run(id, name, host, b.port ?? 22, username, description, keys.publicKey, encrypt(NS, id, keys.privateKey), now, now);
   return getSsh(id);
 }
 
@@ -237,16 +234,14 @@ export function updateSsh(id: string, b: z.input<typeof SshPatch>): SshConnectio
   const host = b.host == null ? cur.host : checkHost(b.host);
   const username = b.username == null ? cur.username : checkUser(b.username);
   const port = b.port ?? cur.port;
-  const environment = b.environment == null ? cur.environment : checkText('environment', b.environment, 32);
   const description = b.description == null ? cur.description : checkText('description', b.description, 4000);
   // a new address drops the pinned host keys: test again
   const hostKeys = host !== cur.host || port !== cur.port ? '' : cur.hostKeys;
-  db.prepare('UPDATE ssh_connections SET name = ?, host = ?, port = ?, username = ?, environment = ?, description = ?, host_keys = ?, updated_at = ? WHERE id = ?').run(
+  db.prepare('UPDATE ssh_connections SET name = ?, host = ?, port = ?, username = ?, description = ?, host_keys = ?, updated_at = ? WHERE id = ?').run(
     name,
     host,
     port,
     username,
-    environment,
     description,
     hostKeys,
     new Date().toISOString(),
@@ -378,9 +373,9 @@ export function sessionConfig(list: SshBinding[], dir: string): string {
 /** The agent's context (the same text as `session_context` in ssh.rs). */
 export function sessionContext(list: SshBinding[]): string {
   let out =
-    '## SSH connections\nThese servers are reachable from this session by name: `ssh <name>`, `scp`, `rsync -e ssh`, git over SSH. The hub holds the keys. Read the description before using one — it says what the server is (production or development) and what you may do there. Be careful on production: prefer reading, and ask before changing anything there unless the instructions say otherwise.';
+    '## SSH connections\nThese servers are reachable from this session by name: `ssh <name>`, `scp`, `rsync -e ssh`, git over SSH. The hub holds the keys. Read the description and the project note before using one — they say what the server is (production or development) and what you may do there. Be careful on production: prefer reading, and ask before changing anything there unless the instructions say otherwise.';
   for (const { connection: c, note } of list) {
-    out += `\n- \`${c.name}\`${c.environment ? ` [${c.environment}]` : ''} — ${c.username}@${c.host}:${c.port}`;
+    out += `\n- \`${c.name}\` — ${c.username}@${c.host}:${c.port}`;
     if (c.description) out += ` — ${c.description.replace(/\n/g, ' ')}`;
     if (note) out += ` In this project: ${note.replace(/\n/g, ' ')}`;
   }

@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use hubness_core::{
-    AgentConfig, ApiError, AuthStatus, GlobalStreamMsg, LoginResponse, PermissionMode, Project, Session, SessionStreamMsg, SshBinding,
-    SshConnection, SshTestResult,
+    AgentConfig, ApiError, AuthStatus, GitCredentialInfo, GlobalStreamMsg, LoginResponse, PermissionMode, Project, Session,
+    SessionStreamMsg, SshBinding, SshConnection, SshTestResult,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -201,11 +201,22 @@ impl Client {
 
     // ---------- SSH connections (System → SSH) ----------
 
+    /// The stored git logins (the secrets never leave the hub), each with its last check.
+    pub async fn git_credentials(&self) -> anyhow::Result<Vec<GitCredentialInfo>> {
+        self.get("/git-credentials").await
+    }
+
+    /// Ask the host whether it still accepts the login; refreshes the account name and
+    /// picture. Returns the whole list.
+    pub async fn check_git_credential(&self, host: &str) -> anyhow::Result<Vec<GitCredentialInfo>> {
+        self.send(reqwest::Method::POST, &format!("/git-credentials/{}/check", seg(host)), &json!({})).await
+    }
+
     pub async fn list_ssh(&self) -> anyhow::Result<Vec<SshConnection>> {
         self.get("/ssh").await
     }
 
-    /// A new connection: `input` holds name, host, port, username, environment, description
+    /// A new connection: `input` holds name, host, port, username, description
     /// and, to import a key, `privateKey` (without it the hub generates an ed25519 key).
     pub async fn create_ssh(&self, input: &Value) -> anyhow::Result<SshConnection> {
         self.send(reqwest::Method::POST, "/ssh", input).await

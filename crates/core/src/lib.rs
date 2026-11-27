@@ -548,6 +548,32 @@ pub struct GitCredentialInfo {
     pub username: String,
     pub kind: GitCredentialKind,
     pub updated_at: String,
+    /// The last check against the host.
+    #[serde(default)]
+    pub status: GitLoginStatus,
+    /// When it was last checked.
+    #[serde(default)]
+    pub checked_at: Option<String>,
+    /// Who the login is on the host (its name there), when the host told.
+    #[serde(default)]
+    pub account: String,
+    /// Why the check did not end in `ok`.
+    #[serde(default)]
+    pub error: String,
+    /// The account has a picture: `GET /api/git-credentials/:host/avatar`.
+    #[serde(default)]
+    pub avatar: bool,
+}
+
+/// The last check of a git login: `ok` — the host accepted it, `failed` — it refused it,
+/// `unknown` — not checked yet, or the host could not say (unreachable, no API the hub knows).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GitLoginStatus {
+    Ok,
+    Failed,
+    #[default]
+    Unknown,
 }
 
 // ---------- SSH connections ----------
@@ -563,9 +589,7 @@ pub struct SshConnection {
     pub host: String,
     pub port: u16,
     pub username: String,
-    /// Free label: dev, staging, prod… (shown to people and agents).
-    pub environment: String,
-    /// What the server is for — the agent reads it to tell prod from dev.
+    /// What the server is and what is on it (prod or dev for a project goes into the binding's note).
     pub description: String,
     pub public_key: String,
     /// `known_hosts` lines pinned by the first successful test (empty until then).
@@ -1006,14 +1030,13 @@ mod tests {
 
 // ---------- voice input ----------
 
-/// Where speech is transcribed: off, a local whisper.cpp, or an OpenAI-compatible service.
+/// Where speech is transcribed: off, or a local whisper.cpp.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum VoiceProvider {
     #[default]
     Off,
     Local,
-    Api,
 }
 
 impl VoiceProvider {
@@ -1021,7 +1044,6 @@ impl VoiceProvider {
         Some(match s {
             "off" => Self::Off,
             "local" => Self::Local,
-            "api" => Self::Api,
             _ => return None,
         })
     }
@@ -1049,14 +1071,6 @@ pub struct VoiceLocal {
     pub models: Vec<VoiceModel>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct VoiceApi {
-    pub url: String,
-    pub model: String,
-    pub has_key: bool,
-}
-
 /// Settings → Voice input (`GET /api/voice`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1065,7 +1079,6 @@ pub struct VoiceSettings {
     pub language: String,
     pub ready: bool,
     pub local: VoiceLocal,
-    pub api: VoiceApi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

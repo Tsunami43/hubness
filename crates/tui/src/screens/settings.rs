@@ -312,6 +312,22 @@ pub struct GitAccess {
     nav: Nav,
     draft: Option<Draft>,
     gh: Option<GhLogin>,
+    /// The host of the login being saved: it is checked as soon as the hub has it.
+    saved: Option<String>,
+}
+
+/// What the last check says about a login, for its row: the text and whether it is bad news.
+/// `None` — never checked (or the host could not say): nothing is claimed.
+fn login_state(c: &Value) -> (Option<String>, bool) {
+    let account = s(&c["account"], "");
+    match s(&c["status"], "unknown") {
+        // the account name only when it tells more than the name git signs in with
+        "ok" if !account.is_empty() && account != s(&c["username"], "") => (Some(format!("✓ {account}")), false),
+        "ok" => (Some("✓".into()), false),
+        "failed" => (Some("✗ refused".into()), true),
+        _ if c["checkedAt"].is_string() => (Some("not confirmed".into()), false),
+        _ => (None, false),
+    }
 }
 
 impl GitAccess {
@@ -355,6 +371,11 @@ impl GitAccess {
         }
     }
 
+    /// Ask the host whether it still accepts the login (the answer comes back as the list).
+    fn check(&self, host: &str, ctx: &mut Ctx) {
+        ctx.send(format!("checked:{host}"), Method::POST, format!("/git-credentials/{}/check", enc(host)), json!({}));
+    }
+
     fn edit(&mut self, c: &Value, ctx: &mut Ctx) {
         self.draft =
             Some(Draft { host: s(&c["host"], "").into(), kind: s(&c["kind"], "token").into(), username: s(&c["username"], "").into() });
@@ -381,6 +402,7 @@ impl Screen for GitAccess {
         if let Some(c) = self.selected() {
             a.push(Action::new("e", "Edit the selected login"));
             a.push(Action::new("x", "Delete the selected login"));
+            a.push(Action::new("v", "Check the selected login with its host"));
             if token_page(s(&c["host"], "")).is_some() {
                 a.push(Action::new("t", "Open the page to create a token"));
             }
@@ -413,6 +435,13 @@ impl Screen for GitAccess {
             }
             "w" => self.close_gh(ctx),
             "r" => ctx.get("list", "/git-credentials"),
+            "v" => {
+                if let Some(c) = self.selected() {
+                    let host = s(&c["host"], "").to_string();
+                    ctx.info(format!("Asking {host}…"));
+                    self.check(&host, ctx);
+                }
+            }
             "e" => {
                 if let Some(c) = self.selected() {
                     self.edit(&c, ctx);
@@ -469,8 +498,11 @@ impl Screen for GitAccess {
             if gh.term.exit_code == Some(0) {
                 // the hub saved the token when the job ended: the new login is in the list
                 ctx.info(format!("Signed in to {} with GitHub", gh.host));
+                let host = gh.host.clone();
                 self.gh = None;
                 ctx.get("list", "/git-credentials");
+                // who it is on the host, straight away
+                self.check(&host, ctx);
             } else {
                 ctx.error("The GitHub sign-in did not finish — w closes the window");
             }
@@ -481,13 +513,37 @@ impl Screen for GitAccess {
         match key {
             "list" | "saved" => match result {
                 Ok(v) => {
-                    if key == "saved" {
-                        ctx.info("login saved");
-                    }
                     self.list = Some(v.as_array().cloned().unwrap_or_default());
                     self.error = None;
+                    if key == "saved" {
+                        ctx.info("login saved");
+                        // a new login is a new question: ask the host at once
+                        if let Some(host) = self.saved.take() {
+                            self.check(&host, ctx);
+                        }
+                    }
                 }
-                Err(e) => self.error = Some(e.to_string()),
+                Err(e) => {
+                    self.saved = None;
+                    self.error = Some(e.to_string());
+                }
+            },
+            k if k.starts_with("checked:") => match result {
+                Ok(v) => {
+                    let host = &k[8..];
+                    self.list = Some(v.as_array().cloned().unwrap_or_default());
+                    self.error = None;
+                    if let Some(c) = self.list.iter().flatten().find(|c| c["host"] == host) {
+                        let (text, bad) = login_state(c);
+                        let said = if s(&c["error"], "").is_empty() {
+                            format!("{host}: {}", text.unwrap_or_else(|| "checked".into()))
+                        } else {
+                            s(&c["error"], "").to_string()
+                        };
+                        if bad { ctx.error(said) } else { ctx.info(said) }
+                    }
+                }
+                Err(e) => ctx.error(e.to_string()),
             },
             "hostpick" => match result {
                 Ok(Value::String(h)) if h == "other" => {
@@ -547,6 +603,7 @@ impl Screen for GitAccess {
                 if let (Ok(Value::String(secret)), Some(d)) = (result, draft)
                     && !secret.is_empty()
                 {
+                    self.saved = Some(d.host.clone());
                     ctx.send(
                         "saved",
                         Method::PUT,
@@ -635,7 +692,7 @@ impl GitAccess {
             lines.push(Line::styled(format!(" {e}"), Style::default().fg(t.danger)));
         }
         f.render_widget(Paragraph::new(lines), hint);
-        let title = "logins — a add · Enter/e edit · x delete · t token page";
+        let title = "logins — a add · Enter/e edit · v check · x delete · t token page";
         let Some(list) = &self.list else {
             f.render_widget(Paragraph::new("Loading…").block(block(title, true)), body);
             return;
@@ -648,17 +705,35 @@ impl GitAccess {
             );
             return;
         }
+        let selected = self.nav.state.selected();
         let items: Vec<ListItem> = list
             .iter()
-            .map(|c| {
+            .enumerate()
+            .map(|(i, c)| {
                 let kind = if c["kind"] == "token" { "token" } else { "password" };
-                ListItem::new(Text::from(vec![
-                    Line::from(vec![Span::styled(" ⚿ ", t.accent_style()), Span::styled(s(&c["host"], "").to_string(), t.bold())]),
+                let mut head = vec![Span::styled(" ⚿ ", t.accent_style()), Span::styled(s(&c["host"], "").to_string(), t.bold())];
+                let (state, bad) = login_state(c);
+                if let Some(state) = state {
+                    head.push(Span::styled(
+                        format!("  {state}"),
+                        if bad { Style::default().fg(t.danger) } else { Style::default().fg(t.ok) },
+                    ));
+                }
+                let mut lines = vec![
+                    Line::from(head),
                     Line::styled(
                         format!("   {} · {kind} · updated {}", s(&c["username"], ""), since(s(&c["updatedAt"], ""))),
                         t.muted_style(),
                     ),
-                ]))
+                ];
+                // why the last check did not end well: for the row one is looking at
+                let error = s(&c["error"], "");
+                if !error.is_empty() && selected == Some(i) {
+                    for l in wrap_words(error, body.width.saturating_sub(6) as usize) {
+                        lines.push(Line::styled(format!("   {l}"), if bad { Style::default().fg(t.danger) } else { t.muted_style() }));
+                    }
+                }
+                ListItem::new(Text::from(lines))
             })
             .collect();
         self.nav.clamp(list.len());
@@ -1214,5 +1289,17 @@ mod tests {
         for (id, _) in MODES {
             assert!(!mode_detail(id).is_empty());
         }
+    }
+
+    #[test]
+    fn a_login_row_says_what_the_last_check_found() {
+        let row = |status: &str, account: &str, checked: bool| json!({ "host": "github.com", "username": "me", "status": status, "account": account, "checkedAt": if checked { json!("2026-11-28T00:00:00Z") } else { Value::Null } });
+        assert_eq!(login_state(&row("ok", "octocat", true)), (Some("✓ octocat".into()), false));
+        assert_eq!(login_state(&row("ok", "me", true)), (Some("✓".into()), false), "the same name is not repeated");
+        assert_eq!(login_state(&row("ok", "", true)), (Some("✓".into()), false));
+        assert_eq!(login_state(&row("failed", "octocat", true)), (Some("✗ refused".into()), true));
+        assert_eq!(login_state(&row("unknown", "", true)), (Some("not confirmed".into()), false), "asked, but the host could not say");
+        assert_eq!(login_state(&row("unknown", "", false)), (None, false), "never checked: nothing is claimed");
+        assert_eq!(login_state(&json!({ "host": "old-hub.example", "username": "me" })), (None, false), "a hub without checks");
     }
 }

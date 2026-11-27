@@ -9,9 +9,7 @@ export interface SshConnection {
   host: string;
   port: number;
   username: string;
-  /** Free label: dev, staging, prod… (shown to people and agents). */
-  environment: string;
-  /** What the server is for — the agent reads it to tell prod from dev. */
+  /** What the server is and what is on it (prod or dev for a project goes into the binding's note). */
   description: string;
   publicKey: string;
   /** `known_hosts` lines pinned by the first successful test (empty until then). */
@@ -26,7 +24,6 @@ export interface SshConnectionInput {
   host: string;
   port?: number;
   username: string;
-  environment?: string;
   description?: string;
   privateKey?: string;
 }

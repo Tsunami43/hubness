@@ -6,6 +6,7 @@ import { JumpLabel } from '../LeaderOverlay';
 import { endDrag, getDrag, startDrag } from '../../lib/dnd';
 import { type Tool } from '../RepoWorkspace';
 import { ToolBadge } from './chrome';
+import { Layer } from '../ui';
 
 /** Group tab line: drag to reorder/move, middle click closes, double click keeps a preview. */
 export function TabStrip({
@@ -289,29 +290,31 @@ export function ContextMenu({
     ...(right ? [{ label: t('tabs.moveRight'), run: (l: L.Layout) => L.move(l, g.id, tab.key, right) }] : []),
   ];
   return (
-    <div
-      ref={ref}
-      role="menu"
-      className="fixed z-50 min-w-56 border border-line bg-surface py-1 text-[13px] shadow-lg"
-      style={{ left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 280) }}
-    >
-      {items.map((it, i) =>
-        it ? (
-          <button
-            key={i}
-            type="button"
-            role="menuitem"
-            disabled={it.disabled}
-            onClick={() => apply(it.run)}
-            className="flex w-full items-center gap-4 px-3 py-1.5 text-left hover:bg-sunken disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <span className="flex-1">{it.label}</span>
-            {it.hint ? <span className="text-[11px] text-muted">{it.hint}</span> : null}
-          </button>
-        ) : (
-          <div key={i} className="my-1 h-px bg-line" />
-        ),
-      )}
-    </div>
+    <Layer>
+      <div
+        ref={ref}
+        role="menu"
+        className="ui-solid fixed z-50 min-w-56 border border-line bg-surface py-1 text-[13px] shadow-lg"
+        style={{ left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 280) }}
+      >
+        {items.map((it, i) =>
+          it ? (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              disabled={it.disabled}
+              onClick={() => apply(it.run)}
+              className="flex w-full items-center gap-4 px-3 py-1.5 text-left hover:bg-sunken disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              <span className="flex-1">{it.label}</span>
+              {it.hint ? <span className="text-[11px] text-muted">{it.hint}</span> : null}
+            </button>
+          ) : (
+            <div key={i} className="my-1 h-px bg-line" />
+          ),
+        )}
+      </div>
+    </Layer>
   );
 }

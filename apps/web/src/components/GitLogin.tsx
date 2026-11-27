@@ -5,7 +5,7 @@ import { ProviderIcon } from './ProviderIcon';
 import type { GitAuthProblem, GitCredentialInfo, GitCredentialKind, JobInfo } from '@hubness/shared';
 import { api } from '../lib/api';
 import { t } from '../i18n';
-import { Button, ErrorLine, Field, inputCls, Sheet } from './ui';
+import { Button, ErrorLine, Field, Layer, Sheet, inputCls } from './ui';
 import { sheetTermSize } from './Terminal';
 import { plainTail, useJobFollow } from '../lib/jobFollow';
 
@@ -297,59 +297,61 @@ function GhLoginOverlay({ job, host, onClose, onSaved }: { job: JobInfo; host: s
   }, [exit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={t('gitauth.ghSignIn')}>
-      <div className="w-full max-w-md space-y-4 border border-line bg-surface p-5">
-        {failed !== null ? (
-          <>
-            <p className="flex items-center gap-2 font-semibold text-danger">
-              <CircleAlert className="size-5" /> {t('gitauth.ghFailed')}
-            </p>
-            {failed ? <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed}</pre> : null}
-            <Button variant="primary" onClick={onClose}>
-              {t('common.close')}
-            </Button>
-          </>
-        ) : code ? (
-          <>
-            <p className="font-semibold">{t('gitauth.ghEnterCode')}</p>
-            <div className="flex items-center gap-2">
-              <span className="flex-1 border border-line bg-bg py-3 text-center font-mono text-2xl tracking-widest select-all">{code}</span>
-              <Button
-                size="sm"
-                onClick={() =>
-                  void copyText(code).then((ok) => {
-                    if (!ok) return;
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1500);
-                  })
-                }
-              >
-                {copied ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
-                {copied ? t('harness.copied') : t('harness.copy')}
+    <Layer>
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={t('gitauth.ghSignIn')}>
+        <div className="ui-solid w-full max-w-md space-y-4 border border-line bg-surface p-5">
+          {failed !== null ? (
+            <>
+              <p className="flex items-center gap-2 font-semibold text-danger">
+                <CircleAlert className="size-5" /> {t('gitauth.ghFailed')}
+              </p>
+              {failed ? <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed}</pre> : null}
+              <Button variant="primary" onClick={onClose}>
+                {t('common.close')}
               </Button>
+            </>
+          ) : code ? (
+            <>
+              <p className="font-semibold">{t('gitauth.ghEnterCode')}</p>
+              <div className="flex items-center gap-2">
+                <span className="flex-1 border border-line bg-bg py-3 text-center font-mono text-2xl tracking-widest select-all">{code}</span>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void copyText(code).then((ok) => {
+                      if (!ok) return;
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    })
+                  }
+                >
+                  {copied ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
+                  {copied ? t('harness.copied') : t('harness.copy')}
+                </Button>
+              </div>
+              <a href={url} target="_blank" rel="noreferrer" className="btn-accent flex items-center justify-center gap-2 px-3 py-2 text-sm">
+                <ExternalLink className="size-4" /> {t('gitauth.ghOpen')}
+              </a>
+              <p className="flex items-center gap-2 text-xs text-muted">
+                <span aria-hidden className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-line border-t-accent" />
+                {t('gitauth.ghWaiting')}
+              </p>
+              <Button size="sm" variant="ghost" onClick={() => void api.jobKill(job.id).then(onClose, onClose)}>
+                {t('common.cancel')}
+              </Button>
+            </>
+          ) : (
+            <div className="flex items-center gap-4">
+              <span aria-hidden className="size-10 shrink-0 animate-spin rounded-full border-4 border-line border-t-accent" />
+              <div className="min-w-0">
+                <p className="font-semibold">{t('gitauth.ghPreparing')}</p>
+                <p className="truncate font-mono text-xs text-muted">{plainTail(output, 1)[0] ?? ''}</p>
+              </div>
             </div>
-            <a href={url} target="_blank" rel="noreferrer" className="btn-accent flex items-center justify-center gap-2 px-3 py-2 text-sm">
-              <ExternalLink className="size-4" /> {t('gitauth.ghOpen')}
-            </a>
-            <p className="flex items-center gap-2 text-xs text-muted">
-              <span aria-hidden className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-line border-t-accent" />
-              {t('gitauth.ghWaiting')}
-            </p>
-            <Button size="sm" variant="ghost" onClick={() => void api.jobKill(job.id).then(onClose, onClose)}>
-              {t('common.cancel')}
-            </Button>
-          </>
-        ) : (
-          <div className="flex items-center gap-4">
-            <span aria-hidden className="size-10 shrink-0 animate-spin rounded-full border-4 border-line border-t-accent" />
-            <div className="min-w-0">
-              <p className="font-semibold">{t('gitauth.ghPreparing')}</p>
-              <p className="truncate font-mono text-xs text-muted">{plainTail(output, 1)[0] ?? ''}</p>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-    </div>
+    </Layer>
   );
 }
 

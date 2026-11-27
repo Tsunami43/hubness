@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::LazyLock;
 
-use hubness_core::{GitAuthProblem, GitAuthProtocol, GitAuthReason, GitCredentialInfo, GitCredentialKind};
+use hubness_core::{GitAuthProblem, GitAuthProtocol, GitAuthReason, GitCredentialInfo, GitCredentialKind, GitLoginStatus};
 use regex::Regex;
 use rusqlite::Connection;
 
@@ -44,18 +44,49 @@ pub fn normalize_host(input: &str) -> Option<String> {
     (HOST_RE.is_match(&h) && h.len() <= 253).then(|| h.into_owned())
 }
 
-struct Row {
-    host: String,
-    username: String,
-    kind: String,
-    secret: String,
-    updated_at: String,
+pub(crate) struct Row {
+    pub host: String,
+    pub username: String,
+    pub kind: String,
+    pub secret: String,
+    pub updated_at: String,
+    /// '' — never checked; 'ok' | 'failed' | 'unknown'.
+    check_status: String,
+    checked_at: Option<String>,
+    check_error: String,
+    account: String,
+    has_avatar: bool,
 }
 
-fn rows(db: &Connection) -> rusqlite::Result<Vec<Row>> {
-    let mut st = db.prepare("SELECT host, username, kind, secret, updated_at FROM git_credentials ORDER BY host")?;
-    st.query_map([], |r| Ok(Row { host: r.get(0)?, username: r.get(1)?, kind: r.get(2)?, secret: r.get(3)?, updated_at: r.get(4)? }))?
-        .collect()
+pub(crate) fn rows(db: &Connection) -> rusqlite::Result<Vec<Row>> {
+    let mut st = db.prepare(
+        "SELECT host, username, kind, secret, updated_at, check_status, checked_at, check_error, account, avatar IS NOT NULL
+         FROM git_credentials ORDER BY host",
+    )?;
+    st.query_map([], |r| {
+        Ok(Row {
+            host: r.get(0)?,
+            username: r.get(1)?,
+            kind: r.get(2)?,
+            secret: r.get(3)?,
+            updated_at: r.get(4)?,
+            check_status: r.get(5)?,
+            checked_at: r.get(6)?,
+            check_error: r.get(7)?,
+            account: r.get(8)?,
+            has_avatar: r.get(9)?,
+        })
+    })?
+    .collect()
+}
+
+/// The decrypted secret of a stored login; `None` when the secret key no longer opens it.
+pub(crate) fn secret_of(data_dir: &Path, row: &Row) -> ApiResult<Option<String>> {
+    Ok(secrets::decrypt(&secrets::keys(data_dir)?, NS, &row.host, &row.secret).ok())
+}
+
+pub(crate) fn kind_of(kind: &str) -> GitCredentialKind {
+    if kind == "password" { GitCredentialKind::Password } else { GitCredentialKind::Token }
 }
 
 pub fn list(db: &Connection) -> ApiResult<Vec<GitCredentialInfo>> {
@@ -64,8 +95,17 @@ pub fn list(db: &Connection) -> ApiResult<Vec<GitCredentialInfo>> {
         .map(|r| GitCredentialInfo {
             host: r.host,
             username: r.username,
-            kind: if r.kind == "password" { GitCredentialKind::Password } else { GitCredentialKind::Token },
+            kind: kind_of(&r.kind),
             updated_at: r.updated_at,
+            status: match r.check_status.as_str() {
+                "ok" => GitLoginStatus::Ok,
+                "failed" => GitLoginStatus::Failed,
+                _ => GitLoginStatus::Unknown,
+            },
+            checked_at: r.checked_at,
+            account: r.account,
+            error: r.check_error,
+            avatar: r.has_avatar,
         })
         .collect())
 }
@@ -94,7 +134,8 @@ pub fn set(
     let blob = secrets::encrypt(&secrets::keys(data_dir)?, NS, &host, secret)?;
     db.execute(
         "INSERT INTO git_credentials (host, username, kind, secret, updated_at) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(host) DO UPDATE SET username = excluded.username, kind = excluded.kind, secret = excluded.secret, updated_at = excluded.updated_at",
+         ON CONFLICT(host) DO UPDATE SET username = excluded.username, kind = excluded.kind, secret = excluded.secret, updated_at = excluded.updated_at,
+           check_status = '', checked_at = NULL, check_error = '', account = '', avatar = NULL, avatar_type = ''",
         (&host, username, kind.as_str(), blob, now()),
     )?;
     list(db)
@@ -253,6 +294,8 @@ pub fn routes() -> Router<AppState> {
         .route("/git-credentials", get(list_route))
         .route("/git-credentials/{host}", put(set_route).delete(delete_route))
         .route("/git-credentials/{host}/gh-login", axum::routing::post(gh_login_route))
+        .route("/git-credentials/{host}/check", axum::routing::post(crate::git_login_check::check_route))
+        .route("/git-credentials/{host}/avatar", get(crate::git_login_check::avatar_route))
 }
 
 // ---------- sign-in with the GitHub CLI ----------

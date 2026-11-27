@@ -32,7 +32,26 @@ export function normalizeHost(input: string): string | null {
 }
 
 export function listGitCredentials(): GitCredentialInfo[] {
-  return gitCredentialRows.list().map((r) => ({ host: r.host, username: r.username, kind: r.kind as GitCredentialKind, updatedAt: r.updatedAt }));
+  return gitCredentialRows.list().map((r) => ({
+    host: r.host,
+    username: r.username,
+    kind: r.kind as GitCredentialKind,
+    updatedAt: r.updatedAt,
+    status: r.checkStatus === 'ok' || r.checkStatus === 'failed' ? r.checkStatus : 'unknown',
+    checkedAt: r.checkedAt,
+    account: r.account,
+    error: r.checkError,
+    avatar: r.hasAvatar,
+  }));
+}
+
+/** The decrypted secret of a stored login; null when the secret key no longer opens it. */
+export function secretOf(row: { host: string; secret: string }): string | null {
+  try {
+    return decrypt(NS, row.host, row.secret);
+  } catch {
+    return null;
+  }
 }
 
 // the credential protocol is line-based: no newlines or NUL inside values

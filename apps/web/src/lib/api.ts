@@ -270,6 +270,8 @@ export const api = {
   gitCredentials: () => req<GitCredentialInfo[]>('GET', '/git-credentials'),
   setGitCredential: (host: string, body: { username: string; kind: GitCredentialKind; secret: string }) =>
     req<GitCredentialInfo[]>('PUT', `/git-credentials/${encodeURIComponent(host)}`, body),
+  /** Ask the host whether it still accepts the login; refreshes the account name and picture. */
+  checkGitCredential: (host: string) => req<GitCredentialInfo[]>('POST', `/git-credentials/${encodeURIComponent(host)}/check`, {}),
   deleteGitCredential: (host: string) => req<GitCredentialInfo[]>('DELETE', `/git-credentials/${encodeURIComponent(host)}`),
   /** Sign in to a GitHub host with the GitHub CLI: a terminal job that prints a one-time code. */
   ghLogin: (host: string, body: { cols?: number; rows?: number } = {}) => req<JobInfo>('POST', `/git-credentials/${encodeURIComponent(host)}/gh-login`, body),
