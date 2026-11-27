@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import type { AuthStatus, Section, User } from '@hubness/shared';
+import type { AuthStatus, User } from '@hubness/shared';
 import { t } from '../i18n';
 import { Button, ErrorLine, Field, inputCls, Spinner } from './ui';
 
@@ -9,12 +9,12 @@ export const UNAUTHORIZED_EVENT = 'hubness:unauthorized';
 /** The first-account form was skipped on this browser (the hub stays open to its own machine). */
 const SKIP_SETUP_KEY = 'hubness.skipSetup';
 
-type State = 'checking' | 'open' | 'login' | 'setup';
+type State = 'checking' | 'open' | 'login' | 'setup' | 'unreachable';
 
 interface Auth {
   /** The signed-in user; `null` on a hub without accounts. */
   user: User | null;
-  /** The hub has accounts (sign-in is on). */
+  /** The hub has its account (sign-in is on). */
   required: boolean;
   logout: () => Promise<void>;
   /** Re-read the status (after the accounts changed). */
@@ -24,21 +24,6 @@ interface Auth {
 const AuthContext = createContext<Auth>({ user: null, required: false, logout: async () => {}, refresh: async () => {} });
 
 export const useAuth = () => useContext(AuthContext);
-
-/**
- * What the signed-in account may do (the server checks the same rules; this only hides what
- * would answer 403). No account (a hub without sign-in) and admins may do everything.
- */
-export function useAccess() {
-  const { user } = useAuth();
-  const p = user?.role === 'member' ? (user.permissions ?? { projects: [], sections: [], agents: [], models: [] }) : null;
-  return {
-    admin: p === null,
-    can: (s: Section) => p === null || p.sections.includes(s),
-    agent: (kind: string) => p === null || p.agents === null || p.agents.includes(kind),
-    model: (id: string) => p === null || p.models === null || p.models.includes(id),
-  };
-}
 
 const skipped = () => {
   try {
@@ -58,18 +43,23 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>('checking');
   const [status, setStatus] = useState<AuthStatus | null>(null);
 
+  // the hub didn't answer: an app that is already open stays (its own requests show errors)
+  const lost = (cur: State): State => (cur === 'open' ? cur : 'unreachable');
+
   const refresh = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/status');
-      // 404: a server without accounts
-      if (!res.ok) return setState('open');
+      // 404: a server without accounts (the TypeScript dev server)
+      if (res.status === 404) return setState('open');
+      // anything else that is not an answer says nothing about accounts: don't guess "open"
+      if (!res.ok) return setState(lost);
       const s = (await res.json()) as AuthStatus;
       setStatus(s);
       if (s.user || (!s.required && !s.setup)) setState('open');
       else if (s.setup) setState(skipped() ? 'open' : 'setup');
       else setState('login');
     } catch {
-      setState('open');
+      setState(lost);
     }
   }, []);
 
@@ -107,6 +97,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div className="flex h-app items-center justify-center bg-bg text-muted">
         <Spinner />
+      </div>
+    );
+  if (state === 'unreachable')
+    return (
+      <div className="flex h-app flex-col items-center justify-center gap-3 bg-bg px-4 text-center">
+        <div className="text-sm text-muted">{t('auth.unreachable')}</div>
+        <Button
+          onClick={() => {
+            setState('checking');
+            void refresh();
+          }}
+        >
+          {t('common.retry')}
+        </Button>
       </div>
     );
   if (state === 'open')

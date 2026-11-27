@@ -1,3 +1,4 @@
+import { copyText } from '../lib/clipboard';
 import { useEffect, useState } from 'react';
 import { Check, CircleAlert, Copy, ExternalLink } from 'lucide-react';
 import { ProviderIcon } from './ProviderIcon';
@@ -316,7 +317,8 @@ function GhLoginOverlay({ job, host, onClose, onSaved }: { job: JobInfo; host: s
               <Button
                 size="sm"
                 onClick={() =>
-                  void navigator.clipboard?.writeText(code).then(() => {
+                  void copyText(code).then((ok) => {
+                    if (!ok) return;
                     setCopied(true);
                     setTimeout(() => setCopied(false), 1500);
                   })

@@ -1,3 +1,4 @@
+import { copyText } from '../lib/clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ChevronRight,
@@ -507,7 +508,7 @@ export function Explorer({
                   { label: t('files.rename'), hint: 'F2', run: () => setEdit({ type: 'rename', root: menu.root, path: menu.entry!.path, dir: menu.entry!.dir }) },
                   { label: t('files.delete'), hint: 'Del', danger: true, run: () => setConfirmDel(menu.entry) },
                   null,
-                  { label: t('files.copyPath'), run: () => void navigator.clipboard?.writeText(menu.entry!.path) },
+                  { label: t('files.copyPath'), run: () => void copyText(menu.entry!.path) },
                 ]
               : []),
           ]}

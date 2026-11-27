@@ -1,5 +1,6 @@
 //! System (the web app's System page): server monitoring in sections — Overview, Docker
-//! containers / networks / volumes, systemd (or launchd) services and packages — with
+//! containers / networks / volumes, systemd (or launchd) services, packages and the hub's SSH
+//! connections — with
 //! "Ask about this" for containers, units and packages. Each section loads its own data
 //! only when it is opened.
 
@@ -23,6 +24,7 @@ pub fn screen(section: Option<&str>) -> Box<dyn Screen> {
         Tab::new("volumes", "Volumes", Box::new(docker::Volumes::default())),
         Tab::new("services", "Services", Box::new(services::Services::default())),
         Tab::new("packages", "Packages", Box::new(packages::Packages::default())),
+        Tab::new("ssh", "SSH", Box::new(super::ssh::Connections::default())),
     ];
     // the web app's `docker` section is the containers tab here
     let section = match section {

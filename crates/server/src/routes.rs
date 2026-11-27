@@ -46,6 +46,7 @@ pub fn api() -> Router<AppState> {
         .merge(crate::runs::routes())
         .merge(crate::environments::routes())
         .merge(crate::voice::routes())
+        .merge(crate::ssh::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 
@@ -53,13 +54,8 @@ type Q = Query<HashMap<String, String>>;
 
 // ---------- projects ----------
 
-async fn list_projects(
-    State(s): State<AppState>,
-    c: Option<axum::Extension<crate::auth::Caller>>,
-) -> ApiResult<Json<Vec<hubness_core::Project>>> {
-    let access = crate::permissions::Access::of(c.as_deref());
-    let mut list = s.with(|db, _| catalog::list_projects(db))?;
-    list.0.retain(|p| access.project(&p.id));
+async fn list_projects(State(s): State<AppState>) -> ApiResult<Json<Vec<hubness_core::Project>>> {
+    let list = s.with(|db, _| catalog::list_projects(db))?;
     catalog::refresh_repo_meta_in_background(&s, &list.0);
     Ok(list)
 }
@@ -230,13 +226,8 @@ impl From<GroupBody> for GroupFields {
     }
 }
 
-async fn list_groups(State(s): State<AppState>, c: Option<axum::Extension<crate::auth::Caller>>) -> ApiResult<Json<Value>> {
-    let access = crate::permissions::Access::of(c.as_deref());
-    s.with(|db, _| {
-        let mut list = groups::list(db)?;
-        list.retain(|g| access.group(g));
-        Ok(json!(list))
-    })
+async fn list_groups(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    s.with(|db, _| Ok(json!(groups::list(db)?)))
 }
 
 async fn group_detail(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {

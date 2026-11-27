@@ -226,12 +226,57 @@ ALTER TABLE sessions ADD COLUMN created_by TEXT;
 `);
 }
 
+/**
+ * v6 — SSH connections: servers the hub reaches with keys it holds (the private key encrypted
+ * like project secrets), attached to projects and groups with a note on what they are for.
+ */
+export function sshConnections(db: DatabaseSync) {
+  db.exec(`
+CREATE TABLE IF NOT EXISTS ssh_connections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 22,
+  username TEXT NOT NULL,
+  environment TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  public_key TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  host_keys TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ssh_bindings (
+  connection_id TEXT NOT NULL REFERENCES ssh_connections(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  group_id TEXT REFERENCES project_groups(id) ON DELETE CASCADE,
+  note TEXT NOT NULL DEFAULT '',
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ssh_bindings_project ON ssh_bindings(project_id);
+CREATE INDEX IF NOT EXISTS ssh_bindings_group ON ssh_bindings(group_id);
+`);
+}
+
+/**
+ * v7 — hubness is single-user: one account (the first one created) stays, any other
+ * account goes with its sessions. Roles and permissions (v5 columns) are no longer read.
+ */
+export function singleAccount(db: DatabaseSync) {
+  db.exec(`
+DELETE FROM auth_sessions WHERE user_id NOT IN (SELECT id FROM users ORDER BY created_at, rowid LIMIT 1);
+DELETE FROM users WHERE id NOT IN (SELECT id FROM users ORDER BY created_at, rowid LIMIT 1);
+`);
+}
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: 'baseline schema', up: baseline },
   { version: 2, name: 'legacy groups (projects.kind = group) → project_groups', up: migrateLegacyGroups },
   { version: 3, name: 'drop auto-imported projects', up: pruneAutoImported },
   { version: 4, name: 'user accounts and their sign-in sessions', up: userAccounts },
   { version: 5, name: 'user roles, permissions and session owners', up: userPermissions },
+  { version: 6, name: 'SSH connections and their project / group bindings', up: sshConnections },
+  { version: 7, name: 'one account: the first one stays', up: singleAccount },
 ];
 
 export const schemaVersion = (db: DatabaseSync) => Number(db.prepare('PRAGMA user_version').get()?.user_version ?? 0);

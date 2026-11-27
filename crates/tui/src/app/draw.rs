@@ -58,6 +58,14 @@ impl App {
             }
             Overlay::None => {}
         }
+        if let Some(h) = &mut self.help {
+            let screen = self.screens.get(&self.route).map(|s| &s.screen);
+            let title = screen.map(|s| s.title()).unwrap_or_default();
+            let about = screen.and_then(|s| s.help());
+            let r = h.draw(f, main, &title, about.as_deref());
+            // clicks inside the help keep it open
+            self.ctx.hits.borrow_mut().push((r, APP, Hit::Key(KeyEvent::new(KeyCode::Null, KeyModifiers::NONE))));
+        }
         if let Some((_, modal, input)) = &self.modal {
             draw_modal(f, main, modal, input);
         }
@@ -69,9 +77,13 @@ impl App {
         let (mode, color) = if self.modal.is_some() {
             if matches!(self.modal, Some((_, Modal::Pick { ref key, .. }, _)) if key == "palette") {
                 ("COMMAND", t.warn)
+            } else if matches!(self.modal, Some((_, Modal::Input { ref key, .. }, _)) if is_live_filter(key)) {
+                ("FILTER", t.ok)
             } else {
                 ("PROMPT", t.magenta)
             }
+        } else if self.help.is_some() {
+            ("HELP", t.magenta)
         } else if matches!(self.overlay, Overlay::Leader(_)) {
             ("LEADER", t.magenta)
         } else if self.typing() {
@@ -87,7 +99,11 @@ impl App {
         left.push(Span::styled(icon("\u{e0b4}", ""), Style::default().fg(t.bg_dark).bg(t.bg)));
         if !self.pending.is_empty() || self.count.is_some() {
             left.push(Span::styled(
-                format!("  {}{}", self.count.map(|c| c.to_string()).unwrap_or_default(), self.pending.replace('^', "Ctrl+")),
+                format!(
+                    "  {}{}",
+                    self.count.map(|c| c.to_string()).unwrap_or_default(),
+                    crate::keymap::show_seq(&self.pending.iter().map(String::as_str).collect::<Vec<_>>())
+                ),
                 t.accent_style(),
             ));
         }
@@ -120,7 +136,7 @@ impl App {
             let x = area.x + left.iter().map(|s| s.content.chars().count() as u16).sum::<u16>();
             self.hit(Rect { x: x + 3, y: area.y, width: 6, height: 1 }, Hit::Key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)));
             self.hit(Rect { x: x + 12, y: area.y, width: 8, height: 1 }, Hit::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)));
-            left.push(Span::styled("   ? more · ␣ leader", t.muted_style()));
+            left.push(Span::styled("   ? help · ␣ leader", t.muted_style()));
         }
         let sessions = &self.ctx.shared.sessions;
         let running = sessions.iter().filter(|s| s["status"] == "running").count();
@@ -283,6 +299,15 @@ impl App {
 fn draw_modal(f: &mut Frame, area: Rect, modal: &Modal, input: &TextInput) {
     let t = Theme::get();
     match modal {
+        Modal::Input { title, key, .. } if is_live_filter(key) => {
+            // a live filter sits at the bottom, like Vim's `/`, so the list stays in view
+            let h = 3.min(area.height);
+            let r = Rect { x: area.x, y: area.y + area.height - h, width: area.width, height: h };
+            f.render_widget(Clear, r);
+            let b = block(format!("/ {title}"), true)
+                .title_bottom(Line::styled(" Enter keep · Esc restore · Ctrl+u clear ", t.muted_style()).right_aligned());
+            input.draw(f, r, b, true, "type to filter");
+        }
         Modal::Input { title, multiline, .. } => {
             let h = if *multiline { 10 } else { 3 };
             let r = centered(area, 70, h);
@@ -304,7 +329,8 @@ fn draw_modal(f: &mut Frame, area: Rect, modal: &Modal, input: &TextInput) {
             } else {
                 t.accent_style().add_modifier(Modifier::BOLD)
             };
-            text.push(Line::from(vec![Span::styled("[y] confirm", yes), Span::styled("   [n / Esc] cancel", t.muted_style())]));
+            let confirm = if *danger { "[y] confirm" } else { "[y / Enter] confirm" };
+            text.push(Line::from(vec![Span::styled(confirm, yes), Span::styled("   [n / Esc] cancel", t.muted_style())]));
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), inner);
         }
         Modal::Message { title, text } => {
@@ -317,11 +343,19 @@ fn draw_modal(f: &mut Frame, area: Rect, modal: &Modal, input: &TextInput) {
             let h = (visible.len() as u16 + 4).clamp(6, area.height.saturating_sub(2));
             let r = centered(area, 80, h);
             f.render_widget(Clear, r);
-            let b = block(title.clone(), true);
+            let count = format!(" {}/{} ", visible.len(), items.len());
+            let b = block(title.clone(), true).title_bottom(
+                Line::from(vec![
+                    Span::styled(" ↑↓ / Ctrl+n p move · Enter choose · Esc cancel ", t.muted_style()),
+                    Span::styled(count, t.dim_style()),
+                ])
+                .right_aligned(),
+            );
             let inner = b.inner(r);
             f.render_widget(b, r);
             let [q, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
             f.render_widget(Paragraph::new(Line::from(vec![Span::styled("› ", t.accent_style()), Span::raw(filter.clone())])), q);
+            f.set_cursor_position((q.x + 2 + filter.chars().count() as u16, q.y));
             let rows = list.height as usize;
             let start = selected.saturating_sub(rows.saturating_sub(1));
             let items: Vec<ListItem> = visible
@@ -329,8 +363,15 @@ fn draw_modal(f: &mut Frame, area: Rect, modal: &Modal, input: &TextInput) {
                 .enumerate()
                 .skip(start)
                 .take(rows)
-                .map(|(i, (_, label))| {
-                    ListItem::new(Line::styled(format!(" {label}"), if i == *selected { t.selected() } else { Style::default() }))
+                .map(|(i, ((_, label), hits))| {
+                    let base = if i == *selected { t.selected() } else { Style::default() };
+                    let hit = base.fg(t.accent).add_modifier(Modifier::BOLD);
+                    // the matched characters stand out
+                    let mut spans = vec![Span::styled(" ", base)];
+                    spans.extend(
+                        label.chars().enumerate().map(|(n, c)| Span::styled(c.to_string(), if hits.contains(&n) { hit } else { base })),
+                    );
+                    ListItem::new(Line::from(spans).style(base))
                 })
                 .collect();
             f.render_widget(List::new(items), list);

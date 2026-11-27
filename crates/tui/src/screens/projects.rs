@@ -222,7 +222,7 @@ impl Projects {
             list.select(None);
             return;
         }
-        let i = list.selected().unwrap_or(0) as isize + d;
+        let i = (list.selected().unwrap_or(0) as isize).saturating_add(d);
         list.select(Some(i.clamp(0, n as isize - 1) as usize));
     }
 
@@ -240,6 +240,9 @@ impl Projects {
                 KeyCode::Esc => im.browse = None,
                 KeyCode::Down | KeyCode::Char('j') => Self::move_list(list, n, 1),
                 KeyCode::Up | KeyCode::Char('k') => Self::move_list(list, n, -1),
+                KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
+                    Self::move_list(list, n, crate::screens::kit::motion_delta(&k).unwrap_or(0))
+                }
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                     let i = list.selected().unwrap_or(0);
                     let target = if parent.is_some() && i == 0 { parent } else { entries.get(i - offset).cloned() };
@@ -275,6 +278,9 @@ impl Projects {
             KeyCode::Esc => self.import = None,
             KeyCode::Down | KeyCode::Char('j') => Self::move_list(&mut im.list, visible.len(), 1),
             KeyCode::Up | KeyCode::Char('k') => Self::move_list(&mut im.list, visible.len(), -1),
+            KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
+                Self::move_list(&mut im.list, visible.len(), crate::screens::kit::motion_delta(&k).unwrap_or(0))
+            }
             KeyCode::Char('x') | KeyCode::Char('v') => {
                 if let Some(p) = im.list.selected().and_then(|i| visible.get(i)) {
                     match im.picked.iter().position(|x| x == p) {
@@ -321,6 +327,9 @@ impl Projects {
             KeyCode::Esc => self.group = None,
             KeyCode::Down | KeyCode::Char('j') => Self::move_list(&mut g.list, ids.len(), 1),
             KeyCode::Up | KeyCode::Char('k') => Self::move_list(&mut g.list, ids.len(), -1),
+            KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
+                Self::move_list(&mut g.list, ids.len(), crate::screens::kit::motion_delta(&k).unwrap_or(0))
+            }
             KeyCode::Char('x') | KeyCode::Char('v') => {
                 if let Some(id) = g.list.selected().and_then(|i| ids.get(i))
                     && !g.picked.remove(id)
@@ -657,6 +666,12 @@ impl Screen for Projects {
             (Focus::Projects, KeyCode::Up | KeyCode::Char('k')) => Self::move_list(&mut self.plist, n, -1),
             (Focus::Groups, KeyCode::Down | KeyCode::Char('j')) => Self::move_list(&mut self.glist, self.groups.len(), 1),
             (Focus::Groups, KeyCode::Up | KeyCode::Char('k')) => Self::move_list(&mut self.glist, self.groups.len(), -1),
+            (Focus::Projects, KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown) => {
+                Self::move_list(&mut self.plist, n, crate::screens::kit::motion_delta(&k).unwrap_or(0))
+            }
+            (Focus::Groups, KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown) => {
+                Self::move_list(&mut self.glist, self.groups.len(), crate::screens::kit::motion_delta(&k).unwrap_or(0))
+            }
             (Focus::Projects, KeyCode::Enter) => {
                 if let Some(p) = self.selected_project() {
                     if p["missing"] == true {

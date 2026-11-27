@@ -4,7 +4,6 @@
 use std::convert::Infallible;
 use std::time::Duration;
 
-use axum::Extension;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -17,12 +16,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
-use crate::auth::Caller;
 use crate::db::sessions::{self as repo, Archived, Filter};
 use crate::db::{kv, now};
 use crate::error::{ApiResult, HttpError};
 use crate::http::{JsonBody, double_option};
-use crate::permissions::Access;
 use crate::{AppState, agents, catalog, inbox, runtime, workspaces};
 
 /// Keep-alive period of the SSE streams (as in the TS server).
@@ -49,6 +46,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sessions/{id}/file", get(pane_file))
         .route("/sessions/{id}/diff", get(pane_diff))
         .route("/sessions/{id}/pane", post(set_pane))
+        .route("/sessions/{id}/browser", post(browser_route))
         .route("/sessions/{id}/stream", get(session_stream))
         .route("/stream", get(global_stream))
 }
@@ -76,8 +74,7 @@ struct ListQuery {
     all: Option<String>,
 }
 
-async fn list(State(s): State<AppState>, c: Option<Extension<Caller>>, Query(q): Query<ListQuery>) -> ApiResult<axum::Json<Vec<Session>>> {
-    let access = Access::of(c.as_deref());
+async fn list(State(s): State<AppState>, Query(q): Query<ListQuery>) -> ApiResult<axum::Json<Vec<Session>>> {
     s.with(|db, _| {
         let f = if let Some(p) = q.project_id.as_deref().filter(|v| !v.is_empty()) {
             Filter { project_id: Some(p), ..Default::default() }
@@ -91,17 +88,7 @@ async fn list(State(s): State<AppState>, c: Option<Extension<Caller>>, Query(q):
         } else {
             Filter { chats: true, ..Default::default() }
         };
-        let mut list = repo::list(db, f)?;
-        if !access.is_full() {
-            let mut visible = Vec::with_capacity(list.len());
-            for x in list {
-                if access.session(db, &x)? {
-                    visible.push(x);
-                }
-            }
-            list = visible;
-        }
-        Ok(list)
+        Ok(repo::list(db, f)?)
     })
 }
 
@@ -156,12 +143,7 @@ fn validate_agent(db: &Connection, cfg: &crate::Config, a: &AgentBody) -> ApiRes
         .ok_or_else(|| HttpError::bad_request("Agent is not specified"))
 }
 
-async fn create(
-    State(s): State<AppState>,
-    c: Option<Extension<Caller>>,
-    JsonBody(b): JsonBody<CreateBody>,
-) -> ApiResult<(StatusCode, axum::Json<Session>)> {
-    let access = Access::of(c.as_deref());
+async fn create(State(s): State<AppState>, JsonBody(b): JsonBody<CreateBody>) -> ApiResult<(StatusCode, axum::Json<Session>)> {
     check_title(&b.title)?;
     b.agent.check()?;
     if b.agent.kind.is_none() {
@@ -178,28 +160,20 @@ async fn create(
     }
     let session = s.with(|db, cfg| {
         let workspace_id = if let Some(pid) = &project_id {
-            let p = catalog::project_or_404(db, pid)?;
-            if !access.project(&p.id) {
-                return Err(HttpError::new(403, "You have no access to this project"));
-            }
-            Some(workspaces::project_workspace(db, &p)?.id)
+            Some(workspaces::project_workspace(db, &catalog::project_or_404(db, pid)?)?.id)
         } else if let Some(gid) = &group_id {
             let g = catalog::group_or_404(db, gid)?;
-            if !access.group(&g) {
-                return Err(HttpError::new(403, "You have no access to this group"));
-            }
             Some(workspaces::group_workspace(db, cfg, &g.id, &catalog::group_projects(db, &g)?)?.id)
         } else {
             None
         };
         let agent = validate_agent(db, cfg, &b.agent)?;
-        access.agent(&agent.kind, agent.model.as_deref())?;
         let id = crate::db::new_id();
         let scoped = project_id.is_some() || group_id.is_some();
         // regular chat: its own folder in Inbox (~/hub/inbox/<date>_<id>)
         let cwd = if scoped { None } else { Some(inbox::inbox_dir_for(cfg, &id)?) };
         let title = b.title.as_deref().map(str::trim).filter(|t| !t.is_empty()).unwrap_or(if scoped { "New session" } else { "New chat" });
-        let created = repo::create(
+        Ok(repo::create(
             db,
             repo::New {
                 id: Some(id),
@@ -210,9 +184,7 @@ async fn create(
                 agent: &agent,
                 cwd: cwd.as_deref(),
             },
-        )?;
-        crate::permissions::set_owner(db, &created.id, c.as_deref())?;
-        Ok(created)
+        )?)
     })?;
     s.bus.emit_global(GlobalStreamMsg::Session { session: session.0.clone() });
     match b.prompt.as_deref().filter(|p| !p.trim().is_empty()) {
@@ -231,13 +203,7 @@ struct PatchBody {
     agent: Option<AgentBody>,
 }
 
-async fn patch(
-    State(s): State<AppState>,
-    c: Option<Extension<Caller>>,
-    Path(id): Path<String>,
-    JsonBody(b): JsonBody<PatchBody>,
-) -> ApiResult<axum::Json<Session>> {
-    let access = Access::of(c.as_deref());
+async fn patch(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b): JsonBody<PatchBody>) -> ApiResult<axum::Json<Session>> {
     check_title(&b.title)?;
     if let Some(a) = &b.agent {
         a.check()?;
@@ -255,9 +221,6 @@ async fn patch(
                     account: None,
                 };
                 let mut next = validate_agent(db, cfg, &merged)?;
-                if a.model.is_some() {
-                    access.agent(&next.kind, next.model.as_deref())?;
-                }
                 next.account = cur.agent.account.clone();
                 Some(next)
             }
@@ -272,9 +235,19 @@ async fn patch(
 
 // ---------- delete / archive ----------
 
+/// The session's page in the agents' browser goes with it (in the background: the caller may
+/// hold the database).
+fn close_browser_page(id: &str) {
+    let id = id.to_string();
+    if let Ok(rt) = tokio::runtime::Handle::try_current() {
+        rt.spawn(async move { crate::browser::close_session_browser(&id).await });
+    }
+}
+
 /// Delete one session for good and drop it from the lists.
 fn delete_now(s: &AppState, db: &Connection, id: &str) -> ApiResult<()> {
     s.runtime.stop(id);
+    close_browser_page(id);
     repo::delete(db, id)?;
     s.bus.emit_global(GlobalStreamMsg::SessionDeleted { id: id.to_string() });
     Ok(())
@@ -288,20 +261,9 @@ async fn remove(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<
 }
 
 /// Empty the archive (the client confirms first).
-async fn empty_archive(State(s): State<AppState>, c: Option<Extension<Caller>>) -> ApiResult<axum::Json<Value>> {
-    let access = Access::of(c.as_deref());
+async fn empty_archive(State(s): State<AppState>) -> ApiResult<axum::Json<Value>> {
     s.with(|db, _| {
-        let mut list = repo::list(db, Filter { archived: Archived::Only, ..Default::default() })?;
-        // a member empties only the archive it can see
-        if !access.is_full() {
-            let mut visible = vec![];
-            for x in list {
-                if access.session(db, &x)? {
-                    visible.push(x);
-                }
-            }
-            list = visible;
-        }
+        let list = repo::list(db, Filter { archived: Archived::Only, ..Default::default() })?;
         for x in &list {
             delete_now(&s, db, &x.id)?;
         }
@@ -317,6 +279,9 @@ async fn set_archived(s: AppState, id: String, archived: bool) -> ApiResult<axum
         }
         repo::set_archived(db, &cur.id, archived)?.ok_or_else(|| HttpError::not_found("Session not found"))
     })?;
+    if archived {
+        close_browser_page(&id);
+    }
     announce(&s, &session);
     Ok(session)
 }
@@ -427,6 +392,29 @@ async fn set_pane(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b)
     Ok(axum::Json(json!({ "ok": true })))
 }
 
+// ---------- the agent's headless browser (MCP preview_* tools) ----------
+
+async fn browser_route(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    JsonBody(b): JsonBody<crate::browser::BrowserRequest>,
+) -> ApiResult<axum::Json<hubness_core::BrowserResult>> {
+    let project = {
+        let db = s.db()?;
+        let session = session_or_404(&db, &id)?;
+        session.project_id.and_then(|pid| crate::catalog::project_or_404(&db, &pid).ok())
+    };
+    // http://localhost:<port> of a project session goes through the project's preview
+    let preview_for: Option<crate::browser::PreviewFor> = project.map(|p| {
+        let state = s.clone();
+        Box::new(move |port: u16| {
+            let db = state.db().ok()?;
+            crate::runs::preview_port_for(&db, state.config(), &p, port).ok()
+        }) as crate::browser::PreviewFor
+    });
+    Ok(axum::Json(crate::browser::browser_action(s.config(), &id, b, preview_for).await?))
+}
+
 // ---------- live streams ----------
 
 fn sse_event<T: serde::Serialize>(msg: &T) -> Result<Event, Infallible> {
@@ -463,17 +451,8 @@ async fn session_stream(
 }
 
 /// Session changes for the lists.
-async fn global_stream(State(s): State<AppState>, c: Option<Extension<Caller>>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let access = Access::of(c.as_deref());
-    let state = s.clone();
-    let updates = BroadcastStream::new(s.bus.on_global()).filter_map(move |m| {
-        let visible = match (&m, &access) {
-            (_, Access::Full) | (Ok(GlobalStreamMsg::SessionDeleted { .. }), _) => true,
-            (Ok(GlobalStreamMsg::Session { session }), a) => state.db().ok().is_some_and(|db| a.session(&db, session).unwrap_or(false)),
-            (Err(_), _) => false,
-        };
-        async move { if visible { m.ok().map(|m| sse_event(&m)) } else { None } }
-    });
+async fn global_stream(State(s): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let updates = BroadcastStream::new(s.bus.on_global()).filter_map(|m| async move { m.ok().map(|m| sse_event(&m)) });
     let pings = ticks().map(|_| Ok(Event::default().event("ping").data("")));
     Sse::new(stream::select(updates, pings))
 }

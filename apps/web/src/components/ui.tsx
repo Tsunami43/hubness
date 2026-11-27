@@ -1,4 +1,4 @@
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import { Check, ChevronLeft, Loader2, PanelRight, X } from 'lucide-react';
 import type { SessionStatus } from '@hubness/shared';
@@ -31,7 +31,7 @@ export function Button({
     <button
       {...rest}
       disabled={rest.disabled || loading}
-      className={`inline-flex items-center justify-center whitespace-nowrap transition disabled:opacity-50 ${sz} ${VARIANTS[variant]} ${className}`}
+      className={`ui-btn inline-flex items-center justify-center whitespace-nowrap transition disabled:opacity-50 ${sz} ${VARIANTS[variant]} ${className}`}
     >
       {loading ? <Loader2 className="size-4 animate-spin" /> : null}
       {children}
@@ -50,7 +50,7 @@ export function IconButton({
       {...rest}
       aria-label={label}
       title={label}
-      className={`tap inline-flex size-9 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg disabled:opacity-40 ${className}`}
+      className={`ui-icon tap inline-flex size-9 shrink-0 items-center justify-center text-muted hover:bg-sunken hover:text-fg disabled:opacity-40 ${className}`}
     >
       {children}
     </button>
@@ -149,6 +149,7 @@ export function Sheet({
   /** Wider on desktop (terminal). */
   wide?: boolean;
 }) {
+  const downOnBackdrop = useRef(false);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -158,12 +159,19 @@ export function Sheet({
   if (!open) return null;
   return (
     // phone: a full-screen page (no half-screen popups); desktop: a centered dialog
-    <div className="inset-app z-50 flex justify-center bg-black/40 sm:items-center sm:p-6" onClick={onClose}>
+    <div
+      className="inset-app z-50 flex justify-center bg-black/40 sm:items-center sm:p-6"
+      // a click on the backdrop closes — not a drag that began inside (selecting text and letting go outside)
+      onMouseDown={(e) => (downOnBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && downOnBackdrop.current) onClose();
+        downOnBackdrop.current = false;
+      }}
+    >
       <div
         role="dialog"
         aria-label={title}
-        onClick={(e) => e.stopPropagation()}
-        className={`pt-safe flex h-app w-full motion-safe:animate-slide-in-up flex-col bg-surface sm:motion-safe:animate-none sm:h-auto sm:max-h-[90dvh] sm:border sm:border-line sm:pt-0 sm:shadow-2xl sm:shadow-black/50 ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}
+        className={`ui-sheet pt-safe flex h-app w-full motion-safe:animate-slide-in-up flex-col bg-surface sm:motion-safe:animate-none sm:h-auto sm:max-h-[90dvh] sm:border sm:border-line sm:pt-0 sm:shadow-2xl sm:shadow-black/50 ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-line py-1.5 pr-1.5 pl-4">
           <h2 className="flex-1 font-semibold text-accent">{title}</h2>
@@ -241,7 +249,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 }
 
 export const inputCls =
-  'w-full border border-line bg-bg px-2.5 py-1.5 text-[14px] outline-none focus:border-accent placeholder:text-muted/70';
+  'ui-input w-full border border-line bg-bg px-2.5 py-1.5 text-[14px] outline-none focus:border-accent placeholder:text-muted/70';
 
 /** Themed checkbox (the native one ignores the theme): a real input, drawn by us. */
 export function Checkbox({ checked, onChange, children, disabled }: { checked: boolean; onChange: (v: boolean) => void; children?: ReactNode; disabled?: boolean }) {

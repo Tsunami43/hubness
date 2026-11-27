@@ -100,26 +100,39 @@ impl Tabs {
     }
 
     pub fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
-        // Alt+1…9 switch tabs; Alt+←/→ previous / next
-        if k.modifiers.contains(KeyModifiers::ALT) {
-            match k.code {
-                KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                    self.select(c as usize - '1' as usize, ctx);
-                    return Handled::Yes;
-                }
-                KeyCode::Right => {
-                    self.select((self.active + 1) % self.tabs.len(), ctx);
-                    return Handled::Yes;
-                }
-                KeyCode::Left => {
-                    self.select((self.active + self.tabs.len() - 1) % self.tabs.len(), ctx);
-                    return Handled::Yes;
-                }
-                _ => {}
-            }
-        }
         let i = self.active;
-        self.call(i, ctx, |s, c| s.on_key(k, c)).unwrap_or(Handled::No)
+        if !k.modifiers.contains(KeyModifiers::ALT) {
+            return self.call(i, ctx, |s, c| s.on_key(k, c)).unwrap_or(Handled::No);
+        }
+        let n = self.tabs.len();
+        // Alt+Tab / Alt+Shift+Tab always switch (terminals send Shift+Tab as BackTab)
+        match k.code {
+            KeyCode::Tab if !k.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.select((i + 1) % n, ctx);
+                return Handled::Yes;
+            }
+            KeyCode::BackTab | KeyCode::Tab => {
+                self.select((i + n - 1) % n, ctx);
+                return Handled::Yes;
+            }
+            _ => {}
+        }
+        // Alt+←/→ and Alt+1…9 switch too — unless the tab is typing: an input moves by
+        // words with Alt+←/→ and a shell gets Alt+digits, so the tab sees them first
+        let target = match k.code {
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => Some(c as usize - '1' as usize),
+            KeyCode::Right => Some((i + 1) % n),
+            KeyCode::Left => Some((i + n - 1) % n),
+            _ => None,
+        };
+        let Some(target) = target else {
+            return self.call(i, ctx, |s, c| s.on_key(k, c)).unwrap_or(Handled::No);
+        };
+        if self.captures_text() && matches!(self.call(i, ctx, |s, c| s.on_key(k, c)), Some(Handled::Yes)) {
+            return Handled::Yes;
+        }
+        self.select(target, ctx);
+        Handled::Yes
     }
 
     pub fn on_paste(&mut self, text: &str, ctx: &mut Ctx) {
@@ -204,5 +217,99 @@ impl Tabs {
         let saved = std::mem::replace(&mut *ctx.draw_prefix.borrow_mut(), Self::prefix(i));
         self.tabs[i].screen.draw(f, body, ctx);
         *ctx.draw_prefix.borrow_mut() = saved;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::test_ctx;
+
+    /// A tab that records the keys it gets; `typing` makes it take every key, like an input.
+    struct Probe {
+        typing: bool,
+        keys: std::rc::Rc<std::cell::RefCell<Vec<KeyCode>>>,
+    }
+
+    impl Screen for Probe {
+        fn title(&self) -> String {
+            "probe".into()
+        }
+        fn draw(&mut self, _f: &mut Frame, _area: Rect, _ctx: &Ctx) {}
+        fn on_key(&mut self, key: KeyEvent, _ctx: &mut Ctx) -> Handled {
+            self.keys.borrow_mut().push(key.code);
+            if self.typing { Handled::Yes } else { Handled::No }
+        }
+        fn captures_text(&self) -> bool {
+            self.typing
+        }
+    }
+
+    fn tabs(typing: [bool; 3]) -> (Tabs, std::rc::Rc<std::cell::RefCell<Vec<KeyCode>>>) {
+        let keys = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+        let list = typing
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                Tab::new(format!("t{i}"), format!("Tab {i}"), Box::new(Probe { typing: *t, keys: keys.clone() }) as Box<dyn Screen>)
+            })
+            .collect();
+        (Tabs::new(list), keys)
+    }
+
+    fn alt(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::ALT)
+    }
+
+    #[test]
+    fn prefixed_keys_find_their_tab() {
+        assert_eq!(Tabs::route("tab0:list"), Some((0, "list".to_string())));
+        assert_eq!(Tabs::route("tab12:key"), Some((12, "key".to_string())));
+        assert_eq!(Tabs::route("tab3:delete:a:b"), Some((3, "delete:a:b".to_string())), "the tab's own key may have colons");
+        assert_eq!(Tabs::route("tab2:"), Some((2, String::new())));
+        // not a tab's key: the container's own
+        for own in ["list", "tab:x", "tabx:y", "tab1", "table:1", ""] {
+            assert_eq!(Tabs::route(own), None, "{own}");
+        }
+        assert_eq!(Tabs::prefix(4), "tab4:");
+    }
+
+    #[test]
+    fn alt_keys_switch_tabs() {
+        let mut ctx = test_ctx();
+        let (mut t, keys) = tabs([false, false, false]);
+        t.on_key(alt(KeyCode::Right), &mut ctx);
+        assert_eq!(t.active, 1);
+        t.on_key(alt(KeyCode::Left), &mut ctx);
+        t.on_key(alt(KeyCode::Left), &mut ctx);
+        assert_eq!(t.active, 2, "wraps around");
+        t.on_key(alt(KeyCode::Char('1')), &mut ctx);
+        assert_eq!(t.active, 0);
+        t.on_key(alt(KeyCode::Char('9')), &mut ctx);
+        assert_eq!(t.active, 0, "no such tab");
+        t.on_key(alt(KeyCode::Tab), &mut ctx);
+        assert_eq!(t.active, 1);
+        t.on_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::ALT | KeyModifiers::SHIFT), &mut ctx);
+        assert_eq!(t.active, 0);
+        assert!(keys.borrow().is_empty(), "a tab that isn't typing never sees the switching keys");
+        // other keys go to the active tab
+        assert!(matches!(t.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &mut ctx), Handled::No));
+        assert!(matches!(t.on_key(alt(KeyCode::Char('b')), &mut ctx), Handled::No));
+        assert_eq!(*keys.borrow(), [KeyCode::Char('x'), KeyCode::Char('b')]);
+    }
+
+    #[test]
+    fn a_typing_tab_gets_alt_arrows_and_digits_first() {
+        let mut ctx = test_ctx();
+        let (mut t, keys) = tabs([true, false, false]);
+        // word left in an input, Alt+2 in a shell: not a tab switch
+        assert!(matches!(t.on_key(alt(KeyCode::Left), &mut ctx), Handled::Yes));
+        assert!(matches!(t.on_key(alt(KeyCode::Char('2')), &mut ctx), Handled::Yes));
+        assert_eq!(t.active, 0);
+        assert_eq!(*keys.borrow(), [KeyCode::Left, KeyCode::Char('2')]);
+        // Alt+Tab still leaves a typing tab
+        t.on_key(alt(KeyCode::Tab), &mut ctx);
+        assert_eq!(t.active, 1);
+        assert_eq!(keys.borrow().len(), 2);
     }
 }

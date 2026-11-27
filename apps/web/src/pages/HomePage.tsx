@@ -27,7 +27,7 @@ import { useRecentSessions } from '../lib/hooks';
 import { useHubSettings } from '../lib/hubSettings';
 import { t } from '../i18n';
 import { AttachButton, createWithFiles, PendingFiles, usePendingFiles } from '../lib/attachments';
-import { takeAskDraft } from '../lib/askDraft';
+import { takeAskDraft, takeAskProject } from '../lib/askDraft';
 import { MicButton } from '../lib/voice';
 
 interface HomeState {
@@ -83,6 +83,7 @@ export function HomePage() {
 
   // "Ask" from the System page: the input arrives filled in, aimed at the system project
   const [askDraft] = useState(takeAskDraft);
+  const [askProject] = useState(takeAskProject);
   useEffect(() => {
     if (!askDraft) return;
     setText(askDraft);
@@ -95,7 +96,7 @@ export function HomePage() {
     });
   }, [askDraft]);
   useEffect(() => {
-    const home = askDraft ? projects.find((p) => p.system) : null;
+    const home = askDraft ? (projects.find((p) => p.id === askProject) ?? projects.find((p) => p.system)) : null;
     if (home && state.projectId !== home.id) setState({ ...state, projectId: home.id });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [askDraft, projects]);
@@ -158,7 +159,7 @@ export function HomePage() {
         <div className="mx-auto max-w-3xl">
           <div
             {...att.dropProps}
-            className={`rounded-2xl border bg-surface px-3.5 pt-3 pb-2.5 focus-within:border-accent/70 ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
+            className={`rounded-2xl border bg-surface px-4 pt-3.5 pb-3 pointer-coarse:px-5 pointer-coarse:pt-4 focus-within:border-accent/70 ${att.dragging ? 'border-accent bg-accent/5' : 'border-line'}`}
           >
             <PendingFiles files={att.files} onRemove={att.remove} />
             <div className="flex items-start gap-2">
@@ -225,7 +226,7 @@ export function HomePage() {
                 aria-label={t('session.send')}
                 onClick={() => void send()}
                 disabled={!ready || sending}
-                className={`inline-flex size-9 shrink-0 items-center justify-center ${ready || sending ? 'btn-accent' : 'border border-line text-muted'}`}
+                className={`ui-btn inline-flex size-9 shrink-0 items-center justify-center ${ready || sending ? 'btn-accent' : 'border border-line text-muted'}`}
               >
                 {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.5} />}
               </button>

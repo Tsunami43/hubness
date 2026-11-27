@@ -494,7 +494,7 @@ impl Screen for SessionView {
     fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
         let t = Theme::get();
         let attach_h = if self.attachments.is_empty() { 0 } else { 1 };
-        let comp_h = (self.composer.height(area.width.saturating_sub(2)) + 2).clamp(3, 10);
+        let comp_h = (self.composer.height(area.width.saturating_sub(4)) + 2).clamp(3, 10);
         let [head, body, chips, composer] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(attach_h), Constraint::Length(comp_h)])
                 .areas(area);

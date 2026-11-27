@@ -101,7 +101,7 @@ export function Select<T extends string>({
         aria-label={label}
         onClick={() => setOpen(!open)}
         onKeyDown={onKey}
-        className={`inline-flex min-w-0 items-center gap-2 border bg-surface px-2.5 text-left ${h} ${open ? 'border-accent' : 'border-line hover:border-muted'} ${className}`}
+        className={`ui-input inline-flex min-w-0 items-center gap-2 border bg-surface px-2.5 text-left ${h} ${open ? 'border-accent' : 'border-line hover:border-muted'} ${className}`}
       >
         <span className="min-w-0 flex-1 truncate">{current?.label}</span>
         <ChevronDown className={`size-3.5 shrink-0 text-muted transition ${open ? 'rotate-180' : ''}`} />
@@ -112,7 +112,7 @@ export function Select<T extends string>({
               ref={list}
               role="listbox"
               aria-label={label}
-              className="fixed z-[70] max-h-64 overflow-y-auto border border-accent bg-surface py-1 shadow-xl shadow-black/40"
+              className="ui-pop fixed z-[70] max-h-64 overflow-y-auto border border-accent bg-surface py-1 shadow-xl shadow-black/40"
               style={{
                 left: Math.min(pos.left, window.innerWidth - Math.max(pos.width, 160) - 8),
                 minWidth: Math.max(pos.width, 160),

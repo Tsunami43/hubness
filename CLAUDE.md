@@ -48,9 +48,18 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   `workspaces/` — workspace providers (currently local only).
 - `runs.ts`, `terminal.ts`, `preview.ts` — named run commands, interactive shells and the
   per-port preview proxy (`HUBNESS_PREVIEW_PORTS`).
+  The proxy adds `packages/shared/assets/preview-inject.js` to previewed pages (console and
+  errors → `/projects/:id/previews/:port/logs`, address bar, element picker);
+  `HUBNESS_PREVIEW_INJECT=0` turns it off.
+- `browser.ts` — the agent's own headless Chromium (CDP over `--remote-debugging-pipe`, one
+  page per session, `HUBNESS_CHROME`), driven by the hub MCP `preview_*` tools through
+  `POST /sessions/:id/browser`; `localhost:<port>` of a project goes through its preview.
 - `git*.ts` — git operations, credentials helper and provider (GitHub/GitLab…) logins.
 - `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models
   downloaded into `<data>/whisper` as terminal jobs) or an OpenAI-compatible service.
+- `ssh.ts` — SSH connections (System → SSH): keys the hub holds, bound to projects / groups;
+  an agent turn gets a private ssh-agent, an ssh config with an alias per connection and
+  ssh/scp wrappers, and the connections' descriptions (prod / dev) in its context.
 - `secrets.ts` — encrypted per-project secrets (`HUBNESS_SECRET_KEY` or `<data>/secret.key`).
 - `manifest.ts` — project manifest `.hub/hub.yaml` (links, hosts, containers, units),
   shown in the UI and passed to the agent as context.
@@ -83,9 +92,9 @@ both servers, backed by a contract test.
   a new migration is added to both servers. `README.md` lists the domains and deviations.
   `web.rs` serves the web app: `HUBNESS_WEB_DIST` when set, else the copy compiled in with
   the `embed-web` feature (`build.rs`, off by default, needs `pnpm build`), else `apps/web/dist`.
-  Accounts (`users.rs`, `auth.rs`) are admins or members; `permissions.rs` checks what a member
-  may open (projects, sections, agents, models) in an `/api` middleware and in the list/stream
-  handlers. A new route is admin-only for members until it is mapped in `permissions::need`.
+  hubness is single-user: one account (`users.rs`, `auth.rs`), set at the first sign-in —
+  agents share the machine's harness configs, git logins and files, so per-user rights could
+  not be enforced anyway. Don't add roles or per-user permissions.
 - `client` — HTTP + SSE client of the API (`hubness-client`).
 - `tui` — ratatui terminal UI on top of the client (`hubness-tui`).
 - `hubness` — the one installed command: `serve` (foreground), `server start|stop|restart|
@@ -140,6 +149,13 @@ Always run `pnpm check` and `pnpm test` before considering a change done; for ch
 - Child processes get `childEnv()` — never leak `HUBNESS_*` values or secrets to agents.
 - Agent output normalizers are covered by fixture tests (`test/fixtures/agents/*.jsonl`,
   `normalizers.test.ts` snapshot); update fixtures when changing an adapter.
+- The web app has no test runner: keep logic worth testing in pure modules under
+  `apps/web/src/lib` (no React, no `t()`) and test them from `apps/server/test/web-logic*.test.ts`.
+  `preview-inject.js` is tested in `preview-inject.test.ts` (a `vm` context).
+- A React effect without braces returns its expression: only state setters may be written
+  that way (`web-logic.test.ts` checks it) — a returned Promise breaks the app on the next update.
+- Content that comes from a previewed page (logs, picked elements) is untrusted: it reaches an
+  agent only fenced and marked as page content.
 - Local data lives in `.data/` (SQLite, logs, keys) and is git-ignored. Do not commit it.
 
 ## Git workflow

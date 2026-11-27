@@ -28,9 +28,23 @@ export const qk = {
  * A server read: `{ data, setData, error, loading, reload }` over a cached query.
  * `key` must name everything the request depends on.
  */
-export function useApi<T>(key: QueryKey, fn: () => Promise<T>, opts: { enabled?: boolean; staleTime?: number } = {}) {
+export function useApi<T>(
+  key: QueryKey,
+  fn: () => Promise<T>,
+  /** `keepWhile`: while a new key loads, keep showing the previous key's data if this says so. */
+  opts: { enabled?: boolean; staleTime?: number; keepWhile?: (previousKey: QueryKey) => boolean } = {},
+) {
   const client = useQueryClient();
-  const q = useQuery({ queryKey: key, queryFn: fn, enabled: opts.enabled, staleTime: opts.staleTime });
+  const keepWhile = opts.keepWhile;
+  const q = useQuery<T>({
+    queryKey: key,
+    queryFn: fn,
+    enabled: opts.enabled,
+    staleTime: opts.staleTime,
+    ...(keepWhile
+      ? { placeholderData: ((prev: unknown, prevQuery?: { queryKey: QueryKey }) => (prevQuery && keepWhile(prevQuery.queryKey) ? prev : undefined)) as never }
+      : {}),
+  });
   const keyStr = JSON.stringify(key);
   const setData = useCallback(
     (v: T | undefined | ((prev: T | undefined) => T | undefined)) => client.setQueryData<T>(JSON.parse(keyStr) as QueryKey, v as never),

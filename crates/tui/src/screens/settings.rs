@@ -1,5 +1,5 @@
 //! Settings (the web app's Settings pages): Agent (default permission mode, session and
-//! project instructions), Git access (HTTPS logins per host), Users (hub accounts), and what is specific to the
+//! project instructions), Git access (HTTPS logins per host), Account (the hub's one account), and what is specific to the
 //! TUI — the connection to the hub and the keyboard reference (the web app's appearance and
 //! language settings belong to the browser).
 
@@ -9,20 +9,21 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph, Wrap};
 use serde_json::{Value, json};
 
 use super::kit::{Nav, Sections, row, s, since};
 use super::session::{MODES, enc};
 use super::tabs::Tab;
 use crate::core::{Action, Ctx, Handled, Screen};
-use crate::ui::{Theme, block};
+use crate::ui::term::JobTerm;
+use crate::ui::{Theme, block, centered};
 
 pub fn screen(section: Option<&str>) -> Box<dyn Screen> {
     let tabs = vec![
         Tab::new("agent", "Agent", Box::new(AgentSettings::default())),
         Tab::new("git", "Git access", Box::new(GitAccess::default())),
-        Tab::new("users", "Users", Box::new(Users::default())),
+        Tab::new("account", "Account", Box::new(Account::default())),
         Tab::new("connection", "Connection", Box::new(Connection::default())),
         Tab::new("keyboard", "Keyboard", Box::new(Keyboard::default())),
     ];
@@ -254,15 +255,46 @@ impl Screen for AgentSettings {
 
 // ---------- Git access ----------
 
-/// Where to create a personal access token on known hostings.
+/// Where to create a personal access token on known hostings, with the repository scopes
+/// filled in where the hosting allows it (the same pages as the web app's login form).
 pub fn token_page(host: &str) -> Option<String> {
+    let has = |name: &str| host.split(['.', '-']).any(|p| p == name);
     if host == "github.com" || host.starts_with("github.") {
-        Some(format!("https://{host}/settings/tokens"))
-    } else if host == "gitlab.com" || host.starts_with("gitlab.") {
-        Some(format!("https://{host}/-/user_settings/personal_access_tokens"))
+        Some(format!("https://{host}/settings/tokens/new?scopes=repo,workflow&description=hubness"))
+    } else if host == "gitlab.com" || has("gitlab") {
+        Some(format!("https://{host}/-/user_settings/personal_access_tokens?name=hubness&scopes=read_repository,write_repository"))
+    } else if host == "codeberg.org" || has("gitea") || has("forgejo") {
+        Some(format!("https://{host}/user/settings/applications"))
+    } else if host == "bitbucket.org" {
+        Some("https://id.atlassian.com/manage-profile/security/api-tokens".into())
     } else {
         None
     }
+}
+
+/// A GitHub host: the GitHub CLI can sign in to it with a one-time code.
+fn is_github(host: &str) -> bool {
+    host == "github.com" || host.starts_with("github.")
+}
+
+/// Public hostings offered when adding a login (the ones that already have a login are left out).
+const POPULAR_HOSTS: [&str; 4] = ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org"];
+
+/// The one-time code GitHub's device flow shows (`ABCD-1234`) in the CLI's output: two
+/// groups of four capitals and digits with a letter among them (`2026-1128` is a date or a
+/// number, not a code).
+fn device_code(text: &str) -> Option<String> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).find_map(|w| {
+        let (a, b) = w.split_once('-')?;
+        let part = |p: &str| p.len() == 4 && p.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+        (part(a) && part(b) && w.chars().any(|c| c.is_ascii_uppercase())).then(|| w.to_string())
+    })
+}
+
+/// A sign-in with the GitHub CLI in progress: the hub's job and the host.
+struct GhLogin {
+    host: String,
+    term: JobTerm,
 }
 
 /// A login being entered: host, kind, username (the secret is asked last).
@@ -279,6 +311,7 @@ pub struct GitAccess {
     error: Option<String>,
     nav: Nav,
     draft: Option<Draft>,
+    gh: Option<GhLogin>,
 }
 
 impl GitAccess {
@@ -288,11 +321,38 @@ impl GitAccess {
 
     fn ask_kind(&self, ctx: &mut Ctx) {
         let Some(d) = &self.draft else { return };
-        let items = vec![
+        let mut items = vec![
             ("token".to_string(), "Token (recommended) — a personal access token with repository access".to_string()),
             ("password".to_string(), "Login + password — many hostings refuse passwords for git".to_string()),
         ];
+        if is_github(&d.host) {
+            // the code sign-in is the easy way here: the token stops being the recommended one
+            items[0].1 = "Token — a personal access token with repository access".to_string();
+            items.insert(0, ("gh".to_string(), "Sign in with GitHub — a one-time code, no token to paste (recommended)".to_string()));
+        }
         ctx.pick("kind", format!("How to sign in to {}", d.host), items);
+    }
+
+    /// The host is known: prefill the login stored for it and ask how to sign in.
+    fn set_host(&mut self, host: &str, ctx: &mut Ctx) {
+        let stored = self.list.iter().flatten().find(|c| c["host"] == host.trim().to_lowercase().as_str()).cloned();
+        let Some(d) = &mut self.draft else { return };
+        d.host = host.trim().to_lowercase();
+        if let Some(c) = stored {
+            d.kind = s(&c["kind"], "token").into();
+            d.username = s(&c["username"], "").into();
+        }
+        self.ask_kind(ctx);
+    }
+
+    /// Stop a sign-in nobody finished and forget it.
+    fn close_gh(&mut self, ctx: &mut Ctx) {
+        if let Some(gh) = self.gh.take() {
+            if gh.term.running {
+                ctx.send("gh-killed", Method::POST, format!("/jobs/{}/kill", gh.term.id), Value::Null);
+            }
+            ctx.close_stream("gh");
+        }
     }
 
     fn edit(&mut self, c: &Value, ctx: &mut Ctx) {
@@ -312,6 +372,11 @@ impl Screen for GitAccess {
     }
 
     fn actions(&self) -> Vec<Action> {
+        if let Some(gh) = &self.gh {
+            let mut a = vec![Action::new("o", "Open the GitHub page"), Action::new("c", "Copy the code")];
+            a.push(Action::new("w", if gh.term.running { "Cancel the sign-in" } else { "Close" }));
+            return a;
+        }
         let mut a = vec![Action::new("a", "Add a login"), Action::new("r", "Reload")];
         if let Some(c) = self.selected() {
             a.push(Action::new("e", "Edit the selected login"));
@@ -327,8 +392,26 @@ impl Screen for GitAccess {
         match key {
             "a" => {
                 self.draft = Some(Draft { kind: "token".into(), ..Default::default() });
-                ctx.prompt("host", "Host (e.g. gitlab.example.com — the login is used for every repository on it)", "");
+                let stored: Vec<&str> = self.list.iter().flatten().filter_map(|c| c["host"].as_str()).collect();
+                let mut items: Vec<(String, String)> =
+                    POPULAR_HOSTS.iter().filter(|h| !stored.contains(h)).map(|h| (h.to_string(), h.to_string())).collect();
+                items.push(("other".into(), "Another host…".into()));
+                ctx.pick("hostpick", "Which host? (the login is used for every repository on it)", items);
             }
+            "o" => {
+                let url = self.gh.as_ref().map(|gh| {
+                    super::harness::last_link(&gh.term.contents()).unwrap_or_else(|| format!("https://{}/login/device", gh.host))
+                });
+                if let Some(url) = url {
+                    ctx.open_url(url);
+                }
+            }
+            "c" => {
+                if let Some(code) = self.gh.as_ref().and_then(|gh| device_code(&gh.term.contents())) {
+                    super::kit::copy(ctx, &code);
+                }
+            }
+            "w" => self.close_gh(ctx),
             "r" => ctx.get("list", "/git-credentials"),
             "e" => {
                 if let Some(c) = self.selected() {
@@ -351,6 +434,16 @@ impl Screen for GitAccess {
     }
 
     fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
+        // the sign-in window takes the keys while it is open
+        if self.gh.is_some() {
+            match k.code {
+                KeyCode::Esc | KeyCode::Char('w') | KeyCode::Char('q') => self.close_gh(ctx),
+                KeyCode::Char('o') => self.on_action("o", ctx),
+                KeyCode::Char('c') => self.on_action("c", ctx),
+                _ => {}
+            }
+            return Handled::Yes;
+        }
         let n = self.list.as_ref().map_or(0, |l| l.len());
         if self.nav.key(&k, n) {
             return Handled::Yes;
@@ -362,6 +455,26 @@ impl Screen for GitAccess {
             return Handled::Yes;
         }
         Handled::No
+    }
+
+    fn on_stream(&mut self, key: &str, msg: Value, ctx: &mut Ctx) {
+        if key != "gh" || msg["type"] == "__ended" {
+            return;
+        }
+        let Some(gh) = &mut self.gh else { return };
+        let was_running = gh.term.running;
+        gh.term.on_stream(&msg);
+        if was_running && !gh.term.running {
+            ctx.close_stream("gh");
+            if gh.term.exit_code == Some(0) {
+                // the hub saved the token when the job ended: the new login is in the list
+                ctx.info(format!("Signed in to {} with GitHub", gh.host));
+                self.gh = None;
+                ctx.get("list", "/git-credentials");
+            } else {
+                ctx.error("The GitHub sign-in did not finish — w closes the window");
+            }
+        }
     }
 
     fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
@@ -376,18 +489,37 @@ impl Screen for GitAccess {
                 }
                 Err(e) => self.error = Some(e.to_string()),
             },
-            "host" => match (result, &mut self.draft) {
-                (Ok(Value::String(h)), Some(d)) if !h.trim().is_empty() => {
-                    d.host = h.trim().to_lowercase();
-                    // a login already stored for the host: prefill it
-                    if let Some(c) = self.list.iter().flatten().find(|c| c["host"] == d.host.as_str()) {
-                        d.kind = s(&c["kind"], "token").into();
-                        d.username = s(&c["username"], "").into();
-                    }
-                    self.ask_kind(ctx);
+            "hostpick" => match result {
+                Ok(Value::String(h)) if h == "other" => {
+                    ctx.prompt("host", "Host (e.g. gitlab.example.com — the login is used for every repository on it)", "")
                 }
+                Ok(Value::String(h)) => self.set_host(&h, ctx),
                 _ => self.draft = None,
             },
+            "host" => match result {
+                Ok(Value::String(h)) if !h.trim().is_empty() => self.set_host(&h, ctx),
+                _ => self.draft = None,
+            },
+            "kind" if matches!(&result, Ok(Value::String(k)) if k == "gh") => {
+                if let Some(d) = self.draft.take() {
+                    ctx.info(format!("Starting the GitHub sign-in for {}…", d.host));
+                    ctx.send(
+                        format!("gh-start:{}", d.host),
+                        Method::POST,
+                        format!("/git-credentials/{}/gh-login", enc(&d.host)),
+                        json!({ "cols": 100, "rows": 30 }),
+                    );
+                }
+            }
+            k if k.starts_with("gh-start:") => {
+                let Some(v) = ctx.ok(result) else { return };
+                if v["id"].is_string() {
+                    let term = JobTerm::new(&v);
+                    ctx.stream("gh", term.stream_path());
+                    self.gh = Some(GhLogin { host: k[9..].to_string(), term });
+                }
+            }
+            "gh-killed" => {}
             "kind" => match (result, &mut self.draft) {
                 (Ok(Value::String(k)), Some(d)) => {
                     d.kind = k;
@@ -433,6 +565,63 @@ impl Screen for GitAccess {
     }
 
     fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
+        self.draw_list(f, area);
+        if let Some(gh) = &self.gh {
+            draw_gh(f, area, gh);
+        }
+    }
+}
+
+/// The GitHub sign-in window: the one-time code, where to enter it and what happens.
+fn draw_gh(f: &mut Frame, area: Rect, gh: &GhLogin) {
+    let t = Theme::get();
+    let text = gh.term.contents();
+    let code = device_code(&text);
+    let last: Vec<String> = text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).map(String::from).collect();
+    let key =
+        |k: &str, label: &str| vec![Span::styled(format!(" {k} "), t.key_style()), Span::styled(format!(" {label}   "), t.muted_style())];
+    let mut lines = vec![Line::raw("")];
+    if !gh.term.running && gh.term.exit_code != Some(0) {
+        let code = gh.term.exit_code.map_or("?".into(), |c| c.to_string());
+        lines.push(Line::styled(format!("Sign-in failed (exit {code})"), Style::default().fg(t.danger)));
+        lines.push(Line::raw(""));
+        for l in last.iter().rev().take(6).rev() {
+            lines.push(Line::styled(l.clone(), t.muted_style()));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(key("w", "close")));
+    } else if let Some(code) = code {
+        lines.push(Line::styled("Enter this code on GitHub and approve access:", t.bold()));
+        lines.push(Line::raw(""));
+        let spaced: String = code.chars().map(|c| format!("{c} ")).collect();
+        lines.push(Line::styled(
+            format!("   {}", spaced.trim_end()),
+            Style::default().fg(t.accent).add_modifier(ratatui::style::Modifier::BOLD),
+        ));
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(format!("https://{}/login/device", gh.host), t.accent_style()));
+        lines.push(Line::raw(""));
+        let mut keys = key("o", "open the page");
+        keys.extend(key("c", "copy the code"));
+        keys.extend(key("w", "cancel"));
+        lines.push(Line::from(keys));
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("Waiting for your approval… the login is saved by itself.", t.muted_style()));
+    } else {
+        lines.push(Line::styled("Preparing the GitHub CLI…", t.bold()));
+        lines.push(Line::raw(""));
+        if let Some(l) = last.last() {
+            lines.push(Line::styled(l.clone(), t.muted_style()));
+        }
+    }
+    let h = (lines.len() as u16 + 3).min(area.height);
+    let r = centered(area, 64.min(area.width), h);
+    f.render_widget(Clear, r);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(block(format!("Sign in to {} with GitHub", gh.host), true)), r);
+}
+
+impl GitAccess {
+    fn draw_list(&mut self, f: &mut Frame, area: Rect) {
         let t = Theme::get();
         let [hint, body] = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).areas(area);
         let mut lines: Vec<Line> = wrap_words(
@@ -477,56 +666,32 @@ impl Screen for GitAccess {
     }
 }
 
-// ---------- Users ----------
+// ---------- Account ----------
 
-/// A password change in progress: whose, and the current password when it is your own.
-#[derive(Clone)]
-struct PasswordChange {
-    id: String,
-    username: String,
-    current: Option<String>,
-}
-
-/// Hub accounts (Settings → Users): everyone has the same rights.
+/// The hub's one account (Settings → Account): who is signed in, a new password, log out.
 #[derive(Default)]
-pub struct Users {
-    list: Option<Vec<Value>>,
+pub struct Account {
+    /// `/auth/status`: `{ required, setup, user }`.
+    status: Option<Value>,
     error: Option<String>,
-    nav: Nav,
-    /// The signed-in user's id (`None` on a hub without accounts).
-    me: Option<String>,
-    /// The username of an account being added (the password is asked next).
-    adding: Option<String>,
-    change: Option<PasswordChange>,
-    /// The new password, until it is typed again.
+    /// The current password, then the new one, while a change is typed.
+    current: Option<String>,
     new_password: Option<String>,
 }
 
-impl Users {
-    fn selected(&self) -> Option<Value> {
-        self.nav.selected().and_then(|i| self.list.as_ref()?.get(i).cloned())
-    }
-
+impl Account {
     fn reload(&self, ctx: &Ctx) {
-        ctx.get("list", "/users");
-        ctx.get("me", "/auth/status");
+        ctx.get("status", "/auth/status");
     }
 
-    fn change_password(&mut self, u: &Value, ctx: &mut Ctx) {
-        let (id, username) = (s(&u["id"], "").to_string(), s(&u["username"], "").to_string());
-        let own = self.me.as_deref() == Some(id.as_str());
-        self.change = Some(PasswordChange { id, username: username.clone(), current: None });
-        if own {
-            ctx.prompt_secret("current", "Your current password");
-        } else {
-            ctx.prompt_secret("new-password", format!("New password for {username} (at least 8 characters)"));
-        }
+    fn user(&self) -> Option<&Value> {
+        self.status.as_ref().map(|s| &s["user"]).filter(|u| u.is_object())
     }
 }
 
-impl Screen for Users {
+impl Screen for Account {
     fn title(&self) -> String {
-        "Users".into()
+        "Account".into()
     }
 
     fn on_show(&mut self, ctx: &mut Ctx) {
@@ -534,48 +699,25 @@ impl Screen for Users {
     }
 
     fn actions(&self) -> Vec<Action> {
-        let mut a = vec![Action::new("a", "Add an account"), Action::new("r", "Reload")];
-        if self.selected().is_some() {
-            a.push(Action::new("p", "Change the password of the selected account"));
-            a.push(Action::new("x", "Delete the selected account"));
+        if self.user().is_none() {
+            return vec![Action::new("r", "Reload")];
         }
-        a
+        vec![Action::new("p", "Change the password"), Action::new("o", "Log out"), Action::new("r", "Reload")]
     }
 
     fn on_action(&mut self, key: &str, ctx: &mut Ctx) {
         match key {
-            "a" => ctx.prompt("username", "Username of the new account (letters, digits, . _ -)", ""),
+            "p" if self.user().is_some() => ctx.prompt_secret("current", "Your current password"),
+            // not `l`: that is "right" everywhere, the action would never run
+            "o" if self.user().is_some() => ctx.log_out(),
             "r" => self.reload(ctx),
-            "p" => {
-                if let Some(u) = self.selected() {
-                    self.change_password(&u, ctx);
-                }
-            }
-            "x" => {
-                if let Some(u) = self.selected() {
-                    let name = s(&u["username"], "");
-                    let own = self.me.as_deref() == u["id"].as_str();
-                    let msg = if own {
-                        format!("Delete your own account {name}? You will be signed out.")
-                    } else {
-                        format!("Delete the account {name}? Its sessions end right away.")
-                    };
-                    ctx.confirm(&format!("delete:{}", s(&u["id"], "")), "Delete the account", msg, true);
-                }
-            }
             _ => {}
         }
     }
 
     fn on_key(&mut self, k: KeyEvent, ctx: &mut Ctx) -> Handled {
-        let n = self.list.as_ref().map_or(0, |l| l.len());
-        if self.nav.key(&k, n) {
-            return Handled::Yes;
-        }
-        if k.code == KeyCode::Enter {
-            if let Some(u) = self.selected() {
-                self.change_password(&u, ctx);
-            }
+        if k.code == KeyCode::Enter && self.user().is_some() {
+            ctx.prompt_secret("current", "Your current password");
             return Handled::Yes;
         }
         Handled::No
@@ -583,138 +725,77 @@ impl Screen for Users {
 
     fn on_task(&mut self, key: &str, result: anyhow::Result<Value>, ctx: &mut Ctx) {
         match key {
-            "list" => match result {
+            "status" => match result {
                 Ok(v) => {
-                    self.list = Some(v.as_array().cloned().unwrap_or_default());
+                    self.status = Some(v);
                     self.error = None;
                 }
                 Err(e) => self.error = Some(e.to_string()),
             },
-            "me" => {
-                if let Ok(v) = result {
-                    self.me = v["user"]["id"].as_str().map(String::from);
-                }
-            }
-            "username" => {
-                if let Ok(Value::String(name)) = result
-                    && !name.trim().is_empty()
-                {
-                    let name = name.trim().to_string();
-                    ctx.prompt_secret("password", format!("Password for {name} (at least 8 characters)"));
-                    self.adding = Some(name);
-                }
-            }
-            "password" => {
-                if let (Ok(Value::String(password)), Some(name)) = (result, self.adding.take())
-                    && !password.is_empty()
-                {
-                    ctx.send("added", Method::POST, "/users", json!({ "username": name, "password": password }));
-                }
-            }
-            "added" => {
-                if let Some(u) = ctx.ok(result) {
-                    ctx.info(format!("added {}", s(&u["username"], "")));
-                    self.reload(ctx);
-                }
-            }
-            "current" => match (result, &mut self.change) {
-                (Ok(Value::String(current)), Some(c)) if !current.is_empty() => {
-                    c.current = Some(current);
+            "current" => match result {
+                Ok(Value::String(current)) if !current.is_empty() => {
+                    self.current = Some(current);
                     ctx.prompt_secret("new-password", "Your new password (at least 8 characters)");
                 }
-                _ => self.change = None,
+                _ => self.current = None,
             },
-            "new-password" => match (result, &self.change) {
-                (Ok(Value::String(password)), Some(c)) if !password.is_empty() => {
-                    ctx.prompt_secret("repeat-password", format!("Repeat the new password for {}", c.username));
+            "new-password" => match result {
+                Ok(Value::String(password)) if !password.is_empty() && self.current.is_some() => {
                     self.new_password = Some(password);
+                    ctx.prompt_secret("repeat-password", "Repeat the new password");
                 }
-                _ => self.change = None,
+                _ => self.current = None,
             },
             "repeat-password" => {
-                let (change, first) = (self.change.take(), self.new_password.take());
-                if let (Ok(Value::String(again)), Some(c), Some(first)) = (result, change, first) {
+                let (current, first) = (self.current.take(), self.new_password.take());
+                if let (Ok(Value::String(again)), Some(current), Some(first)) = (result, current, first) {
                     if again != first {
                         ctx.error("the passwords don't match");
                         return;
                     }
-                    let mut body = json!({ "password": first });
-                    if let Some(cur) = c.current {
-                        body["currentPassword"] = json!(cur);
-                    }
-                    ctx.send(format!("changed:{}", c.username), Method::PUT, format!("/users/{}/password", enc(&c.id)), body);
+                    ctx.send("changed", Method::PUT, "/auth/password", json!({ "currentPassword": current, "password": first }));
                 }
             }
-            k if k.starts_with("changed:") => {
-                if ctx.ok(result).is_some() {
-                    ctx.info(format!("password changed for {} (its other sessions ended)", &k[8..]));
-                }
-            }
-            k if k.starts_with("delete:") => {
-                if matches!(result, Ok(Value::Bool(true))) {
-                    ctx.send("deleted", Method::DELETE, format!("/users/{}", enc(&k[7..])), Value::Null);
-                }
-            }
-            "deleted" => {
-                // deleting your own account ends this session: the sign-in screen follows
-                let deleted = ctx.ok(result).is_some();
-                if deleted {
-                    ctx.info("account deleted");
-                    self.reload(ctx);
-                }
-            }
+            "changed" if ctx.ok(result).is_some() => ctx.info("password changed (your other sessions ended)"),
             _ => {}
         }
     }
 
     fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
         let t = Theme::get();
-        let [hint, body] = Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(area);
-        let open = self.list.as_ref().is_some_and(|l| l.is_empty());
-        let text = if open {
-            "No accounts yet: the hub is open to this machine only. The first account turns sign-in on — for the web app, this TUI and every other client."
-        } else {
-            "Everyone with an account has the same rights. A password change or a deleted account ends its sessions."
-        };
-        let mut lines: Vec<Line> = wrap_words(text, area.width.saturating_sub(2) as usize)
-            .into_iter()
-            .map(|l| Line::styled(format!(" {l}"), if open { Style::default().fg(t.warn) } else { t.muted_style() }))
-            .collect();
+        let width = area.width.saturating_sub(4) as usize;
+        let mut lines: Vec<Line> = vec![];
+        match (&self.status, self.user()) {
+            (None, _) => lines.push(Line::styled(" Loading…", t.muted_style())),
+            (Some(_), Some(u)) => {
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {} ", crate::ui::theme::icon("\u{f0004}", "@")), t.accent_style()),
+                    Span::raw("Signed in as "),
+                    Span::styled(s(&u["username"], "").to_string(), t.bold()),
+                ]));
+                lines.push(Line::styled(format!("   created {}", since(s(&u["createdAt"], ""))), t.muted_style()));
+                lines.push(Line::raw(""));
+                for l in
+                    wrap_words("hubness is a one-person hub: this is its only account. A new password ends your other sessions.", width)
+                {
+                    lines.push(Line::styled(format!(" {l}"), t.muted_style()));
+                }
+                lines.push(Line::raw(""));
+                lines.push(Line::styled(" Enter/p change the password · o log out", t.muted_style()));
+            }
+            (Some(_), None) => {
+                for l in wrap_words(
+                    "The hub has no account yet and is open to this machine only. Create it in the web app (Settings → Account) or with `hubness user add <name>` on the hub machine.",
+                    width,
+                ) {
+                    lines.push(Line::styled(format!(" {l}"), Style::default().fg(t.warn)));
+                }
+            }
+        }
         if let Some(e) = &self.error {
             lines.push(Line::styled(format!(" {e}"), Style::default().fg(t.danger)));
         }
-        f.render_widget(Paragraph::new(lines), hint);
-        let title = "accounts — a add · Enter/p password · x delete";
-        let Some(list) = &self.list else {
-            f.render_widget(Paragraph::new("Loading…").block(block(title, true)), body);
-            return;
-        };
-        if list.is_empty() {
-            f.render_widget(
-                Paragraph::new(Line::styled("No accounts — a adds the first one.", t.muted_style())).block(block(title, true)),
-                body,
-            );
-            return;
-        }
-        let items: Vec<ListItem> = list
-            .iter()
-            .map(|u| {
-                let me = self.me.as_deref() == u["id"].as_str();
-                let mut head = vec![
-                    Span::styled(format!(" {} ", crate::ui::theme::icon("\u{f0004}", "@")), t.accent_style()),
-                    Span::styled(s(&u["username"], "").to_string(), t.bold()),
-                ];
-                if me {
-                    head.push(Span::styled("  you", Style::default().fg(t.ok)));
-                }
-                ListItem::new(Text::from(vec![
-                    Line::from(head),
-                    Line::styled(format!("   created {}", since(s(&u["createdAt"], ""))), t.muted_style()),
-                ]))
-            })
-            .collect();
-        self.nav.clamp(list.len());
-        f.render_stateful_widget(List::new(items).block(block(title, true)).highlight_style(t.selected()), body, &mut self.nav.state);
+        f.render_widget(Paragraph::new(lines).block(block("account", true)), area);
     }
 }
 
@@ -779,7 +860,7 @@ impl Screen for Connection {
             "r" => self.check(ctx),
             "a" => ctx.switch_hub(None),
             "s" => {
-                if let Some(url) = self.selected_hub() {
+                if let Some(url) = self.selected_hub().filter(|url| *url != self.current) {
                     ctx.switch_hub(Some(url));
                 }
             }
@@ -807,7 +888,12 @@ impl Screen for Connection {
         if k.code == KeyCode::Enter
             && let Some(url) = self.selected_hub()
         {
-            ctx.switch_hub(Some(url));
+            // the hub you are on: nothing to switch to (a switch would restart the whole app)
+            if url == self.current {
+                ctx.info("You are on this hub");
+            } else {
+                ctx.switch_hub(Some(url));
+            }
             return Handled::Yes;
         }
         Handled::No
@@ -816,7 +902,7 @@ impl Screen for Connection {
     fn on_click(&mut self, id: &str, ctx: &mut Ctx) {
         if let Some(i) = id.strip_prefix("hubs:").and_then(|i| i.parse::<usize>().ok()) {
             if self.nav.selected() == Some(i) {
-                if let Some(url) = self.selected_hub() {
+                if let Some(url) = self.selected_hub().filter(|url| *url != self.current) {
                     ctx.switch_hub(Some(url));
                 }
             } else {
@@ -922,7 +1008,7 @@ impl Screen for Connection {
 
 // ---------- Keyboard ----------
 
-/// The keyboard reference: global keys, then per-screen keys.
+/// The keyboard reference after the app keys of `keymap` (modes, leader, per-screen keys).
 pub const KEYS: &[(&str, &[(&str, &str)])] = &[
     (
         "Modes (like Vim)",
@@ -930,31 +1016,15 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("NORMAL", "browse: motions and single-letter actions"),
             ("INSERT", "typing in a box, prompt, filter or terminal — Esc back to NORMAL"),
             (":", "command palette: every action of the screen and global commands"),
-            ("?", "which-key: the keys of this screen"),
-        ],
-    ),
-    (
-        "Motions (NORMAL)",
-        &[
-            ("j k", "down / up (counts work: 5j)"),
-            ("h l", "left / right: fold, unfold, out of / into a folder"),
-            ("gg G", "first / last"),
-            ("Ctrl+d Ctrl+u", "half a page down / up"),
-            ("Ctrl+f Ctrl+b", "a page down / up"),
-            ("Ctrl+h Ctrl+l", "focus the pane to the left / right (also Ctrl+w h/j/k/l, Space w h/j/k/l)"),
-            ("gt gT", "next / previous tab (also Alt+1…9)"),
-            ("Enter", "open / confirm"),
-            ("/", "filter or search the list"),
-            ("i", "start typing (Enter in a feed)"),
-            ("q Esc", "back (q quits on the first screen)"),
+            ("?", "help: every key of this screen, filterable; Enter runs an action"),
         ],
     ),
     (
         "Leader: Space (Ctrl+G while typing)",
         &[
-            ("Space", "jump to a session"),
+            ("Space", "go to a session, project, group or section (also Ctrl+p)"),
             ("c p s h ,", "chats · projects · system · harness · settings"),
-            ("a", "+actions: the keys of this screen (also ?)"),
+            ("a", "+actions: the actions of this screen"),
             ("w h/j/k/l", "+windows: focus another pane (w cycles)"),
             ("t n/p/1…9", "+tabs: next / previous / a tab by name"),
             ("e", "toggle the sidebar"),
@@ -1012,7 +1082,15 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("c", "Copy a command"),
         ],
     ),
-    ("Prompts and pickers", &[("Enter", "Confirm"), ("Esc", "Cancel"), ("type", "Filter a picker"), ("y / n", "Answer a confirmation")]),
+    (
+        "Prompts and pickers",
+        &[
+            ("Enter", "Confirm"),
+            ("Esc", "Cancel"),
+            ("type", "Filter a picker (fuzzy)"),
+            ("y / n", "Answer a confirmation (Enter never confirms a deletion)"),
+        ],
+    ),
     (
         "Terminals (jobs, shells)",
         &[("keys", "go to the terminal while it runs"), ("Ctrl+G w", "Close the terminal"), ("Esc", "Close once it has exited")],
@@ -1036,6 +1114,8 @@ impl Screen for Keyboard {
             KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
             KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
             KeyCode::Home | KeyCode::Char('g') => self.scroll = 0,
+            // clamped to the end while drawing
+            KeyCode::End | KeyCode::Char('G') => self.scroll = u16::MAX,
             _ => return Handled::No,
         }
         Handled::Yes
@@ -1044,19 +1124,23 @@ impl Screen for Keyboard {
     fn draw(&mut self, f: &mut Frame, area: Rect, _ctx: &Ctx) {
         let t = Theme::get();
         let mut lines = vec![];
-        for (title, keys) in KEYS {
+        // the app keys straight from the key table the app handles them with
+        let sections = [crate::keymap::Group::Motion, crate::keymap::Group::Panes, crate::keymap::Group::Global]
+            .map(|g| (crate::keymap::group_title(g).to_string(), crate::keymap::rows(g)));
+        let fixed = KEYS.iter().map(|(t, keys)| (t.to_string(), keys.iter().map(|(k, l)| (k.to_string(), l.to_string())).collect()));
+        let mut all: Vec<(String, Vec<(String, String)>)> = fixed.collect();
+        all.splice(1..1, sections);
+        for (title, keys) in &all {
             lines.push(Line::styled(title.to_string(), t.accent_style()));
             for (k, label) in keys.iter() {
-                lines.push(Line::from(vec![Span::styled(format!("  {k:<16}"), t.bold()), Span::raw(label.to_string())]));
+                lines.push(Line::from(vec![Span::styled(format!("  {k:<22}"), t.bold()), Span::raw(label.to_string())]));
             }
             lines.push(Line::raw(""));
         }
         let max = (lines.len() as u16).saturating_sub(area.height.saturating_sub(2));
         self.scroll = self.scroll.min(max);
         f.render_widget(
-            Paragraph::new(lines)
-                .scroll((self.scroll, 0))
-                .block(block("Keyboard — the leader panel always lists the current screen's keys", false)),
+            Paragraph::new(lines).scroll((self.scroll, 0)).block(block("Keyboard — ? lists the current screen's keys", false)),
             area,
         );
     }
@@ -1068,9 +1152,55 @@ mod tests {
 
     #[test]
     fn token_pages() {
-        assert_eq!(token_page("github.com").as_deref(), Some("https://github.com/settings/tokens"));
+        assert_eq!(
+            token_page("github.com").as_deref(),
+            Some("https://github.com/settings/tokens/new?scopes=repo,workflow&description=hubness")
+        );
+        assert!(token_page("git.corp-gitlab.io").is_some_and(|u| u.contains("read_repository")));
+        assert_eq!(device_code("! One-time code (ABCD-12EF) copied to clipboard").as_deref(), Some("ABCD-12EF"));
+        assert_eq!(device_code("Open https://github.com/login/device"), None);
         assert_eq!(token_page("code.example.com"), None);
-        assert_eq!(token_page("gitlab.com").as_deref(), Some("https://gitlab.com/-/user_settings/personal_access_tokens"));
+        assert_eq!(
+            token_page("gitlab.com").as_deref(),
+            Some("https://gitlab.com/-/user_settings/personal_access_tokens?name=hubness&scopes=read_repository,write_repository")
+        );
+    }
+
+    #[test]
+    fn device_codes_are_not_dates_versions_or_words() {
+        assert_eq!(device_code("First copy your one-time code: WDJB-MJHT\nPress Enter").as_deref(), Some("WDJB-MJHT"));
+        assert_eq!(device_code("code 12AB-3456.").as_deref(), Some("12AB-3456"));
+        for other in [
+            "2026-1128",
+            "started 2026-11-28 at 10:00",
+            "abcd-1234",
+            "ABCD-12345",
+            "ABC-1234",
+            "ABCD-1234-5678",
+            "ABCD1234",
+            "gh version 2.63.0 (2026-11-01)",
+            "",
+        ] {
+            assert_eq!(device_code(other), None, "{other}");
+        }
+        // the first code in the output
+        assert_eq!(device_code("old AAAA-1111 new BBBB-2222").as_deref(), Some("AAAA-1111"));
+    }
+
+    #[test]
+    fn token_pages_by_the_kind_of_host() {
+        // GitHub Enterprise on its own domain
+        assert!(token_page("github.corp.example").is_some_and(|u| u.starts_with("https://github.corp.example/settings/tokens/new")));
+        assert!(token_page("gitea.example.org").is_some_and(|u| u.ends_with("/user/settings/applications")));
+        assert!(token_page("git-forgejo.example.org").is_some_and(|u| u.ends_with("/user/settings/applications")));
+        assert!(token_page("codeberg.org").is_some());
+        assert_eq!(token_page("bitbucket.org").as_deref(), Some("https://id.atlassian.com/manage-profile/security/api-tokens"));
+        // a name that only contains the word is not that product
+        for host in ["mygithub.com", "notgitlab.example.com", "gitlabs.io", "ungitea.dev", "bitbucket.example.com", "example.com", ""] {
+            assert_eq!(token_page(host), None, "{host}");
+        }
+        assert!(is_github("github.com") && is_github("github.corp.example"));
+        assert!(!is_github("gitlab.com") && !is_github("mygithub.com") && !is_github("github"));
     }
 
     #[test]

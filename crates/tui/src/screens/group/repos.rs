@@ -182,6 +182,7 @@ impl Screen for ReposTab {
             KeyCode::Enter => self.on_action("o", ctx),
             KeyCode::PageDown if self.context.is_some() => self.context_scroll = self.context_scroll.saturating_add(10),
             KeyCode::PageUp if self.context.is_some() => self.context_scroll = self.context_scroll.saturating_sub(10),
+            _ if crate::screens::kit::list_motion(&mut self.list, &k, n) => {}
             _ => return Handled::No,
         }
         Handled::Yes

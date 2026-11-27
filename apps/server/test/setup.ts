@@ -13,6 +13,8 @@ process.env.HUBNESS_DATA_DIR = join(tmp, 'data');
 process.env.HUBNESS_HOME = join(tmp, 'hub');
 process.env.HUBNESS_PORT = '0';
 process.env.HUBNESS_PREVIEW_PORTS = '18790-18799';
+// per-turn ssh-agent sockets (ssh.ts) go here, not into the real runtime folder
+process.env.XDG_RUNTIME_DIR = join(tmp, 'run');
 delete process.env.HUBNESS_SECRET_KEY;
 
 /** Create a git repository (optionally with a remote origin). */
