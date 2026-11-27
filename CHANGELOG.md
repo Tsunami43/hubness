@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-27
+
+### Added
+
+- Voice input: a microphone in the chat input records speech and puts the transcript into
+  the input to check before sending. Settings → Voice input picks where it is transcribed —
+  whisper.cpp on the host (found on PATH or built from source by the hub, models from Tiny
+  to Large v3 Turbo downloaded from the page, ffmpeg needed) or any OpenAI-compatible
+  service such as Groq, OpenAI or speaches (the API key is stored encrypted). Browsers give
+  the microphone only on localhost or over HTTPS; over plain HTTP the button offers an audio
+  file instead.
+
 ## [0.2.4] - 2026-11-27
 
 ### Changed
