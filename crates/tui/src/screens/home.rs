@@ -201,6 +201,7 @@ impl Screen for Home {
             },
             KeyCode::Enter => self.open_selected(ctx),
             KeyCode::Tab => self.focus = Focus::Composer,
+            _ if crate::screens::kit::list_motion(&mut self.list, &k, n) => {}
             _ => return Handled::No,
         }
         Handled::Yes
