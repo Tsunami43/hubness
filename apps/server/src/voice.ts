@@ -24,6 +24,9 @@ const KEY = 'settings.voice';
 const NS = 'voice';
 const MODELS_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
 const WHISPER_REPO = 'https://github.com/ggml-org/whisper.cpp';
+const WHISPER_ARCHIVE = 'https://github.com/ggml-org/whisper.cpp/archive/refs/heads/master.tar.gz';
+/** The portable cmake the hub downloads when the host has none (Kitware's release archives). */
+const CMAKE_VERSION = '3.31.6';
 const PROVIDERS: VoiceProvider[] = ['off', 'local', 'api'];
 
 /** Models offered in Settings, smallest first; ids are ggml file names without `ggml-` and `.bin`. */
@@ -82,11 +85,16 @@ function findBinary(): { path: string; managed: boolean } | null {
   return null;
 }
 
+/**
+ * What the host must have to build whisper.cpp; cmake isn't listed (the hub downloads a
+ * portable one) and neither is git (the source comes as an archive).
+ */
 function missingBuildTools(): string[] {
   const out: string[] = [];
-  if (!which('git')) out.push('git');
-  if (!which('cmake')) out.push('cmake');
   if (!['c++', 'g++', 'clang++'].some((c) => which(c))) out.push('c++');
+  if (!which('make')) out.push('make');
+  if (!which('curl') && !which('wget')) out.push('curl');
+  if (!which('tar')) out.push('tar');
   return out;
 }
 
@@ -155,21 +163,44 @@ export function setVoiceSettings(b: VoiceSettingsInput): VoiceSettings {
 export function installWhisper(size: { cols?: number; rows?: number }): JobInfo {
   const missing = missingBuildTools();
   if (missing.length) throw new HttpError(400, `Missing to build whisper.cpp: ${missing.join(', ')}`);
-  const d = dirs();
-  const jobsN = Math.max(1, Math.min(16, availableParallelism()));
-  const script = [
-    'set -e',
-    `rm -rf ${shq(d.src)}`,
-    `git clone --depth 1 ${WHISPER_REPO} ${shq(d.src)}`,
-    `cmake -S ${shq(d.src)} -B ${shq(join(d.src, 'build'))} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF`,
-    `cmake --build ${shq(join(d.src, 'build'))} --config Release --target whisper-cli -j ${jobsN}`,
-    `mkdir -p ${shq(d.bin)}`,
-    `cp ${shq(join(d.src, 'build', 'bin', 'whisper-cli'))} ${shq(managedBinary() + '.new')}`,
-    `mv ${shq(managedBinary() + '.new')} ${shq(managedBinary())}`,
-    `rm -rf ${shq(d.src)}`,
-    `echo; echo ${shq(`whisper.cpp is installed: ${managedBinary()}`)}`,
-  ].join('\n');
+  const script = buildScript(dirs().root, managedBinary(), Math.max(1, Math.min(16, availableParallelism())));
   return startJob({ title: 'whisper.cpp · build', command: script, display: `build whisper.cpp from ${WHISPER_REPO}`, cols: size.cols, rows: size.rows });
+}
+
+/** The build as a shell script (the same text as `build_script` in `voice.rs`). */
+export function buildScript(root: string, bin: string, jobs: number): string {
+  const src = `${root}/src`;
+  const build = `${src}/build`;
+  const cmakeDir = `${root}/cmake`;
+  const pick = `CMAKE=${shq(`${cmakeDir}/bin/cmake`)}; [ -x "$CMAKE" ] || CMAKE=${shq(`${cmakeDir}/CMake.app/Contents/bin/cmake`)}`;
+  return [
+    'set -e',
+    'fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL "$1"; else wget -qO- "$1"; fi; }',
+    // cmake: the host's, else a portable one kept next to the build
+    'if command -v cmake >/dev/null 2>&1; then CMAKE=cmake; else',
+    `  ${pick}`,
+    '  if [ ! -x "$CMAKE" ]; then',
+    '    case "$(uname -s)-$(uname -m)" in',
+    '      Linux-x86_64) A=linux-x86_64 ;; Linux-aarch64|Linux-arm64) A=linux-aarch64 ;; Darwin-*) A=macos-universal ;;',
+    "      *) echo 'No portable cmake for this platform: install cmake'; exit 1 ;;",
+    '    esac',
+    `    echo "Downloading cmake ${CMAKE_VERSION}…"`,
+    `    rm -rf ${shq(cmakeDir)} && mkdir -p ${shq(cmakeDir)}`,
+    `    fetch "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-$A.tar.gz" | tar -xz --strip-components=1 -C ${shq(cmakeDir)}`,
+    `    ${pick}`,
+    '  fi',
+    'fi',
+    "echo 'Downloading whisper.cpp…'",
+    `rm -rf ${shq(src)} && mkdir -p ${shq(src)}`,
+    `fetch ${WHISPER_ARCHIVE} | tar -xz --strip-components=1 -C ${shq(src)}`,
+    `"$CMAKE" -S ${shq(src)} -B ${shq(build)} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF`,
+    `"$CMAKE" --build ${shq(build)} --config Release --target whisper-cli -j ${jobs}`,
+    `mkdir -p ${shq(`${root}/bin`)}`,
+    `cp ${shq(`${build}/bin/whisper-cli`)} ${shq(`${bin}.new`)}`,
+    `mv ${shq(`${bin}.new`)} ${shq(bin)}`,
+    `rm -rf ${shq(src)}`,
+    `echo; echo ${shq(`whisper.cpp is installed: ${bin}`)}`,
+  ].join('\n');
 }
 
 const modelOr404 = (id: string) => {
