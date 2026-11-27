@@ -590,8 +590,8 @@ export const uk: Record<MessageKey, string> = {
   'style.glassHint': 'Напівпрозорі розмиті панелі поверх кольору, м’які заокруглення.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'Тонові поверхні, великі заокруглення, кнопки-пігулки.',
-  'style.brutal': 'Бруталізм',
-  'style.brutalHint': 'Товсті лінії, жорсткі тіні, яскраві пласкі кольори.',
+  'style.paper': 'Папір',
+  'style.paperHint': 'Теплі сторінки й чорнило: заголовки із зарубками, м’які тіні.',
   'settings.theme': 'Тема',
   'settings.appearance': 'Вигляд',
 

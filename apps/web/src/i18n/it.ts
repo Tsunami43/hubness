@@ -590,8 +590,8 @@ export const it: Record<MessageKey, string> = {
   'style.glassHint': 'Pannelli traslucidi sfocati sul colore, forme morbide.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'Superfici tonali, grandi arrotondamenti, pulsanti a pillola.',
-  'style.brutal': 'Brutal',
-  'style.brutalHint': 'Linee d’inchiostro, ombre dure, colori piatti e accesi.',
+  'style.paper': 'Carta',
+  'style.paperHint': 'Pagine calde e inchiostro: titoli con grazie, ombre morbide.',
   'settings.theme': 'Tema',
   'settings.appearance': 'Aspetto',
 

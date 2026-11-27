@@ -590,8 +590,8 @@ export const ja: Record<MessageKey, string> = {
   'style.glassHint': '色の上に半透明のぼかしパネル、やわらかな角丸。',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'トーンのある面、大きな角丸、ピル型ボタン。',
-  'style.brutal': 'ブルータル',
-  'style.brutalHint': '太い線、硬い影、鮮やかなフラットカラー。',
+  'style.paper': 'ペーパー',
+  'style.paperHint': 'あたたかな紙とインク：明朝体の見出し、やわらかな影。',
   'settings.theme': 'テーマ',
   'settings.appearance': '外観',
 

@@ -590,8 +590,8 @@ export const tr: Record<MessageKey, string> = {
   'style.glassHint': 'Renk üzerinde yarı saydam bulanık paneller, yumuşak köşeler.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'Tonlu yüzeyler, büyük yuvarlatmalar, hap düğmeler.',
-  'style.brutal': 'Brütal',
-  'style.brutalHint': 'Kalın çizgiler, sert gölgeler, canlı düz renkler.',
+  'style.paper': 'Kâğıt',
+  'style.paperHint': 'Sıcak sayfalar ve mürekkep: tırnaklı başlıklar, yumuşak gölgeler.',
   'settings.theme': 'Tema',
   'settings.appearance': 'Görünüm',
 

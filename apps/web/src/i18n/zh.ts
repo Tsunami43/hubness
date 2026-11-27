@@ -590,8 +590,8 @@ export const zh: Record<MessageKey, string> = {
   'style.glassHint': '彩色背景上的半透明模糊面板，柔和圆角。',
   'style.expressive': 'Expressive',
   'style.expressiveHint': '色调表面、大圆角、胶囊按钮。',
-  'style.brutal': '粗野主义',
-  'style.brutalHint': '粗线条、硬阴影、鲜艳的平面色彩。',
+  'style.paper': '纸张',
+  'style.paperHint': '温暖的纸页与墨色：衬线标题、柔和阴影。',
   'settings.theme': '主题',
   'settings.appearance': '外观',
 

@@ -454,7 +454,7 @@ export function Layout() {
           {/* Phone: bottom navigation */}
           {!full ? (
             // phone: the four things done from a phone, in the thumb zone; System and Harness live in Settings
-            <nav className="hide-on-kb pb-safe grid shrink-0 grid-cols-4 border-t border-line bg-surface lg:hidden">
+            <nav className="ui-tabbar hide-on-kb pb-safe grid shrink-0 grid-cols-4 border-t border-line bg-surface lg:hidden">
               {navItems
                 .filter((n) => n.to !== '/system' && n.to !== '/harness')
                 .flatMap<(typeof navItems)[number] | null>((n) => (n.to === '/settings' ? [null, n] : [n]))
@@ -465,7 +465,7 @@ export function Layout() {
                       to={n.to}
                       end={n.to === '/'}
                       className={({ isActive }) =>
-                        `flex flex-col items-center gap-0.5 border-t-2 py-1.5 text-[11px] ${isActive ? 'border-accent text-accent' : 'border-transparent text-muted'}`
+                        `ui-tab flex flex-col items-center gap-0.5 border-t-2 py-1.5 text-[11px] ${isActive ? 'border-accent text-accent' : 'border-transparent text-muted'}`
                       }
                     >
                       <n.icon className="size-[22px]" />
@@ -476,7 +476,8 @@ export function Layout() {
                       key="sessions"
                       type="button"
                       onClick={openHistory}
-                      className={`flex flex-col items-center gap-0.5 border-t-2 py-1.5 text-[11px] ${drawer ? 'border-accent text-accent' : 'border-transparent text-muted'}`}
+                      aria-current={drawer ? 'page' : undefined}
+                      className={`ui-tab flex flex-col items-center gap-0.5 border-t-2 py-1.5 text-[11px] ${drawer ? 'border-accent text-accent' : 'border-transparent text-muted'}`}
                     >
                       <HistoryIcon className="size-[22px]" />
                       {t('history.title')}

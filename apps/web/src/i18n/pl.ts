@@ -590,8 +590,8 @@ export const pl: Record<MessageKey, string> = {
   'style.glassHint': 'Półprzezroczyste rozmyte panele nad kolorem, miękkie zaokrąglenia.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'Tonalne powierzchnie, duże zaokrąglenia, przyciski-pigułki.',
-  'style.brutal': 'Brutalizm',
-  'style.brutalHint': 'Grube linie, twarde cienie, jaskrawe płaskie kolory.',
+  'style.paper': 'Papier',
+  'style.paperHint': 'Ciepłe strony i atrament: nagłówki szeryfowe, miękkie cienie.',
   'settings.theme': 'Motyw',
   'settings.appearance': 'Wygląd',
 

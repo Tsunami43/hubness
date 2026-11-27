@@ -590,8 +590,8 @@ export const ru: Record<MessageKey, string> = {
   'style.glassHint': 'Полупрозрачные размытые панели поверх цвета, мягкие скругления.',
   'style.expressive': 'Expressive',
   'style.expressiveHint': 'Тоновые поверхности, крупные скругления, кнопки-пилюли.',
-  'style.brutal': 'Брутализм',
-  'style.brutalHint': 'Жирные линии, жёсткие тени, яркие плоские цвета.',
+  'style.paper': 'Бумага',
+  'style.paperHint': 'Тёплые страницы и чернила: заголовки с засечками, мягкие тени.',
   'settings.theme': 'Тема',
   'settings.appearance': 'Оформление',
 
