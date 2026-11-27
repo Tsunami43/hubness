@@ -53,6 +53,8 @@ import type {
   SystemPlatform,
   UnitInfo,
   User,
+  VoiceSettings,
+  VoiceSettingsInput,
 } from '@hubness/shared';
 
 import { t } from '../i18n';
@@ -254,6 +256,23 @@ export const api = {
   setGitCredential: (host: string, body: { username: string; kind: GitCredentialKind; secret: string }) =>
     req<GitCredentialInfo[]>('PUT', `/git-credentials/${encodeURIComponent(host)}`, body),
   deleteGitCredential: (host: string) => req<GitCredentialInfo[]>('DELETE', `/git-credentials/${encodeURIComponent(host)}`),
+  voice: () => req<VoiceSettings>('GET', '/voice'),
+  saveVoice: (patch: VoiceSettingsInput) => req<VoiceSettings>('PUT', '/voice', patch),
+  voiceInstall: (body: { cols?: number; rows?: number } = {}) => req<JobInfo>('POST', '/voice/install', body),
+  voiceDownload: (id: string, body: { cols?: number; rows?: number } = {}) => req<JobInfo>('POST', `/voice/models/${encodeURIComponent(id)}`, body),
+  voiceDeleteModel: (id: string) => req<VoiceSettings>('DELETE', `/voice/models/${encodeURIComponent(id)}`),
+  /** Speech to text: the recording is the raw body. */
+  transcribe: async (audio: Blob): Promise<string> => {
+    const res = await fetch('/api/voice/transcribe', {
+      method: 'POST',
+      headers: { 'X-Hubness-Request': '1', 'Content-Type': audio.type || 'application/octet-stream' },
+      body: audio,
+    });
+    const data = await res.json().catch(() => null);
+    if (res.status === 401) window.dispatchEvent(new Event('hubness:unauthorized'));
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? t('api.error', { status: res.status }));
+    return (data as { text: string }).text;
+  },
   users: () => req<User[]>('GET', '/users'),
   createUser: (body: { username: string; password: string }) => req<User>('POST', '/users', body),
   deleteUser: (id: string) => req<{ ok: true }>('DELETE', `/users/${encodeURIComponent(id)}`),

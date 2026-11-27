@@ -28,6 +28,7 @@ import { useHubSettings } from '../lib/hubSettings';
 import { t } from '../i18n';
 import { AttachButton, createWithFiles, PendingFiles, usePendingFiles } from '../lib/attachments';
 import { takeAskDraft } from '../lib/askDraft';
+import { MicButton } from '../lib/voice';
 
 interface HomeState {
   kind: AgentKind;
@@ -200,7 +201,16 @@ export function HomePage() {
                 <span className="truncate">{project ? project.name : t('home.noProject')}</span>
               </button>
 
-              <AttachButton onPick={att.add} className="ml-auto" />
+              <span className="ml-auto flex items-center">
+                <MicButton
+                  onText={(spoken) => {
+                    setText((prev) => (prev.trim() ? `${prev.trimEnd()} ${spoken}` : spoken));
+                    if (!isTouch()) setTimeout(() => ref.current?.focus(), 0);
+                  }}
+                  onError={att.setError}
+                />
+                <AttachButton onPick={att.add} />
+              </span>
               <div>
                 <HarnessSelect
                   value={state.kind}

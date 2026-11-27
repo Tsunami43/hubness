@@ -8,6 +8,7 @@ export type * from './jobs.ts';
 export type * from './projects.ts';
 export type * from './sessions.ts';
 export type * from './system.ts';
+export type * from './voice.ts';
 
 export interface ApiError {
   error: string;

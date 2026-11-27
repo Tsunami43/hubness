@@ -91,6 +91,7 @@ v4).
 | Harness | `/agents`, `/agents/:kind/models`, `/harness`, `/harness/agents`, `/harness/:kind` (versions, latest checks, auth, limits, models), default model, provider account ops | done |
 | Harness | `POST /harness/:kind/actions/:action` (only actions from the harness's own list, as terminal jobs) | done |
 | Harness | `/harness/mcp` (MCP servers × agents from the agents' own configs: add, connect, disconnect, delete; TOML edited with `toml_edit`), `/harness/mcp/catalog` (the MCP Registry, proxied and normalized, `catalog.rs`), `/harness/skills…` (skills × agents: view, copy, create, import from git, remove into the hub trash, `skills.rs`), `/harness/extensions`, `/harness/:kind/extensions`, `/harness/:kind/rules`, `/harness/:kind/file` (`extensions/`) | done |
+| Voice | `GET/PUT /voice` (key encrypted like secrets), `POST /voice/install` and `POST /voice/models/:id` (terminal jobs: whisper.cpp build, model download), `DELETE /voice/models/:id`, `POST /voice/transcribe` (local whisper-cli + ffmpeg, or an OpenAI-compatible service; multipart built by hand) | done |
 | System | `/system/*`: platform, overview (CPU, memory, disks, GPUs, sensors), Docker containers/networks/volumes (logs, actions, safe removal), systemd units (launchd on macOS), package managers and pacman package info; `POST /ask` | done |
 
 Session events are passed through as JSON (`HubEvent` is

@@ -45,6 +45,7 @@ pub fn api() -> Router<AppState> {
         .merge(crate::terminal::routes())
         .merge(crate::runs::routes())
         .merge(crate::environments::routes())
+        .merge(crate::voice::routes())
         .fallback(|| async { HttpError::not_found("Not found") })
 }
 

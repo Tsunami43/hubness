@@ -49,6 +49,8 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
 - `runs.ts`, `terminal.ts`, `preview.ts` — named run commands, interactive shells and the
   per-port preview proxy (`HUBNESS_PREVIEW_PORTS`).
 - `git*.ts` — git operations, credentials helper and provider (GitHub/GitLab…) logins.
+- `voice.ts` — voice input: speech to text through a local whisper.cpp (built and its models
+  downloaded into `<data>/whisper` as terminal jobs) or an OpenAI-compatible service.
 - `secrets.ts` — encrypted per-project secrets (`HUBNESS_SECRET_KEY` or `<data>/secret.key`).
 - `manifest.ts` — project manifest `.hub/hub.yaml` (links, hosts, containers, units),
   shown in the UI and passed to the agent as context.

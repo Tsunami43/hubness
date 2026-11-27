@@ -38,6 +38,7 @@ pub mod sessions;
 pub mod system;
 pub mod terminal;
 pub mod users;
+pub mod voice;
 pub mod watch;
 pub mod web;
 pub mod workspaces;
