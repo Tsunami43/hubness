@@ -48,6 +48,9 @@ export function tokenPages(host: string): { label: string | null; url: string }[
   ];
 }
 
+/** Public hostings offered under the host field. */
+const POPULAR_HOSTS = ['github.com', 'gitlab.com', 'codeberg.org', 'bitbucket.org'];
+
 /**
  * Sign in to a git host over HTTPS: token (recommended) or login + password. The
  * secret goes to the server once and is never shown again.
@@ -74,6 +77,22 @@ export function GitLoginSheet({
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // hosts of the projects' remotes first (the ones likely to need a login), then public hostings
+  const [suggested, setSuggested] = useState<string[]>(POPULAR_HOSTS);
+
+  useEffect(() => {
+    if (!open || fixedHost) return;
+    let live = true;
+    Promise.all([api.projects().catch(() => []), api.gitCredentials().catch(() => [])]).then(([projects, creds]) => {
+      if (!live) return;
+      const stored = new Set(creds.map((c) => c.host));
+      const fromProjects = projects.map((p) => (p.repoUrl ? hostOf(p.repoUrl) : '')).filter(Boolean);
+      setSuggested([...new Set([...fromProjects, ...POPULAR_HOSTS])].filter((h) => !stored.has(h)).slice(0, 8));
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, fixedHost]);
 
   useEffect(() => {
     if (!open) return;
@@ -153,6 +172,21 @@ export function GitLoginSheet({
             />
           </Field>
         )}
+        {fixedHost ? null : suggested.length ? (
+          <div className="-mt-2 flex flex-wrap gap-1.5">
+            {suggested.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setHost(s)}
+                aria-pressed={hostOf(host) === s}
+                className={`border px-2 py-0.5 font-mono text-xs ${hostOf(host) === s ? 'border-accent text-accent' : 'border-line text-muted hover:text-fg'}`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="flex border border-line" role="radiogroup" aria-label={t('gitauth.method')}>
           {(['token', 'password'] as const).map((k) => (
             <button
