@@ -580,6 +580,17 @@ export const en = {
   'projects.sortUpdated': 'Last updated',
   'projects.sortName': 'Name',
   'projects.updated': 'Updated {time}',
+  'settings.systemHint': 'Host: Docker, services, packages',
+  'settings.harnessHint': 'Agents, MCP servers, skills',
+  'settings.style': 'Style',
+  'style.strict': 'Strict',
+  'style.strictHint': 'Monospace, square, thin lines — like a terminal.',
+  'style.glass': 'Liquid Glass',
+  'style.glassHint': 'Translucent blurred panels over colour, soft rounded shapes.',
+  'style.expressive': 'Expressive',
+  'style.expressiveHint': 'Tonal surfaces, big rounded shapes, pill buttons.',
+  'style.brutal': 'Brutal',
+  'style.brutalHint': 'Ink lines, hard shadows, loud flat colours.',
   'settings.theme': 'Theme',
   'settings.appearance': 'Appearance',
 
@@ -1105,6 +1116,15 @@ export const en = {
   'mobile.fullWorkspace': 'Full workspace',
   'mobile.fullWorkspaceHint': 'Editor, tabs and every tool, as on a computer.',
   'mobile.simpleView': 'Simple view',
+  // quick replies in the chat
+  'quick.continue': 'Continue',
+  'quick.continueText': 'Continue.',
+  'quick.changes': 'What changed?',
+  'quick.changesText': 'What did you change? A short list of files and why.',
+  'quick.tests': 'Run tests',
+  'quick.testsText': 'Run the tests and fix what fails.',
+  'quick.commit': 'Commit & push',
+  'quick.commitText': 'Commit the changes with a clear message and push them.',
 } as const;
 
 export type MessageKey = keyof typeof en;

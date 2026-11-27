@@ -1,6 +1,6 @@
 import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, House, LogOut, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
+import { Activity, Archive, ArchiveRestore, Boxes, Cpu, FolderGit2, History as HistoryIcon, House, LogOut, Menu, MessageSquare, PanelRightClose, Settings, SquarePen, Trash2, X, type LucideIcon } from 'lucide-react';
 import { useAccess, useAuth } from './AuthGate';
 import type { Session } from '@hubness/shared';
 import { api } from '../lib/api';
@@ -453,20 +453,36 @@ export function Layout() {
           </main>
           {/* Phone: bottom navigation */}
           {!full ? (
-            <nav className="hide-on-kb pb-safe grid shrink-0 grid-cols-5 border-t border-line bg-surface lg:hidden">
-              {navItems.map(({ to, label, icon: Icon }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={to === '/'}
-                  className={({ isActive }) =>
-                    `flex flex-col items-center gap-0.5 border-t-2 py-1.5 text-[11px] ${isActive ? 'border-accent text-accent' : 'border-transparent text-muted'}`
-                  }
-                >
-                  <Icon className="size-[22px]" />
-                  {t(label)}
-                </NavLink>
-              ))}
+            // phone: the four things done from a phone, in the thumb zone; System and Harness live in Settings
+            <nav className="hide-on-kb pb-safe grid shrink-0 grid-cols-4 border-t border-line bg-surface lg:hidden">
+              {navItems
+                .filter((n) => n.to !== '/system' && n.to !== '/harness')
+                .flatMap<(typeof navItems)[number] | null>((n) => (n.to === '/settings' ? [null, n] : [n]))
+                .map((n) =>
+                  n ? (
+                    <NavLink
+                      key={n.to}
+                      to={n.to}
+                      end={n.to === '/'}
+                      className={({ isActive }) =>
+                        `flex flex-col items-center gap-0.5 border-t-2 py-1.5 text-[11px] ${isActive ? 'border-accent text-accent' : 'border-transparent text-muted'}`
+                      }
+                    >
+                      <n.icon className="size-[22px]" />
+                      {t(n.label)}
+                    </NavLink>
+                  ) : (
+                    <button
+                      key="sessions"
+                      type="button"
+                      onClick={openHistory}
+                      className={`flex flex-col items-center gap-0.5 border-t-2 py-1.5 text-[11px] ${drawer ? 'border-accent text-accent' : 'border-transparent text-muted'}`}
+                    >
+                      <HistoryIcon className="size-[22px]" />
+                      {t('history.title')}
+                    </button>
+                  ),
+                )}
             </nav>
           ) : null}
         </div>
