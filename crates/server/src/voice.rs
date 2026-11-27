@@ -2,7 +2,8 @@
 //!
 //! A recording from the browser becomes text for the chat input. Two providers:
 //! - `local` — whisper.cpp on this machine. The hub finds `whisper-cli` on PATH or builds its
-//!   own copy into `<data>/whisper/bin` (a terminal job), downloads ggml models into
+//!   own copy into `<data>/whisper/bin` (a terminal job: the source archive, and a portable
+//!   cmake into `<data>/whisper/cmake` when the host has none), downloads ggml models into
 //!   `<data>/whisper/models` and converts the recording to 16 kHz WAV with ffmpeg;
 //! - `api` — any OpenAI-compatible `/audio/transcriptions` endpoint (OpenAI, Groq, speaches,
 //!   whisper-server…); the key is encrypted like project secrets.
@@ -37,6 +38,9 @@ const KEY: &str = "settings.voice";
 const NS: &str = "voice";
 const MODELS_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const WHISPER_REPO: &str = "https://github.com/ggml-org/whisper.cpp";
+const WHISPER_ARCHIVE: &str = "https://github.com/ggml-org/whisper.cpp/archive/refs/heads/master.tar.gz";
+/// The portable cmake the hub downloads when the host has none (Kitware's release archives).
+const CMAKE_VERSION: &str = "3.31.6";
 const DEFAULT_MODEL: &str = "large-v3-turbo-q5_0";
 
 /// Models offered in Settings, smallest first; ids are ggml file names without `ggml-` and `.bin`.
@@ -98,16 +102,21 @@ fn find_binary(data_dir: &Path) -> Option<(PathBuf, bool)> {
     ["whisper-cli", "whisper-cpp"].iter().find_map(|n| which(n)).map(|p| (p, false))
 }
 
+/// What the host must have to build whisper.cpp; cmake isn't listed (the hub downloads a
+/// portable one) and neither is git (the source comes as an archive).
 fn missing_build_tools() -> Vec<String> {
     let mut out = vec![];
-    if which("git").is_none() {
-        out.push("git".into());
-    }
-    if which("cmake").is_none() {
-        out.push("cmake".into());
-    }
     if !["c++", "g++", "clang++"].iter().any(|c| which(c).is_some()) {
         out.push("c++".into());
+    }
+    if which("make").is_none() {
+        out.push("make".into());
+    }
+    if which("curl").is_none() && which("wget").is_none() {
+        out.push("curl".into());
+    }
+    if which("tar").is_none() {
+        out.push("tar".into());
     }
     out
 }
@@ -233,24 +242,7 @@ pub fn install(config: &Config, size: &TermSize) -> ApiResult<JobInfo> {
     if !missing.is_empty() {
         return Err(HttpError::bad_request(format!("Missing to build whisper.cpp: {}", missing.join(", "))));
     }
-    let src = path_str(&root(&config.data_dir).join("src"));
-    let build = format!("{src}/build");
-    let bin_dir = path_str(&root(&config.data_dir).join("bin"));
-    let bin = path_str(&managed_binary(&config.data_dir));
-    let jobs = parallelism().clamp(1, 16);
-    let script = [
-        "set -e".to_string(),
-        format!("rm -rf {}", shq(&src)),
-        format!("git clone --depth 1 {WHISPER_REPO} {}", shq(&src)),
-        format!("cmake -S {} -B {} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF", shq(&src), shq(&build)),
-        format!("cmake --build {} --config Release --target whisper-cli -j {jobs}", shq(&build)),
-        format!("mkdir -p {}", shq(&bin_dir)),
-        format!("cp {} {}", shq(&format!("{build}/bin/whisper-cli")), shq(&format!("{bin}.new"))),
-        format!("mv {} {}", shq(&format!("{bin}.new")), shq(&bin)),
-        format!("rm -rf {}", shq(&src)),
-        format!("echo; echo {}", shq(&format!("whisper.cpp is installed: {bin}"))),
-    ]
-    .join("\n");
+    let script = build_script(&path_str(&root(&config.data_dir)), &path_str(&managed_binary(&config.data_dir)), parallelism().clamp(1, 16));
     Ok(start_job(JobOpts {
         title: "whisper.cpp · build".into(),
         command: script,
@@ -259,6 +251,45 @@ pub fn install(config: &Config, size: &TermSize) -> ApiResult<JobInfo> {
         rows: size.rows,
         ..Default::default()
     }))
+}
+
+/// The build as a shell script (the same text as `buildScript` in `voice.ts`).
+fn build_script(root: &str, bin: &str, jobs: usize) -> String {
+    let src = format!("{root}/src");
+    let build = format!("{src}/build");
+    let cmake_dir = format!("{root}/cmake");
+    [
+        "set -e".to_string(),
+        "fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL \"$1\"; else wget -qO- \"$1\"; fi; }".into(),
+        // cmake: the host's, else a portable one kept next to the build
+        "if command -v cmake >/dev/null 2>&1; then CMAKE=cmake; else".into(),
+        format!("  CMAKE={}; [ -x \"$CMAKE\" ] || CMAKE={}", shq(&format!("{cmake_dir}/bin/cmake")), shq(&format!("{cmake_dir}/CMake.app/Contents/bin/cmake"))),
+        "  if [ ! -x \"$CMAKE\" ]; then".into(),
+        "    case \"$(uname -s)-$(uname -m)\" in".into(),
+        "      Linux-x86_64) A=linux-x86_64 ;; Linux-aarch64|Linux-arm64) A=linux-aarch64 ;; Darwin-*) A=macos-universal ;;".into(),
+        "      *) echo 'No portable cmake for this platform: install cmake'; exit 1 ;;".into(),
+        "    esac".into(),
+        format!("    echo \"Downloading cmake {CMAKE_VERSION}…\""),
+        format!("    rm -rf {d} && mkdir -p {d}", d = shq(&cmake_dir)),
+        format!(
+            "    fetch \"https://github.com/Kitware/CMake/releases/download/v{CMAKE_VERSION}/cmake-{CMAKE_VERSION}-$A.tar.gz\" | tar -xz --strip-components=1 -C {}",
+            shq(&cmake_dir)
+        ),
+        format!("    CMAKE={}; [ -x \"$CMAKE\" ] || CMAKE={}", shq(&format!("{cmake_dir}/bin/cmake")), shq(&format!("{cmake_dir}/CMake.app/Contents/bin/cmake"))),
+        "  fi".into(),
+        "fi".into(),
+        "echo 'Downloading whisper.cpp…'".into(),
+        format!("rm -rf {s} && mkdir -p {s}", s = shq(&src)),
+        format!("fetch {WHISPER_ARCHIVE} | tar -xz --strip-components=1 -C {}", shq(&src)),
+        format!("\"$CMAKE\" -S {} -B {} -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF", shq(&src), shq(&build)),
+        format!("\"$CMAKE\" --build {} --config Release --target whisper-cli -j {jobs}", shq(&build)),
+        format!("mkdir -p {}", shq(&format!("{root}/bin"))),
+        format!("cp {} {}", shq(&format!("{build}/bin/whisper-cli")), shq(&format!("{bin}.new"))),
+        format!("mv {} {}", shq(&format!("{bin}.new")), shq(bin)),
+        format!("rm -rf {}", shq(&src)),
+        format!("echo; echo {}", shq(&format!("whisper.cpp is installed: {bin}"))),
+    ]
+    .join("\n")
 }
 
 fn model_or_404(id: &str) -> ApiResult<()> {
@@ -534,6 +565,16 @@ async fn transcribe_route(State(s): State<AppState>, headers: HeaderMap, body: a
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_script_needs_no_cmake_or_git() {
+        let s = build_script("/d/whisper", "/d/whisper/bin/whisper-cli", 4);
+        assert!(s.contains("cmake-3.31.6-$A.tar.gz") && s.contains("archive/refs/heads/master.tar.gz"));
+        assert!(!s.contains("git clone"));
+        if let Ok(out) = std::env::var("HUBNESS_PRINT_BUILD_SCRIPT") {
+            std::fs::write(out, &s).unwrap();
+        }
+    }
 
     #[test]
     fn transcript_and_names() {
