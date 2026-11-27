@@ -7,7 +7,7 @@ import { useVoiceSettings } from '../../lib/voice';
 import { liveStream } from '../../lib/stream';
 import { Button, ErrorLine, Field, IconButton, inputCls, Spinner } from '../../components/ui';
 import { Select } from '../../components/Select';
-import { sheetTermSize, TerminalSheet } from '../../components/Terminal';
+import { sheetTermSize } from '../../components/Terminal';
 import { confirmDialog } from '../../components/Confirm';
 import { getLang, t } from '../../i18n';
 import type { MessageKey } from '../../i18n/en';
@@ -31,8 +31,7 @@ const PRESETS = [
 export function VoicePage() {
   const { data: s, setData, error: loadError } = useVoiceSettings();
   const [error, setError] = useState<string | null>(null);
-  const [job, setJob] = useState<JobInfo | null>(null);
-  const [build, setBuild] = useState<JobInfo | null>(null);
+  const [steps, setSteps] = useState<Step[] | null>(null);
   if (!s) return loadError ? <ErrorLine error={loadError} /> : <Spinner />;
 
   const save = async (patch: VoiceSettingsInput) => {
@@ -46,19 +45,14 @@ export function VoicePage() {
     }
   };
   const reload = () => api.voice().then(setData, (e) => setError((e as Error).message));
-  const runJob = (start: Promise<JobInfo>) => {
-    setError(null);
-    start.then(setJob, (e) => setError((e as Error).message));
-  };
-
-  const startBuild = () => {
-    setError(null);
-    api.voiceInstall(sheetTermSize(24)).then(setBuild, (e) => setError((e as Error).message));
-  };
-  // picking a downloaded model builds whisper.cpp when the hub has none yet
-  const choose = async (localModel: string) => {
-    if (localModel !== s.local.model && !(await save({ localModel }))) return;
-    if (!s.local.binary && !s.local.missingBuildTools.length) startBuild();
+  // one click on a model does the rest in one overlay: download it, choose it, build whisper.cpp
+  const needBuild = !s.local.binary && !s.local.missingBuildTools.length;
+  const pick = async (m: VoiceSettings['local']['models'][number]) => {
+    const next: Step[] = [];
+    if (!m.installed) next.push({ kind: 'download', id: m.id, label: m.label });
+    else if (m.id !== s.local.model && !(await save({ localModel: m.id }))) return;
+    if (needBuild) next.push({ kind: 'build' });
+    if (next.length) setSteps(next);
   };
 
   return (
@@ -98,9 +92,8 @@ export function VoicePage() {
       {s.provider === 'local' ? (
         <LocalSection
           s={s}
-          onSelect={(id) => void choose(id)}
-          onInstall={startBuild}
-          onDownload={(id) => runJob(api.voiceDownload(id, sheetTermSize(24)))}
+          onPick={(m) => void pick(m)}
+          onInstall={() => setSteps([{ kind: 'build' }])}
           onDelete={async (id, label) => {
             if (!(await confirmDialog({ message: t('voice.deleteModelConfirm', { name: label }), confirmLabel: t('common.delete'), danger: true }))) return;
             api.voiceDeleteModel(id).then(setData, (e) => setError((e as Error).message));
@@ -111,16 +104,11 @@ export function VoicePage() {
 
       <ErrorLine error={error} />
       {s.provider !== 'off' ? <p className="text-xs text-muted">{t('voice.httpsHint')}</p> : null}
-      <TerminalSheet job={job} onClose={() => setJob(null)} onDone={() => void reload()} />
-      {build ? (
-        <BuildOverlay
-          job={build}
-          onDone={() => {
-            setBuild(null);
-            void reload();
-          }}
-          onClose={() => {
-            setBuild(null);
+      {steps ? (
+        <SetupOverlay
+          steps={steps}
+          onFinish={() => {
+            setSteps(null);
             void reload();
           }}
         />
@@ -160,15 +148,13 @@ function Status({ s }: { s: VoiceSettings }) {
 
 function LocalSection({
   s,
-  onSelect,
+  onPick,
   onInstall,
-  onDownload,
   onDelete,
 }: {
   s: VoiceSettings;
-  onSelect: (id: string) => void;
+  onPick: (m: VoiceSettings['local']['models'][number]) => void;
   onInstall: () => void;
-  onDownload: (id: string) => void;
   onDelete: (id: string, label: string) => void;
 }) {
   const { local } = s;
@@ -181,14 +167,8 @@ function LocalSection({
         <ul className="divide-y divide-line border border-line bg-surface">
           {local.models.map((m) => (
             <li key={m.id} className="flex items-center gap-2 pr-2">
-              {/* only a downloaded model can be chosen; choosing one builds whisper.cpp if needed */}
-              <button
-                type="button"
-                disabled={!m.installed}
-                title={m.installed ? undefined : t('voice.downloadFirst')}
-                onClick={() => onSelect(m.id)}
-                className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-sunken disabled:cursor-default"
-              >
+              {/* a click downloads the model if needed, chooses it and builds whisper.cpp if needed */}
+              <button type="button" onClick={() => onPick(m)} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-left hover:bg-sunken">
                 <span className="min-w-0 flex-1">
                   <span className={`block text-sm font-medium ${m.installed ? '' : 'text-muted'}`}>
                     {m.label}
@@ -205,7 +185,7 @@ function LocalSection({
                   <Trash2 className="size-3.5" />
                 </IconButton>
               ) : (
-                <IconButton label={t('voice.download')} className="size-8" onClick={() => onDownload(m.id)}>
+                <IconButton label={t('voice.download')} className="size-8" onClick={() => onPick(m)}>
                   <Download className="size-3.5" />
                 </IconButton>
               )}
@@ -254,58 +234,115 @@ function tailLines(out: string, n: number) {
 
 const clock = (secs: number) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 
-/** Blocks the page while whisper.cpp builds: a spinner, the elapsed time and the current step; the log on failure. */
-function BuildOverlay({ job, onDone, onClose }: { job: JobInfo; onDone: () => void; onClose: () => void }) {
+/** A step of setting up local voice input, each one a terminal job on the server. */
+type Step = { kind: 'download'; id: string; label: string } | { kind: 'build' };
+
+/** curl's progress bar ends with the percentage. */
+const percentOf = (line: string | undefined) => {
+  const m = line?.match(/(\d{1,3}(?:\.\d)?)%\s*$/);
+  return m ? Math.min(100, Number(m[1])) : null;
+};
+
+/** A ring: filled to `percent`, or spinning while the progress is unknown. */
+function Ring({ percent }: { percent: number | null }) {
+  if (percent === null) return <span aria-hidden className="size-12 shrink-0 animate-spin rounded-full border-4 border-line border-t-accent" />;
+  const c = 2 * Math.PI * 20;
+  return (
+    <span className="relative inline-flex size-12 shrink-0 items-center justify-center">
+      <svg viewBox="0 0 48 48" className="absolute inset-0 -rotate-90" aria-hidden>
+        <circle cx="24" cy="24" r="20" fill="none" strokeWidth="4" className="stroke-line" />
+        <circle cx="24" cy="24" r="20" fill="none" strokeWidth="4" className="stroke-accent" strokeDasharray={c} strokeDashoffset={c * (1 - percent / 100)} />
+      </svg>
+      <span className="font-mono text-[10px] tabular-nums">{Math.round(percent)}%</span>
+    </span>
+  );
+}
+
+/**
+ * Blocks the page while voice input gets ready: downloads the model (then chooses it) and
+ * builds whisper.cpp, one step after another, with the progress, the elapsed time and the
+ * current output line; the log when a step fails.
+ */
+function SetupOverlay({ steps, onFinish }: { steps: Step[]; onFinish: () => void }) {
+  const [index, setIndex] = useState(0);
+  const [job, setJob] = useState<JobInfo | null>(null);
   const out = useRef('');
   const [lines, setLines] = useState<string[]>([]);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
   const [secs, setSecs] = useState(0);
+  const step = steps[index]!;
+
+  // start the current step's job
+  useEffect(() => {
+    let live = true;
+    out.current = '';
+    setLines([]);
+    setJob(null);
+    const size = sheetTermSize(24);
+    (step.kind === 'download' ? api.voiceDownload(step.id, size) : api.voiceInstall(size)).then(
+      (j) => live && setJob(j),
+      (e) => live && setFailed((e as Error).message),
+    );
+    return () => {
+      live = false;
+    };
+  }, [index]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const started = Date.now();
     const timer = setInterval(() => setSecs(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // follow it; on success choose the downloaded model and go on
+  useEffect(() => {
+    if (!job) return;
     const stop = liveStream(`/api/jobs/${job.id}/stream`, (data) => {
       const m = JSON.parse(data) as JobStreamMsg;
       if (m.type === 'snapshot') out.current = m.output;
       else if (m.type === 'output') out.current += m.data;
       else {
-        clearInterval(timer);
         stop();
-        if (m.code === 0) onDone();
-        else setFailed(true);
+        if (m.code !== 0) return setFailed('');
+        void (async () => {
+          if (step.kind === 'download') await api.saveVoice({ localModel: step.id }).catch(() => {});
+          if (index + 1 < steps.length) setIndex(index + 1);
+          else onFinish();
+        })();
       }
       setLines(tailLines(out.current, 14));
     });
-    return () => {
-      clearInterval(timer);
-      stop();
-    };
-  }, [job.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    return stop;
+  }, [job?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const title = step.kind === 'download' ? t('voice.downloading', { name: step.label }) : t('voice.building');
+  const percent = step.kind === 'download' ? percentOf(lines.at(-1)) : null;
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={t('voice.building')}>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" role="alertdialog" aria-modal="true" aria-label={title}>
       <div className="w-full max-w-md space-y-4 border border-line bg-surface p-5">
-        {failed ? (
+        {failed !== null ? (
           <>
             <p className="flex items-center gap-2 font-semibold text-danger">
-              <CircleAlert className="size-5" /> {t('voice.buildFailed')}
+              <CircleAlert className="size-5" /> {step.kind === 'download' ? t('voice.downloadFailed') : t('voice.buildFailed')}
             </p>
-            <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{lines.join('\n')}</pre>
-            <Button variant="primary" onClick={onClose}>
+            <pre className="max-h-64 overflow-auto bg-bg p-2 font-mono text-xs whitespace-pre-wrap text-muted">{failed || lines.join('\n')}</pre>
+            <Button variant="primary" onClick={onFinish}>
               {t('common.close')}
             </Button>
           </>
         ) : (
           <>
             <div className="flex items-center gap-4">
-              <span aria-hidden className="size-12 shrink-0 animate-spin rounded-full border-4 border-line border-t-accent" />
+              <Ring percent={percent} />
               <div className="min-w-0">
-                <p className="font-semibold">{t('voice.building')}</p>
-                <p className="text-xs text-muted">{t('voice.buildingHint')}</p>
+                {steps.length > 1 ? <p className="text-xs text-muted">{t('voice.step', { n: index + 1, total: steps.length })}</p> : null}
+                <p className="font-semibold">{title}</p>
+                <p className="text-xs text-muted">{step.kind === 'download' ? t('voice.downloadingHint') : t('voice.buildingHint')}</p>
               </div>
               <span className="ml-auto font-mono text-sm text-muted tabular-nums">{clock(secs)}</span>
             </div>
-            <p className="truncate font-mono text-xs text-muted">{lines.at(-1) ?? ''}</p>
-            <Button size="sm" onClick={() => void api.jobKill(job.id)}>
+            {step.kind === 'build' ? <p className="truncate font-mono text-xs text-muted">{lines.at(-1) ?? ''}</p> : null}
+            <Button size="sm" disabled={!job} onClick={() => job && void api.jobKill(job.id)}>
               <Square className="size-3.5" /> {t('term.stop')}
             </Button>
           </>
