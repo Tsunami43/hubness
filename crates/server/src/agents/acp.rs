@@ -719,6 +719,10 @@ impl RunHandle for Handle {
     fn respond(&self, request_id: &str, d: ApprovalDecision) -> bool {
         let c = &self.0;
         let id: i64 = request_id.split(':').next().and_then(|s| s.parse().ok()).unwrap_or(-1);
+        // the run tag matters: a new process restarts JSON-RPC ids, so 0:<old run> must not answer 0:<this run>
+        if request_id != format!("{id}:{}", c.run_tag) {
+            return false;
+        }
         let (params, none_left) = {
             let mut st = c.state.lock().expect("acp state");
             let Some(pos) = st.pending.iter().position(|(i, _)| *i == id) else { return false };
