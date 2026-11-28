@@ -870,6 +870,14 @@ test('ACP agents: codex turn (bypass and ask with approval), opencode provider e
     { uid: 'retry', kind: 'notice', level: 'info', text: 'Provider error 429 model:free is temporarily rate-limited upstream. — retry #1' },
     { uid: 'err', kind: 'notice', level: 'error', text: 'Provider request failed\n429 model:free is temporarily rate-limited upstream.' },
   ]);
+
+  // Stop while the agent never answers session/prompt: it ignores session/cancel and dies on the hub's SIGTERM
+  useFixture('acp-no-answer.jsonl');
+  const hung = (await call('POST', '/sessions', { agent: { kind: 'opencode' }, prompt: 'hi' })).json;
+  await waitFor(hung.id, (x) => x.agentSessionId === 'acp-sess-2', 'the opencode session');
+  assert.deepEqual((await call('POST', `/sessions/${hung.id}/stop`)).json, { ok: true });
+  await waitFor(hung.id, (x) => x.status === 'idle', 'the stopped opencode turn');
+  assert.deepEqual((await feed(hung.id)).slice(1), [{ uid: 'stop', kind: 'notice', level: 'info', text: 'Stopped' }]);
 });
 
 test('hub MCP server: open_pane and close_pane reach the session (rust: `hubness mcp`)', { skip: target !== 'rust' && 'the TS server runs in-process (no listener)' }, async () => {

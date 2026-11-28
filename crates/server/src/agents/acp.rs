@@ -829,7 +829,15 @@ pub fn start(spec: &'static Spec, turn: Arc<Turn>) -> Result<Started, String> {
                     c.end();
                 }
                 status = closed => {
-                    let (finished, stopped, settled) = { let st = c.state.lock().expect("acp state"); (st.finished, st.stopped, st.settled) };
+                    // run() waits on calls the agent will never answer: end its turn here (text, Stopped)
+                    let (finished, stopped, settled, reason) = {
+                        let mut st = c.state.lock().expect("acp state");
+                        c.flush_text(&mut st);
+                        (st.finished, st.stopped, st.settled, st.stop_reason)
+                    };
+                    if stopped {
+                        c.turn.put(&format!("stop:{}", c.run_tag), json!({ "kind": "notice", "level": "info", "text": stop_notice(reason.unwrap_or(StopReason::User)) }), true);
+                    }
                     // settled: the hub stopped the process; not an agent crash
                     if !finished && !stopped && !settled {
                         let code = status.and_then(|s| s.code()).map(|c| c.to_string()).unwrap_or_else(|| "null".into());

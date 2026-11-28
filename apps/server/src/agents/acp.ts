@@ -444,6 +444,7 @@ export function createAcpAdapter(spec: AcpSpec): AgentAdapter {
 
       const done = new Promise<void>((resolve) => {
         let settled = false;
+        let exited = false;
         const end = () => {
           if (settled) return;
           settled = true;
@@ -470,12 +471,18 @@ export function createAcpAdapter(spec: AcpSpec): AgentAdapter {
               text: `${spec.label} exited with code ${code}${tail ? `:\n${tail}` : ''}`,
             });
           }
-          end();
+          exited = true;
+          // calls the agent will never answer: fail them so run() ends the turn (and says Stopped)
+          const inFlight = calls.size > 0;
+          for (const h of calls.values()) h.reject(new Error(`${spec.label} exited`));
+          calls.clear();
+          if (!inFlight) end();
         });
         run()
           .catch((err: Json) => {
             flushText();
-            if (stopped) return;
+            // exited: the close handler has already reported the crash
+            if (stopped || exited) return;
             const msg = err?.message ?? String(err);
             ctx.put(`err:${runTag}`, { kind: 'notice', level: 'error', text: lastProviderError ? `${msg}\n${lastProviderError}` : msg });
           })
