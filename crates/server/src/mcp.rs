@@ -29,8 +29,8 @@ pub fn hub_mcp(self_url: &str, session_id: &str) -> Option<McpServer> {
         args: vec!["mcp".into()],
         env: {
             let mut env = vec![("HUB_URL".into(), self_url.to_string()), ("HUB_SESSION_ID".into(), session_id.to_string())];
-            // the MCP server calls the hub back with the per-process service token
-            if let Some(t) = crate::auth::service_token() {
+            // the MCP server calls the hub back with a token that opens only this session's MCP routes
+            if let Some(t) = crate::auth::agent_token(session_id) {
                 env.push(("HUB_TOKEN".into(), t));
             }
             env
