@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { BrowseResponse, FileContent, FsEntry } from '@hubness/shared';
 import { HttpError } from './errors.ts';
+import { SAFE_GIT_ARGS } from './git.ts';
 
 const HIDDEN_IN_TREE = new Set(['.git']);
 /** Outside a git repository, the usual build and dependency folders are treated as internal. */
@@ -26,7 +27,7 @@ const byDirThenName = (a: FsEntry, b: FsEntry) =>
 /** git in a folder without blocking the event loop: exit code and stdout (stderr is dropped). */
 function gitOut(cwd: string, args: string[], input?: string): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn('git', ['-C', cwd, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
+    const child = spawn('git', [...SAFE_GIT_ARGS, '-C', cwd, ...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'] });
     const chunks: Buffer[] = [];
     child.stdout!.on('data', (d: Buffer) => chunks.push(d));
     child.on('error', () => resolve({ code: 127, out: '' }));

@@ -63,6 +63,7 @@ fn git_ignored(cwd: &Path, names: &[String]) -> Option<HashSet<String>> {
         return Some(HashSet::new());
     }
     let mut child = Command::new("git")
+        .args(crate::git::SAFE_ARGS)
         .arg("-C")
         .arg(cwd)
         .args(["check-ignore", "--stdin"])
@@ -301,7 +302,13 @@ pub fn browse(path: Option<&str>) -> ApiResult<BrowseResponse> {
 /// outside git — a folder walk.
 pub fn list_files(root: &Path, limit: usize) -> ApiResult<Vec<String>> {
     let root_real = real(root)?;
-    let out = Command::new("git").arg("-C").arg(&root_real).args(["ls-files", "-co", "--exclude-standard"]).stderr(Stdio::null()).output();
+    let out = Command::new("git")
+        .args(crate::git::SAFE_ARGS)
+        .arg("-C")
+        .arg(&root_real)
+        .args(["ls-files", "-co", "--exclude-standard"])
+        .stderr(Stdio::null())
+        .output();
     if let Ok(o) = out
         && o.status.success()
     {

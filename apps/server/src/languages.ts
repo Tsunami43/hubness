@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import * as linguist from 'linguist-languages';
+import { SAFE_GIT_ARGS } from './git.ts';
 
 /**
  * Repository languages — like the language bar on GitHub (GitHub Linguist data:
@@ -93,7 +94,7 @@ export async function repoLanguages(dir: string): Promise<RepoLanguage[]> {
   if (hit && head && hit.head === head) return hit.langs;
   let files: string[] = [];
   try {
-    const out = await run('git', ['-C', dir, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { timeout: 10_000, maxBuffer: 64 * 1024 * 1024 });
+    const out = await run('git', [...SAFE_GIT_ARGS, '-C', dir, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { timeout: 10_000, maxBuffer: 64 * 1024 * 1024 });
     files = out.stdout.split('\0').filter(Boolean).slice(0, MAX_FILES);
   } catch {
     return [];
