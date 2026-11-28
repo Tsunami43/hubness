@@ -855,6 +855,9 @@ test('ACP agents: codex turn (bypass and ask with approval), opencode provider e
   assert.equal(ap.toolName, 'Bash');
   assert.deepEqual(ap.input, { command: 'cat notes.txt' });
   assert.match(ap.requestId, /^0:/);
+  // a stale answer for the same JSON-RPC id from another run (agents restart numbering per process) is not this approval
+  assert.equal((await call('POST', `/sessions/${asked.id}/approvals/0:otherrun`, { decision: 'allow' })).status, 404);
+  assert.equal((await feed(asked.id)).find((e: any) => e.kind === 'approval').status, 'pending');
   assert.deepEqual((await call('POST', `/sessions/${asked.id}/approvals/${ap.requestId}`, { decision: 'allow' })).json, { ok: true });
   await waitFor(asked.id, (x) => x.status === 'idle', 'the codex turn after approval');
   const after = await feed(asked.id);

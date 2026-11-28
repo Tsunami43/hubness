@@ -496,7 +496,8 @@ export function createAcpAdapter(spec: AcpSpec): AgentAdapter {
         respond(requestId: string, d: ApprovalDecision): boolean {
           const id = Number(requestId.split(':')[0]);
           const params = pending.get(id);
-          if (!params) return false;
+          // the run tag matters: a new process restarts JSON-RPC ids, so 0:<old run> must not answer 0:<this run>
+          if (!params || requestId !== `${id}:${runTag}`) return false;
           pending.delete(id);
           answer(id, params, d.decision);
           ctx.patch(`ap:${requestId}`, { status: d.decision === 'allow' ? 'allowed' : 'denied', reason: d.reason } as any);
