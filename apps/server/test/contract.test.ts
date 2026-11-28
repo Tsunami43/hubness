@@ -503,6 +503,32 @@ async function waitFor(id: string, pred: (s: any) => boolean, what: string) {
 const feed = async (id: string) =>
   (await call('GET', `/sessions/${id}/events`)).json.map(({ uid, seq: _s, ts: _t, durationMs: _d, ...rest }: any) => ({ uid: uid.split(':')[0], ...rest }));
 
+test('a turn is over at its result, even while the agent process waits for background tasks', async () => {
+  // the fake agent answers, then stays alive (stdin closed) and comes back once more on its own
+  useFixture('claude-background-turn.jsonl');
+  const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
+  await call('POST', `/sessions/${s.id}/messages`, { text: 'Build it in the background' });
+  await waitFor(s.id, (x) => x.status === 'idle' && x.agentSessionId, 'idle right after the answer');
+  const texts = async () => (await feed(s.id)).filter((e: any) => e.kind === 'text').map((e: any) => e.text);
+  assert.deepEqual(await texts(), ['The build runs in the background; I will report when it ends.'], 'idle before the process exits');
+  await waitFor(s.id, (x) => x.status === 'running', 'running again when the agent comes back on its own');
+  await waitFor(s.id, (x) => x.status === 'idle', 'idle after its second answer');
+  assert.deepEqual(await texts(), ['The build runs in the background; I will report when it ends.', 'The background build finished.']);
+
+  // a new message while the process lingers: no 409, the old process is dropped quietly
+  const t = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;
+  await call('POST', `/sessions/${t.id}/messages`, { text: 'Build it in the background' });
+  await waitFor(t.id, (x) => x.status === 'idle' && x.agentSessionId, 'the first answer');
+  useFixture('claude-tool-turn.jsonl');
+  assert.equal((await call('POST', `/sessions/${t.id}/messages`, { text: 'And what is here?' })).status, 200, 'not refused as busy');
+  await waitFor(t.id, (x) => x.status === 'idle' && x.agentSessionId === 'sess-claude-1', 'the second turn');
+  await new Promise((r) => setTimeout(r, 2500)); // past the moment the old process would have spoken
+  const kinds = (await feed(t.id)).map((e: any) => (e.kind === 'text' ? e.text : e.kind));
+  assert.ok(!kinds.includes('The background build finished.'), 'the replaced process says nothing more');
+  assert.ok(!kinds.includes('notice'), 'no "stopped" notice for it');
+  assert.equal((await call('GET', `/sessions/${t.id}`)).json.status, 'idle');
+});
+
 test('claude-code turn: streaming, tools, limits, result and resume id', async () => {
   useFixture('claude-tool-turn.jsonl');
   const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' } })).json;

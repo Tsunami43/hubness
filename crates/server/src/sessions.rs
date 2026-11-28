@@ -313,6 +313,10 @@ async fn set_archived(s: AppState, id: String, archived: bool) -> ApiResult<axum
         if archived && s.runtime.is_active(&cur.id) {
             return Err(HttpError::new(409, "The agent is still working — wait for it or stop it"));
         }
+        if archived {
+            // a process that only waits for its background tasks after the answer goes
+            s.runtime.stop(&cur.id);
+        }
         repo::set_archived(db, &cur.id, archived)?.ok_or_else(|| HttpError::not_found("Session not found"))
     })?;
     if archived {
@@ -580,6 +584,8 @@ async fn convert(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b):
     if s.runtime.is_active(&id) {
         return Err(HttpError::new(409, "The agent is still working — wait for it or stop it"));
     }
+    // the folder moves: a process lingering after the answer must not keep working in the old one
+    s.runtime.stop(&id);
     let (project, session) = s
         .with(|db, cfg| {
             let cur = session_or_404(db, &id)?;
