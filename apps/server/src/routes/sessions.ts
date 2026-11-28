@@ -129,6 +129,8 @@ sessionRoutes.delete('/sessions/archive', (c) => {
 sessionRoutes.post('/sessions/:id/archive', (c) => {
   const id = sessionOr404(c.req.param('id')).id;
   if (isActive(id)) throw new HttpError(409, 'The agent is still working — wait for it or stop it');
+  // a process that only waits for its background tasks after the answer goes
+  stopSession(id);
   sessions.setArchived(id, true);
   void closeSessionBrowser(id);
   return c.json(announce(id));
@@ -257,6 +259,8 @@ sessionRoutes.post('/sessions/:id/convert', async (c) => {
   const s = sessionOr404(c.req.param('id'));
   if (isActive(s.id)) throw new HttpError(409, 'The agent is still working — wait for it or stop it');
   const b = await parseBody(c, Convert);
+  // the folder moves: a process lingering after the answer must not keep working in the old one
+  stopSession(s.id);
   const project = await convertToProject(s, b.name);
   return c.json({ project, session: announce(s.id) });
 });

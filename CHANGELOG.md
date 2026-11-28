@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A chat no longer shows "agent is working" and the Stop button after the answer has arrived
+  when the agent left a background task running (Claude Code waits for its background tasks
+  before it exits). The turn ends at the agent's answer; if the agent comes back on its own
+  when the task finishes, the chat shows it working again. A new message replaces the waiting
+  process.
+- Languages in Settings → Language are listed alphabetically by their own names; the voice
+  input languages alphabetically in the interface language.
+
 ## [0.4.5] - 2026-11-28
 
 ### Changed

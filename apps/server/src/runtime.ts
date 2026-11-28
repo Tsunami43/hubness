@@ -16,15 +16,42 @@ import { agentWrap, runtimeOf } from './environments.ts';
 import { secretEnv } from './secrets.ts';
 import { sessionSetup, untestedSsh, type Owner, type SessionSsh } from './ssh.ts';
 
-const active = new Map<string, RunHandle>();
+/**
+ * A running agent process. `answered`: the agent has finished its turn (a `result`) but the
+ * process lingers — Claude Code waits for its background tasks before it exits. The session
+ * is idle for the user then; the agent may still come back on its own (a background task
+ * finished), which makes it running again. `retired`: replaced by a newer turn or stopped
+ * after its answer — whatever it still says is dropped.
+ */
+interface ActiveTurn {
+  handle: RunHandle;
+  answered: boolean;
+  retired: boolean;
+}
+
+const active = new Map<string, ActiveTurn>();
+
+/** Event kinds that mean the agent is at work again (new events, not updates of old ones). */
+const WORK_KINDS = new Set<HubEvent['kind']>(['text', 'thinking', 'tool', 'approval']);
 
 /** Default titles — replaced by the first message (Russian ones are for old records). */
 const DEFAULT_TITLES = new Set(['New session', 'New chat', 'Новая сессия', 'Новый чат']);
 
 export { HttpError };
 
+/** The agent is at work in the session (a process that only lingers after its answer is not). */
 export function isActive(sessionId: string) {
-  return active.has(sessionId);
+  const t = active.get(sessionId);
+  return Boolean(t && !t.answered);
+}
+
+/** Stop a process that lingers after its answer, quietly: nothing it says reaches the feed. */
+function retire(sessionId: string) {
+  const t = active.get(sessionId);
+  if (!t) return;
+  t.retired = true;
+  active.delete(sessionId);
+  t.handle.stop();
 }
 
 function emitSession(s: Session) {
@@ -72,8 +99,10 @@ function hubMcp(sessionId: string): McpServerSpec {
 export function sendMessage(sessionId: string, text: string, attachments: Attachment[] = []): Session {
   let session = sessions.get(sessionId);
   if (!session) throw new HttpError(404, 'Session not found');
-  if (active.has(sessionId)) throw new HttpError(409, 'The agent is still working — wait for it or stop it');
+  if (isActive(sessionId)) throw new HttpError(409, 'The agent is still working — wait for it or stop it');
   if (!text.trim() && !attachments.length) throw new HttpError(400, 'Empty message');
+  // the previous turn's process still waits for its background tasks: the new turn replaces it
+  retire(sessionId);
 
   if (!session.title || DEFAULT_TITLES.has(session.title)) {
     const t = (text.trim() || attachments.map((a) => a.name).join(', ')).replace(/\s+/g, ' ');
@@ -100,12 +129,28 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
     log = null;
   };
 
+  // this turn's place among the running ones (the handle comes once the agent starts)
+  const turn: ActiveTurn = { handle: null as unknown as RunHandle, answered: false, retired: false };
+  let lastFailed = false;
   const put = (uid: string, body: EventBody, opts?: { persist?: boolean }) => {
+    if (turn.retired) return;
     const prev = cache.get(uid) ?? events.get(sessionId, uid);
     const ev = { ...body, uid, seq: prev?.seq ?? seq++, ts: prev?.ts ?? new Date().toISOString() } as HubEvent;
     cache.set(uid, ev);
     if (opts?.persist !== false) events.put(sessionId, ev);
     bus.emitSession(sessionId, { type: 'event', event: ev });
+    if (body.kind === 'result') {
+      // the agent has answered: the turn is over for the user, even if the process lingers
+      turn.answered = true;
+      finishTurn(sessionId, lastFailed);
+    } else {
+      lastFailed = body.kind === 'notice' && body.level === 'error';
+      if (turn.answered && !prev && WORK_KINDS.has(body.kind)) {
+        // it came back on its own (a background task finished)
+        turn.answered = false;
+        setSessionStatus(sessionId, 'running');
+      }
+    }
   };
 
   // SSH connections of the project (a group: its own and its repositories'), for this turn
@@ -151,7 +196,11 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
       put(uid, { ...body, ...patch } as EventBody, opts);
     },
     get: (uid) => cache.get(uid) ?? events.get(sessionId, uid),
-    setStatus: (st) => setSessionStatus(sessionId, st),
+    setStatus: (st) => {
+      if (turn.retired) return;
+      if (st === 'running' || st === 'waiting') turn.answered = false;
+      setSessionStatus(sessionId, st);
+    },
     setAgentSessionId(id) {
       if (session!.agentSessionId === id) return;
       session = sessions.update(sessionId, { agentSessionId: id })!;
@@ -197,42 +246,54 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
     ssh?.dispose();
     return sessions.get(sessionId)!;
   }
-  active.set(sessionId, handle);
+  turn.handle = handle;
+  active.set(sessionId, turn);
 
   handle.done.finally(() => {
-    active.delete(sessionId);
     closeLog();
-    // the turn is over: its ssh-agent and config go away
+    // the process is gone: its ssh-agent and config go away
     ssh?.dispose();
+    // a retired process leaves the session to the turn that replaced it
+    if (turn.retired || active.get(sessionId) !== turn) return;
+    active.delete(sessionId);
     const all = events.list(sessionId);
     const last = all[all.length - 1];
-    const failed = last?.kind === 'notice' && last.level === 'error';
-    setSessionStatus(sessionId, failed ? 'error' : 'idle');
-    // The session was started from a kanban card — when it finishes, the card goes to review
-    const s = sessions.get(sessionId);
-    if (s?.cardId && !failed) {
-      const card = cards.get(s.cardId);
-      if (card?.column === 'doing') cards.update(card.id, { column: 'review' });
-    }
+    finishTurn(sessionId, last?.kind === 'notice' && last.level === 'error');
   });
 
   return sessions.get(sessionId)!;
 }
 
+/** The turn is over (answered, or its process is gone): idle or error, a kanban card to review. */
+function finishTurn(sessionId: string, failed: boolean) {
+  setSessionStatus(sessionId, failed ? 'error' : 'idle');
+  // The session was started from a kanban card — when it finishes, the card goes to review
+  const s = sessions.get(sessionId);
+  if (s?.cardId && !failed) {
+    const card = cards.get(s.cardId);
+    if (card?.column === 'doing') cards.update(card.id, { column: 'review' });
+  }
+}
+
+/** Stop the session's agent. One that has already answered is stopped quietly. */
 export function stopSession(sessionId: string): boolean {
-  const h = active.get(sessionId);
-  if (!h) return false;
-  h.stop();
+  const t = active.get(sessionId);
+  if (!t) return false;
+  if (t.answered) retire(sessionId);
+  else t.handle.stop();
   return true;
 }
 
 export function respondApproval(sessionId: string, requestId: string, d: ApprovalDecision): boolean {
-  const h = active.get(sessionId);
-  if (!h) return false;
-  return h.respond(requestId, d);
+  const t = active.get(sessionId);
+  if (!t) return false;
+  return t.handle.respond(requestId, d);
 }
 
-/** Hub exit: the feed shows "interrupted by restart", not "stopped". */
+/** Hub exit: the feed shows "interrupted by restart", not "stopped" (nothing for an answered turn). */
 export function stopAll() {
-  for (const h of active.values()) h.stop('shutdown');
+  for (const t of active.values()) {
+    if (t.answered) t.retired = true;
+    t.handle.stop('shutdown');
+  }
 }

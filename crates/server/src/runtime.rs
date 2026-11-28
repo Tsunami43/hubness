@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use hubness_core::{GlobalStreamMsg, HubEvent, Session, SessionStatus, SessionStreamMsg};
@@ -21,10 +22,19 @@ use crate::{AppState, catalog, context, paths, workspaces};
 /// Default titles — replaced by the first message (Russian ones are for old records).
 const DEFAULT_TITLES: &[&str] = &["New session", "New chat", "Новая сессия", "Новый чат"];
 
+/// A running agent process and its turn. Once the turn has answered (`Turn::answered`) the
+/// process may linger — Claude Code waits for its background tasks before it exits; the
+/// session is idle for the user then.
+#[derive(Clone)]
+struct Active {
+    handle: Arc<dyn RunHandle>,
+    turn: Arc<Turn>,
+}
+
 /// Running turns by session id.
 #[derive(Default, Clone)]
 pub struct Runtime {
-    active: Arc<Mutex<HashMap<String, Arc<dyn RunHandle>>>>,
+    active: Arc<Mutex<HashMap<String, Active>>>,
     /// Sessions whose turn is being set up (between the "is it busy?" check and the agent's
     /// start): a second message in that window is refused like one to a running turn.
     starting: Arc<Mutex<std::collections::HashSet<String>>>,
@@ -43,8 +53,16 @@ impl Drop for Starting {
 }
 
 impl Runtime {
+    /// The agent is at work in the session (a process that only lingers after its answer is not).
     pub fn is_active(&self, session_id: &str) -> bool {
-        self.active.lock().expect("runtime lock").contains_key(session_id)
+        self.active.lock().expect("runtime lock").get(session_id).is_some_and(|a| !a.turn.answered.load(Ordering::SeqCst))
+    }
+
+    /// Stop a process that lingers after its answer, quietly: nothing it says reaches the feed.
+    fn retire(&self, session_id: &str) {
+        let Some(a) = self.active.lock().expect("runtime lock").remove(session_id) else { return };
+        a.turn.retired.store(true, Ordering::SeqCst);
+        a.handle.stop(StopReason::User);
     }
 
     /// Reserve the session for a new turn: `None` while one runs or is starting.
@@ -57,27 +75,31 @@ impl Runtime {
     }
 
     fn handle(&self, session_id: &str) -> Option<Arc<dyn RunHandle>> {
-        self.active.lock().expect("runtime lock").get(session_id).cloned()
+        self.active.lock().expect("runtime lock").get(session_id).map(|a| a.handle.clone())
     }
 
+    /// Stop the session's agent. One that has already answered is stopped quietly.
     pub fn stop(&self, session_id: &str) -> bool {
-        match self.handle(session_id) {
-            Some(h) => {
-                h.stop(StopReason::User);
-                true
-            }
-            None => false,
+        let Some(a) = self.active.lock().expect("runtime lock").get(session_id).cloned() else { return false };
+        if a.turn.answered.load(Ordering::SeqCst) {
+            self.retire(session_id);
+        } else {
+            a.handle.stop(StopReason::User);
         }
+        true
     }
 
     pub fn respond(&self, session_id: &str, request_id: &str, d: ApprovalDecision) -> bool {
         self.handle(session_id).is_some_and(|h| h.respond(request_id, d))
     }
 
-    /// Hub exit: the feed shows "interrupted by restart", not "stopped".
+    /// Hub exit: the feed shows "interrupted by restart", not "stopped" (nothing for an answered turn).
     pub fn stop_all(&self) {
-        for h in self.active.lock().expect("runtime lock").values() {
-            h.stop(StopReason::Shutdown);
+        for a in self.active.lock().expect("runtime lock").values() {
+            if a.turn.answered.load(Ordering::SeqCst) {
+                a.turn.retired.store(true, Ordering::SeqCst);
+            }
+            a.handle.stop(StopReason::Shutdown);
         }
     }
 }
@@ -101,7 +123,17 @@ pub struct Turn {
     cache: Mutex<HashMap<String, HubEvent>>,
     log: Mutex<Option<File>>,
     log_path: std::path::PathBuf,
+    /// The agent has answered (a `result`); it may still come back on its own (a background
+    /// task finished), which makes it running again.
+    answered: AtomicBool,
+    /// Replaced by a newer turn or stopped after its answer: whatever it still says is dropped.
+    retired: AtomicBool,
+    /// The last event before the answer was an error notice.
+    last_failed: AtomicBool,
 }
+
+/// Event kinds that mean the agent is at work again (new events, not updates of old ones).
+const WORK_KINDS: &[&str] = &["text", "thinking", "tool", "approval"];
 
 impl Turn {
     pub fn session(&self) -> Session {
@@ -134,11 +166,17 @@ impl Turn {
 
     /// Create or replace an event. `persist = false`: broadcast only (delta streaming).
     pub fn put(&self, uid: &str, body: Value, persist: bool) {
+        if self.retired.load(Ordering::SeqCst) {
+            return;
+        }
+        let kind = body["kind"].as_str().unwrap_or_default().to_string();
+        let failed = kind == "notice" && body["level"] == "error";
         // only seq and ts of the previous version are kept: read them without cloning it
         // (a streamed message is replaced on every delta and keeps growing)
         let seq_ts = |p: &Value| (p["seq"].as_i64(), p["ts"].as_str().map(String::from));
         let cached = self.cache.lock().expect("turn lock").get(uid).map(seq_ts);
         let (seq, ts) = cached.or_else(|| self.stored_in_db(uid).as_ref().map(seq_ts)).unwrap_or_default();
+        let is_new = seq.is_none();
         let seq = seq.unwrap_or_else(|| {
             let mut s = self.seq.lock().expect("turn lock");
             let v = *s;
@@ -161,6 +199,17 @@ impl Turn {
             let _ = repo::put_event(&db, &sid, &ev);
         }
         self.state.bus.emit_session(&sid, SessionStreamMsg::Event { event: ev });
+        if kind == "result" {
+            // the agent has answered: the turn is over for the user, even if the process lingers
+            self.answered.store(true, Ordering::SeqCst);
+            finish_turn(&self.state, &sid, self.last_failed.load(Ordering::SeqCst));
+        } else {
+            self.last_failed.store(failed, Ordering::SeqCst);
+            if is_new && WORK_KINDS.contains(&kind.as_str()) && self.answered.swap(false, Ordering::SeqCst) {
+                // it came back on its own (a background task finished)
+                set_status(&self.state, &sid, SessionStatus::Running);
+            }
+        }
     }
 
     /// Partially update an existing event (a `null` field removes it).
@@ -182,6 +231,12 @@ impl Turn {
     }
 
     pub fn set_status(&self, status: SessionStatus) {
+        if self.retired.load(Ordering::SeqCst) {
+            return;
+        }
+        if matches!(status, SessionStatus::Running | SessionStatus::Waiting) {
+            self.answered.store(false, Ordering::SeqCst);
+        }
         set_status(&self.state, &self.session_id(), status);
     }
 
@@ -235,6 +290,18 @@ impl Turn {
 fn announce(state: &AppState, s: &Session) {
     state.bus.emit_session(&s.id, SessionStreamMsg::Session { session: s.clone() });
     state.bus.emit_global(GlobalStreamMsg::Session { session: s.clone() });
+}
+
+/// The turn is over (answered, or its process is gone): idle or error; a session started from
+/// a kanban card sends the card to review.
+fn finish_turn(state: &AppState, id: &str, failed: bool) {
+    set_status(state, id, if failed { SessionStatus::Error } else { SessionStatus::Idle });
+    if !failed && let Ok(db) = state.db() {
+        let card: Option<String> = repo::get(&db, id).ok().flatten().and_then(|s| s.card_id);
+        if let Some(card) = card {
+            let _ = crate::kanban::card_to_review(&db, &card);
+        }
+    }
 }
 
 pub fn set_status(state: &AppState, id: &str, status: SessionStatus) {
@@ -293,6 +360,8 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
         if text.trim().is_empty() && attachments.is_empty() {
             return Err(HttpError::bad_request("Empty message"));
         }
+        // the previous turn's process still waits for its background tasks: the new turn replaces it
+        rt.retire(session_id);
         let project = match &session.project_id {
             Some(id) => projects::get(&db, id)?,
             None => None,
@@ -415,6 +484,9 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
         cache: Mutex::default(),
         log: Mutex::default(),
         log_path: Path::new(&state.config().logs_dir).join(format!("{session_id}.jsonl")),
+        answered: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
+        last_failed: AtomicBool::new(false),
     });
 
     let mut user = json!({ "kind": "user", "text": text });
@@ -439,26 +511,25 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
             set_status(state, session_id, SessionStatus::Error);
         }
         Ok((handle, done)) => {
-            rt.active.lock().expect("runtime lock").insert(session_id.to_string(), handle);
+            rt.active.lock().expect("runtime lock").insert(session_id.to_string(), Active { handle, turn: turn.clone() });
             // the turn runs: the reservation has done its job
             drop(starting);
             let state = state.clone();
             let id = session_id.to_string();
             tokio::spawn(async move {
                 let _ = done.await;
-                // the turn is over: its ssh-agent and config go away
+                // the process is gone: its ssh-agent and config go away
                 drop(ssh);
-                state.runtime.active.lock().expect("runtime lock").remove(&id);
                 *turn.log.lock().expect("turn lock") = None;
-                let failed = turn.last_is_error();
-                set_status(&state, &id, if failed { SessionStatus::Error } else { SessionStatus::Idle });
-                // a session started from a kanban card: when it finishes, the card goes to review
-                if !failed && let Ok(db) = state.db() {
-                    let card: Option<String> = repo::get(&db, &id).ok().flatten().and_then(|s| s.card_id);
-                    if let Some(card) = card {
-                        let _ = crate::kanban::card_to_review(&db, &card);
+                // a retired process leaves the session to the turn that replaced it
+                {
+                    let mut active = state.runtime.active.lock().expect("runtime lock");
+                    if turn.retired.load(Ordering::SeqCst) || !active.get(&id).is_some_and(|a| Arc::ptr_eq(&a.turn, &turn)) {
+                        return;
                     }
+                    active.remove(&id);
                 }
+                finish_turn(&state, &id, turn.last_is_error());
             });
         }
     }

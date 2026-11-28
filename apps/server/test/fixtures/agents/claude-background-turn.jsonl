@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","cwd":"/work","session_id":"sess-claude-bg","tools":["Bash"],"mcp_servers":[],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none"}
+{"type":"assistant","message":{"id":"msg_bg_1","model":"claude-opus-5-5","role":"assistant","content":[{"type":"text","text":"The build runs in the background; I will report when it ends."}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"result":"The build runs in the background.","session_id":"sess-claude-bg","uuid":"res-bg-1"}
+{"replay":"after-close"}
+{"replay":"sleep","ms":1500}
+{"type":"system","subtype":"task_notification","task_id":"task-1","status":"completed"}
+{"type":"assistant","message":{"id":"msg_bg_2","model":"claude-opus-5-5","role":"assistant","content":[{"type":"text","text":"The background build finished."}]}}
+{"replay":"sleep","ms":600}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":300,"result":"The background build finished.","session_id":"sess-claude-bg","uuid":"res-bg-2"}
+{"replay":"sleep","ms":1500}

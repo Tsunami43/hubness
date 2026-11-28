@@ -2,6 +2,8 @@
 // stdout lines) so the real adapter parses it. REPLAY_MODE picks the protocol:
 //  - stream: print the lines after the first message arrives, exit when stdin closes (Claude Code stream-json);
 //    a `{"replay":"await"}` line pauses until the next stdin line (a control_response);
+//    a `{"replay":"after-close"}` line keeps the process after stdin closes (Claude Code waiting
+//    for its background tasks): the rest is printed then, `{"replay":"sleep","ms":N}` pauses;
 //  - acp: JSON-RPC — for each client request emit the recorded messages up to the next
 //    response (its id rewritten to the request's); agent requests wait for the client's answer.
 import { readFileSync } from 'node:fs';
@@ -16,13 +18,25 @@ if (process.env.REPLAY_MODE === 'stream') {
   const queue = [...lines];
   const flush = () => {
     while (queue.length) {
+      // the rest waits for stdin to close
+      if ((JSON.parse(queue[0]!) as Json).replay === 'after-close') return;
       const line = queue.shift()!;
       if ((JSON.parse(line) as Json).replay === 'await') return;
       out(line);
     }
   };
   input.on('line', flush);
-  input.on('close', () => process.exit(0));
+  input.on('close', async () => {
+    if (queue[0] && (JSON.parse(queue[0]) as Json).replay === 'after-close') {
+      queue.shift();
+      for (const line of queue) {
+        const m = JSON.parse(line) as Json;
+        if (m.replay === 'sleep') await new Promise((r) => setTimeout(r, m.ms));
+        else out(line);
+      }
+    }
+    process.exit(0);
+  });
 } else {
   const fixture = lines.map((l) => JSON.parse(l) as Json);
   let pos = 0;
