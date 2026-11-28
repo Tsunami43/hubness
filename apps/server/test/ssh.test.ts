@@ -151,6 +151,33 @@ test('ssh: an agent turn gets an ssh-agent with the keys, aliases and wrappers; 
   assert.equal(sessionSetup([{ project: p.id }], 'sess-after'), null, 'a deleted connection leaves the project');
 });
 
+test('ssh: two overlapping turns of one session each keep their own agent and wrappers', (t) => {
+  try {
+    execFileSync('ssh-agent', ['-h'], { stdio: 'ignore' });
+  } catch (e) {
+    if ((e as { code?: string }).code === 'ENOENT') return t.skip('OpenSSH is not installed');
+  }
+  const c = createSsh({ name: 'overlap', host: 'a.example', username: 'u' });
+  const p = projects.create('ssh-overlap', join(tmp, 'ssh-overlap'));
+  setSshBindings({ project: p.id }, { bindings: [{ connectionId: c.id }] });
+  pin(c.id);
+  // the old turn's process lingers after its answer while the next message starts a new turn
+  const first = sessionSetup([{ project: p.id }], 'sess-overlap')!;
+  const second = sessionSetup([{ project: p.id }], 'sess-overlap')!;
+  try {
+    assert.notEqual(second.mount, first.mount, 'one folder per turn');
+    first.dispose();
+    assert.ok(existsSync(second.sock), 'the new turn keeps its socket');
+    assert.ok(existsSync(join(second.mount, 'bin', 'ssh')), 'and its wrappers');
+    assert.match(execFileSync('ssh-add', ['-l'], { env: { ...process.env, SSH_AUTH_SOCK: second.sock }, encoding: 'utf8' }), /hubness:overlap/);
+  } finally {
+    first.dispose();
+    second.dispose();
+  }
+  assert.equal(existsSync(second.mount), false);
+  deleteSsh(c.id);
+});
+
 const agents = () => {
   try {
     return execFileSync('pgrep', ['-f', `ssh-agent -D -a ${runtimeBase()}`], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
