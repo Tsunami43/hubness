@@ -19,6 +19,8 @@ export const zh: Record<MessageKey, string> = {
   'archive.emptyTitle': '清空归档',
   'archive.emptyConfirm': '永久删除全部 {n} 个已归档会话？对话将无法恢复。',
   'archive.deleteOne': '永久删除“{title}”？对话将无法恢复。',
+  'archive.emptyWithFolders': '连同聊天文件夹删除',
+  'archive.emptyFoldersHint': '附加的文件也会被删除。普通聊天的文件夹及其代理创建的文件会保留，除非你一并删除。',
   'archive.emptyList': '归档为空。在“活跃”标签页中归档会话即可将其从列表中隐藏。',
   'archive.banner': '此会话已归档。发送消息会将其恢复。',
   'attach.add': '附加文件（或在此粘贴 / 拖放）',
@@ -221,6 +223,8 @@ export const zh: Record<MessageKey, string> = {
   'session.agentLocked':
     '会话智能体：{agent}。智能体无法更换，对话上下文保存在它那里。如需其他智能体，请新建会话。',
   'session.deleteConfirm': '删除此会话及其历史记录？',
+  'session.deleteWithFolder': '连同文件夹删除',
+  'session.deleteFolderHint': '附加的文件也会被删除。聊天文件夹及代理在其中创建的文件会保留，除非你一并删除。',
 
   // events
   'ev.thinking': '思考中',

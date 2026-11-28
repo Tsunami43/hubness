@@ -19,6 +19,8 @@ export const pl: Record<MessageKey, string> = {
   'archive.emptyTitle': 'Opróżnij archiwum',
   'archive.emptyConfirm': 'Trwale usunąć wszystkie zarchiwizowane sesje ({n})? Ich rozmów nie da się przywrócić.',
   'archive.deleteOne': 'Trwale usunąć „{title}”? Rozmowy nie da się przywrócić.',
+  'archive.emptyWithFolders': 'Usuń z folderami czatów',
+  'archive.emptyFoldersHint': 'Załączone pliki też zostaną usunięte. Foldery zwykłych czatów z tym, co utworzyli w nich agenci, zostają, chyba że usuniesz i je.',
   'archive.emptyList': 'Archiwum jest puste. Zarchiwizuj sesję na karcie Aktywne, aby ukryć ją z listy.',
   'archive.banner': 'Ta sesja jest w archiwum. Wysłanie wiadomości ją przywróci.',
   'attach.add': 'Załącz pliki (lub wklej / upuść je tutaj)',
@@ -221,6 +223,8 @@ export const pl: Record<MessageKey, string> = {
   'session.agentLocked':
     'Agent sesji: {agent}. Agenta nie można zmienić — kontekst rozmowy jest przy nim. Rozpocznij nową sesję, aby użyć innego agenta.',
   'session.deleteConfirm': 'Usunąć tę sesję i jej historię?',
+  'session.deleteWithFolder': 'Usuń z folderem',
+  'session.deleteFolderHint': 'Załączone pliki też zostaną usunięte. Folder czatu z tym, co agent w nim utworzył, zostaje, chyba że usuniesz i jego.',
 
   // events
   'ev.thinking': 'Myślenie',
