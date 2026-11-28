@@ -6,6 +6,7 @@ import { t } from '../../i18n';
 import { Button, ErrorLine, IconButton, Spinner } from '../../components/ui';
 import { confirmDialog } from '../../components/Confirm';
 import { GitLoginSheet } from '../../components/GitLogin';
+import { Header } from './parts';
 
 /** The account's picture (kept by the hub, see git-login-check), or a key when there is none. */
 function Avatar({ c }: { c: GitCredentialInfo }) {
@@ -45,8 +46,8 @@ function Status({ c, checking }: { c: GitCredentialInfo; checking: boolean }) {
   return <span className="text-muted">{c.error || t('gitauth.notChecked')}</span>;
 }
 
-/** Settings → Git access: logins per host for git over HTTPS (secrets are never shown). */
-export function GitAccessPage() {
+/** System → Git access: logins per host for git over HTTPS (secrets are never shown). */
+export function GitSection() {
   const [list, setList] = useState<GitCredentialInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState<GitCredentialInfo | 'new' | null>(null);
@@ -96,7 +97,16 @@ export function GitAccessPage() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted">{t('gitauth.intro')}</p>
+      <Header
+        title={t('gitauth.title')}
+        hint={t('gitauth.intro')}
+        actions={
+          <Button variant="primary" onClick={() => setEdit('new')}>
+            <Plus className="size-4" />
+            {t('gitauth.add')}
+          </Button>
+        }
+      />
       {list === null ? (
         <Spinner />
       ) : list.length ? (
@@ -129,10 +139,6 @@ export function GitAccessPage() {
         <p className="rounded-xl border border-line bg-surface px-4 py-3 text-sm text-muted">{t('gitauth.empty')}</p>
       )}
       <ErrorLine error={error} />
-      <Button onClick={() => setEdit('new')}>
-        <Plus className="size-4" />
-        {t('gitauth.add')}
-      </Button>
       <GitLoginSheet
         open={edit !== null}
         host={edit && edit !== 'new' ? edit.host : undefined}

@@ -302,7 +302,7 @@ export function cloneRepo(b: { url?: unknown; name?: unknown; groupId?: unknown;
   const group = groupFrom(b.groupId);
   const { dir, slug } = targetDir(name, group);
   mkdirSync(dirname(dir), { recursive: true });
-  // a login stored for the host (Settings → Git access) is used; otherwise git asks in the terminal
+  // a login stored for the host (System → Git access) is used; otherwise git asks in the terminal
   const auth = gitAuthFor([url]);
   return startJob({
     title: `Clone ${slug}`,

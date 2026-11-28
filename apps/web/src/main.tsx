@@ -35,7 +35,6 @@ const AppearancePage = page(() => import('./pages/settings/AppearancePage'), 'Ap
 const LanguagePage = page(() => import('./pages/settings/LanguagePage'), 'LanguagePage');
 const AgentPage = page(() => import('./pages/settings/AgentPage'), 'AgentPage');
 const KeyboardPage = page(() => import('./pages/settings/KeyboardPage'), 'KeyboardPage');
-const GitAccessPage = page(() => import('./pages/settings/GitAccessPage'), 'GitAccessPage');
 const AccountPage = page(() => import('./pages/settings/AccountPage'), 'AccountPage');
 const StoragePage = page(() => import('./pages/settings/StoragePage'), 'StoragePage');
 const VoicePage = page(() => import('./pages/settings/VoicePage'), 'VoicePage');
@@ -80,7 +79,8 @@ createRoot(document.getElementById('root')!).render(
               <Route path="appearance" element={<AppearancePage />} />
               <Route path="agent" element={<AgentPage />} />
               <Route path="voice" element={<VoicePage />} />
-              <Route path="git" element={<GitAccessPage />} />
+              {/* git logins moved to System, next to SSH */}
+              <Route path="git" element={<Navigate to="/system/git" replace />} />
               <Route path="account" element={<AccountPage />} />
               <Route path="users" element={<Navigate to="/settings/account" replace />} />
               <Route path="storage" element={<StoragePage />} />

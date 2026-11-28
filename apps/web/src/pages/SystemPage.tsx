@@ -1,5 +1,5 @@
 import { Navigate, useParams } from 'react-router';
-import { Activity, Boxes, Cog, KeyRound, Package } from 'lucide-react';
+import { Activity, Boxes, Cog, GitBranch, KeyRound, Package } from 'lucide-react';
 import { SubmenuIndex, SubmenuLayout, type SubmenuItem } from '../components/SubmenuLayout';
 import { t } from '../i18n';
 import { usePlatform } from './system/platform';
@@ -8,10 +8,12 @@ import { DockerSection } from './system/docker';
 import { ServicesSection } from './system/services';
 import { PackagesSection } from './system/packages';
 import { SshSection } from './system/ssh';
+import { GitSection } from './system/git';
 
 /**
- * System: server monitoring with a submenu and search. The menu asks only the (static)
- * platform; every section loads (and refreshes) its own data only while it is open.
+ * System: server monitoring and the host's access (SSH, git logins) with a submenu and search.
+ * The menu asks only the (static) platform; every section loads (and refreshes) its own data
+ * only while it is open.
  */
 export function SystemLayout() {
   const platform = usePlatform();
@@ -20,6 +22,13 @@ export function SystemLayout() {
     { to: 'docker', label: 'Docker', hint: t('sys.dockerMenuHint'), icon: <Boxes className="size-4 text-accent" />, keywords: ['containers', 'compose', 'logs', 'images'] },
     { to: 'services', label: t('sys.services'), hint: platform ? (platform.services ?? t('sys.unavailable')) : '', icon: <Cog className="size-4 text-accent" />, keywords: ['systemd', 'launchd', 'launchctl', 'units', 'agents', 'journal', 'logs', 'failed'] },
     { to: 'ssh', label: 'SSH', hint: t('ssh.menuHint'), icon: <KeyRound className="size-4 text-accent" />, keywords: ['ssh', 'keys', 'servers', 'deploy', 'prod', 'dev', 'authorized_keys'] },
+    {
+      to: 'git',
+      label: t('gitauth.title'),
+      hint: t('gitauth.itemHint'),
+      icon: <GitBranch className="size-4 text-accent" />,
+      keywords: ['git', 'login', 'password', 'token', 'https', 'auth', 'github', 'gitlab', 'credentials', 'доступ', 'вход', 'логин', 'пароль', 'токен', 'авторизация'],
+    },
     { to: 'packages', label: t('sys.packages'), hint: t('sys.packagesMenuHint'), icon: <Package className="size-4 text-accent" />, keywords: ['pacman', 'aur', 'yay', 'paru', 'cargo', 'rustup', 'npm', 'pip', 'uv', 'go', 'apt', 'dnf', 'flatpak', 'snap', 'brew', 'updates', 'installed', 'upgrade'] },
   ];
   return <SubmenuLayout base="/system" title={t('nav.system')} items={items} searchPlaceholder={t('sys.search')} />;
@@ -42,6 +51,8 @@ export function SystemSection() {
       return <PackagesSection />;
     case 'ssh':
       return <SshSection />;
+    case 'git':
+      return <GitSection />;
     default:
       return <Navigate to="/system" replace />;
   }
