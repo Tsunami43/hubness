@@ -126,6 +126,10 @@ pub fn read_file_safe(root: &Path, rel: &str) -> ApiResult<FileContent> {
     if meta.is_dir() {
         return Err(HttpError::bad_request("This is a folder"));
     }
+    // a FIFO, socket or device would block the open/read (and a blocking-pool thread with it)
+    if !meta.is_file() {
+        return Err(HttpError::bad_request("Not a regular file"));
+    }
     let len = meta.len().min(MAX_FILE);
     let mut buf = Vec::with_capacity(len as usize);
     fs::File::open(&abs)?.take(len).read_to_end(&mut buf)?;
