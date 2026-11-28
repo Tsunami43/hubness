@@ -92,8 +92,18 @@ export interface AgentModule {
   setDefaultModel?(model: string | null): void;
   /** Operation on a provider credential (accountMode: providers). Returns the CLI output. */
   accountOp?(provider: string, account: string, op: 'switch' | 'logout'): Promise<string>;
-  /** Agent state the sandbox mounts writable (login, history, caches): absolute paths. */
+  /**
+   * Agent state the sandbox mounts writable (login, history, caches): absolute paths.
+   * Called right before a sandboxed launch: may create folders that must exist to be mounted.
+   */
   statePaths(): string[];
+  /**
+   * The agent's own config (settings, hooks, MCP servers, plugins, instructions): read-only in
+   * the sandbox, also where it lies inside a state path — the agent runs it outside the sandbox
+   * too (system sessions, unsandboxed projects, the user's terminal). A deeper path wins: state
+   * inside a read-only config folder stays writable.
+   */
+  configPaths(): string[];
   /** Extra files the agent needs in a new project to pick up AGENTS.md (name → content). */
   contextFiles?: Record<string, string>;
   /**

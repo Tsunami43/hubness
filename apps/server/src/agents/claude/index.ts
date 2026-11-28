@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { config } from '../../config.ts';
@@ -12,6 +12,27 @@ import { claudeModelList } from './models.ts';
 
 /** Claude stores transcripts by folder path: ~/.claude/projects/<path with everything except [A-Za-z0-9] → '-'>. */
 const projectDir = (cwd: string, account?: string) => join(profileConfigDir(claudeProfile(account)), 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+
+/**
+ * What Claude Code writes while it works (transcripts, todos, login refresh…) — writable in the
+ * sandbox. The rest of its config folder (settings with hooks and the scripts they run, plugins,
+ * skills) and ~/.claude.json (MCP servers) stay read-only: the CLI saves its own state there
+ * when it can and goes on for the session when it can't.
+ */
+const RUNTIME_DIRS = ['projects', 'sessions', 'session-env', 'todos', 'tasks', 'plans', 'shell-snapshots', 'file-history', 'statsig', 'telemetry', 'debug', 'logs', 'ide', 'cache', 'paste-cache', 'image-cache', 'backups'];
+const RUNTIME_FILES = ['.credentials.json', 'history.jsonl', 'stats-cache.json'];
+// legacy CLAUDE_CONFIG_DIR profiles live in the hub data
+const profilesDir = () => join(config.dataDir, 'claude-profiles');
+
+function claudeStatePaths(): string[] {
+  const profiles = existsSync(profilesDir()) ? readdirSync(profilesDir()).map((d) => join(profilesDir(), d)) : [];
+  return [join(homedir(), '.claude'), ...profiles].flatMap((dir) => {
+    if (!existsSync(dir)) return [];
+    // a folder missing under a read-only one can't be created inside the sandbox
+    for (const d of RUNTIME_DIRS) mkdirSync(join(dir, d), { recursive: true });
+    return [...RUNTIME_DIRS, ...RUNTIME_FILES].map((e) => join(dir, e));
+  });
+}
 
 export const claudeModule: AgentModule = {
   kind: KIND,
@@ -29,12 +50,8 @@ export const claudeModule: AgentModule = {
   },
   harness: claudeHarness,
   setDefaultModel: setClaudeDefaultModel,
-  statePaths: () => [
-    join(homedir(), '.claude'),
-    join(homedir(), '.claude.json'),
-    // legacy CLAUDE_CONFIG_DIR profiles live in the hub data
-    join(config.dataDir, 'claude-profiles'),
-  ],
+  statePaths: claudeStatePaths,
+  configPaths: () => [join(homedir(), '.claude'), join(homedir(), '.claude.json'), profilesDir()],
   mcp: claudeMcp,
   extensions: claudeExtensions,
   // Claude Code reads CLAUDE.md, not AGENTS.md

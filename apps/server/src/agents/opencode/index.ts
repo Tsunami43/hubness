@@ -208,7 +208,9 @@ export const opencodeModule: AgentModule = {
     if (r.code !== 0) throw new HttpError(500, r.output || `opencode auth ${op} failed`);
     return r.output;
   },
-  statePaths: () => ['.config/opencode', '.local/share/opencode', '.local/state/opencode'].map((d) => join(homedir(), d)),
+  statePaths: () => ['.local/share/opencode', '.local/state/opencode'].map((d) => join(homedir(), d)),
+  // config, plugins, agents — and the tools it downloads into bin and runs outside the sandbox too
+  configPaths: () => ['.config/opencode', '.local/share/opencode/bin'].map((d) => join(homedir(), d)),
   mcp: opencodeMcp,
   extensions: opencodeExtensions,
 };

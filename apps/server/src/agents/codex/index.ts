@@ -1,4 +1,4 @@
-import { action, cachedLatest, npmLatest, versionInfo } from '../kit.ts';
+import { action, cachedLatest, configIn, npmLatest, versionInfo } from '../kit.ts';
 import type { AgentModule } from '../types.ts';
 import { codexExtensions, codexMcp } from './extensions.ts';
 import { CODEX_ACP_PKG, codexAcpCommand, codexAdapter, codexAuth, codexDir, codexInstallCommand, codexInstalled, codexModels, npmGlobalWritable } from './adapter.ts';
@@ -63,6 +63,8 @@ export const codexModule: AgentModule = {
     };
   },
   statePaths: () => [codexDir],
+  // MCP servers and notify commands, instructions, approval rules, prompts, skills
+  configPaths: () => configIn(codexDir, ['config.toml', 'AGENTS.md'], ['rules', 'prompts', 'skills'], ['AGENTS.override.md', 'hooks.json', 'plugins']),
   mcp: codexMcp,
   extensions: codexExtensions,
 };

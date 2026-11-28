@@ -16,6 +16,12 @@ process.env.HUBNESS_PREVIEW_PORTS = '18790-18799';
 // per-turn ssh-agent sockets (ssh.ts) go here, not into the real runtime folder
 process.env.XDG_RUNTIME_DIR = join(tmp, 'run');
 delete process.env.HUBNESS_SECRET_KEY;
+// the agents' folders (~/.claude, ~/.codex…) of a temporary HOME: building sandbox mounts
+// creates their runtime folders, never in the real one
+process.env.HOME = join(tmp, 'home');
+mkdirSync(process.env.HOME);
+delete process.env.CODEX_HOME;
+delete process.env.GROK_HOME;
 
 /** Create a git repository (optionally with a remote origin). */
 export function makeRepo(path: string, remote?: string): string {

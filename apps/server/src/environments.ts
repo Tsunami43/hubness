@@ -19,6 +19,7 @@ import { sh } from './system/exec.ts';
  *   ~/.aws…) and docker.sock are hidden; only the scope's repositories and agent
  *   state folders are writable. The network is shared (agents need the model API and
  *   the hub MCP). This closes off "the agent peeked into a neighboring repository".
+ *   The agents' own config stays read-only: they run it outside the sandbox too.
  * - **docker** — Run and Shell in the project container (modeled on Coder: the container
  *   is disposable, home is a persistent folder; not root; no docker.sock; labels with the
  *   project id). The agent stays on the server (CLI and login live there), sandboxed.
@@ -142,8 +143,17 @@ function hiddenPaths(scopeRepos: string[]): string[] {
   return existing.filter((p) => !existing.some((q) => q !== p && p.startsWith(q + '/')));
 }
 
-/** Agent state folders — writable (login, history, cache). */
-const agentState = () => [...['.cache', '.npm', '.bun'].map((d) => join(HOME, d)), ...AGENTS.flatMap((a) => a.statePaths())];
+/**
+ * Agent folders: state writable (login, history, cache), the agents' own config read-only —
+ * they run it outside the sandbox too. Sorted so a folder comes before what lies in it: the
+ * deeper mount wins, and for the same path read-only wins.
+ */
+function agentMounts(): [flag: string, path: string][] {
+  const rw = [...['.cache', '.npm', '.bun'].map((d) => join(HOME, d)), ...AGENTS.flatMap((a) => a.statePaths())];
+  const ro = AGENTS.flatMap((a) => a.configPaths());
+  const all: [string, string][] = [...rw.map((p) => ['--bind', p] as [string, string]), ...ro.map((p) => ['--ro-bind', p] as [string, string])];
+  return all.filter(([, p]) => existsSync(p)).sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+}
 
 /**
  * bwrap arguments for a scope (project or group).
@@ -167,7 +177,7 @@ export function bwrapArgs(opts: { repos: string[]; cwd: string; interactive?: bo
       else args.push('--ro-bind', '/dev/null', p);
     }
   }
-  for (const p of agentState()) if (existsSync(p)) args.push('--bind', p, p);
+  for (const [flag, p] of agentMounts()) args.push(flag, p, p);
   // interactive shell history is separate (the host one with typed commands is not visible)
   if (opts.interactive) {
     const hist = join(config.dataDir, 'shell-history');
