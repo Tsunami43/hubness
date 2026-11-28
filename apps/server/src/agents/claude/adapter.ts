@@ -6,7 +6,10 @@ import { recordClaudeLimits } from './harness.ts';
 import { CLAUDE_BIN, claudeProfile, profileEnv } from './accounts.ts';
 import { stopNotice, type AgentAdapter, type RunContext, type RunHandle, type StopReason } from '../types.ts';
 import { isModelImage } from '../../attachments.ts';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { runtimeBase } from '../../ssh.ts';
 
 /**
  * Claude Code CLI adapter.
@@ -19,7 +22,7 @@ const OUTPUT_LIMIT = 20_000;
 
 type Json = Record<string, any>;
 
-function buildArgs(ctx: RunContext): string[] {
+function buildArgs(ctx: RunContext, mcpFile: string | null): string[] {
   const a = ctx.session.agent;
   const args = [
     '-p',
@@ -46,9 +49,8 @@ function buildArgs(ctx: RunContext): string[] {
   }
   for (const d of ctx.extraDirs) args.push('--add-dir', d);
   if (ctx.systemPrompt) args.push('--append-system-prompt', ctx.systemPrompt);
-  if (ctx.mcpServers.length) {
-    const mcpServers = Object.fromEntries(ctx.mcpServers.map((m) => [m.name, { command: m.command, args: m.args, env: m.env }]));
-    args.push('--mcp-config', JSON.stringify({ mcpServers }));
+  if (mcpFile) {
+    args.push('--mcp-config', mcpFile);
     // hub tools are safe (they only show a pane), so don't ask for permission
     args.push('--allowedTools', ...ctx.mcpServers.flatMap((m) => [`mcp__${m.name}__open_pane`, `mcp__${m.name}__close_pane`]));
   }
@@ -69,7 +71,22 @@ function stringifyToolOutput(content: unknown): string {
 
 export const claudeAdapter: AgentAdapter = {
   start(ctx: RunContext): RunHandle {
-    const [cmd, args] = ctx.wrap ? ctx.wrap(CLAUDE_BIN, buildArgs(ctx)) : [CLAUDE_BIN, buildArgs(ctx)];
+    // the MCP config carries the hub's tokens in its env: a private file for this process, not
+    // an argument (any local user can read a command line)
+    const mcpDir = ctx.mcpServers.length ? join(runtimeBase(), `mcp-${randomUUID().slice(0, 12)}`) : null;
+    let mcpFile: string | null = null;
+    if (mcpDir) {
+      mkdirSync(mcpDir, { mode: 0o700 });
+      mcpFile = join(mcpDir, 'mcp.json');
+      const mcpServers = Object.fromEntries(ctx.mcpServers.map((m) => [m.name, { command: m.command, args: m.args, env: m.env }]));
+      writeFileSync(mcpFile, JSON.stringify({ mcpServers }), { mode: 0o600, flag: 'wx' });
+    }
+    let [cmd, args] = ctx.wrap ? ctx.wrap(CLAUDE_BIN, buildArgs(ctx, mcpFile)) : [CLAUDE_BIN, buildArgs(ctx, mcpFile)];
+    // the sandbox hides the runtime folder: show it this one, read-only
+    if (ctx.wrap && mcpDir) {
+      const at = args.indexOf('--');
+      args = [...args.slice(0, at), '--ro-bind', mcpDir, mcpDir, ...args.slice(at)];
+    }
     const child = spawn(cmd, args, {
       cwd: ctx.cwd,
       env: { ...childEnv(), ...ctx.env, ...profileEnv(claudeProfile(ctx.session.agent.account)) },
@@ -286,6 +303,8 @@ export const claudeAdapter: AgentAdapter = {
         }
         resolve();
       });
+    }).finally(() => {
+      if (mcpDir) rmSync(mcpDir, { recursive: true, force: true });
     });
 
     // First user message

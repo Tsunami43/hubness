@@ -269,6 +269,10 @@ impl Turn {
         }
     }
 
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.state.config().data_dir
+    }
+
     pub fn kv_get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         self.state.db().ok().and_then(|db| kv::get(&db, key).ok().flatten())
     }

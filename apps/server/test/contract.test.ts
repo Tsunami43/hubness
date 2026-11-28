@@ -2,7 +2,7 @@ import { makeRepo, tmp } from './setup.ts';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -94,7 +94,10 @@ const replayAgent = join(import.meta.dirname, 'fixtures', 'replay-agent.ts');
 writeFileSync(
   fakeClaude,
   // it also leaves its environment and arguments for the tests that check what an agent process gets
-  `#!/bin/sh\nenv > ${join(tmp, 'claude-last-env')}\nprintf '%s\\n' "$@" > ${join(tmp, 'claude-last-args')}\nREPLAY_MODE=stream REPLAY_FIXTURE="$(cat ${fixtureFile})" exec ${process.execPath} --disable-warning=ExperimentalWarning ${replayAgent}\n`,
+  // and a copy of its MCP config file with the file's and its folder's modes (`ls -l`)
+  `#!/bin/sh\nenv > ${join(tmp, 'claude-last-env')}\nprintf '%s\\n' "$@" > ${join(tmp, 'claude-last-args')}\n` +
+    `prev=; for a in "$@"; do if [ "$prev" = --mcp-config ] && [ -f "$a" ]; then cp "$a" ${join(tmp, 'claude-last-mcp')}; { ls -l "$a"; ls -ld "$(dirname "$a")"; } > ${join(tmp, 'claude-last-mcp-modes')}; fi; prev=$a; done\n` +
+    `REPLAY_MODE=stream REPLAY_FIXTURE="$(cat ${fixtureFile})" exec ${process.execPath} --disable-warning=ExperimentalWarning ${replayAgent}\n`,
 );
 chmodSync(fakeClaude, 0o755);
 process.env.HUBNESS_CLAUDE_BIN = fakeClaude;
@@ -1554,6 +1557,30 @@ test('SSH connections in a turn: the agent process gets the wrappers and the con
   await call('DELETE', `/ssh/${conn.id}`);
   await turn();
   assert.equal(lastEnv().GIT_SSH_COMMAND, undefined, 'a deleted connection is gone from the next turn');
+});
+
+test('MCP config: Claude gets it as a private file that goes with the turn, never on its command line', async () => {
+  useFixture('claude-tool-turn.jsonl');
+  const project = (await call('POST', '/projects/new-repo', { name: 'mcp-file' })).json;
+  // the fake agent lives in /tmp, which the sandbox of project sessions hides
+  assert.equal((await call('PUT', `/projects/${project.id}/environment`, { sandbox: false })).status, 200);
+  rmSync(join(tmp, 'claude-last-mcp'), { force: true });
+  const s = (await call('POST', '/sessions', { projectId: project.id, agent: { kind: 'claude-code' } })).json;
+  assert.equal((await call('POST', `/sessions/${s.id}/messages`, { text: 'hello' })).status, 200);
+  await waitFor(s.id, (x) => x.status === 'idle' && x.agentSessionId, 'the turn to finish');
+
+  const args = readFileSync(join(tmp, 'claude-last-args'), 'utf8').split('\n');
+  const file = args[args.indexOf('--mcp-config') + 1]!;
+  assert.ok(file.startsWith('/') && !file.includes('{'), `a file path, not the JSON: ${file}`);
+  for (const secret of ['HUB_SESSION_ID', 'HUB_TOKEN', s.id]) assert.ok(!args.join('\n').includes(secret), `${secret} is not on the command line`);
+  const mcp = JSON.parse(readFileSync(join(tmp, 'claude-last-mcp'), 'utf8'));
+  assert.equal(mcp.mcpServers.hub.env.HUB_SESSION_ID, s.id, 'the agent still gets the hub tools');
+  const [fileMode, dirMode] = readFileSync(join(tmp, 'claude-last-mcp-modes'), 'utf8').trim().split('\n').map((l) => l.split(' ')[0]);
+  assert.match(fileMode!, /^-rw-------/, 'only the hub user can read the file');
+  assert.match(dirMode!, /^drwx------/, 'and its folder');
+  // gone when the agent process exits (a moment after the answer)
+  for (let i = 0; i < 250 && existsSync(file); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(existsSync(file), false, 'the file is removed with the turn');
 });
 
 test('preview: the proxy adds the helper to pages and collects what it reports', async () => {

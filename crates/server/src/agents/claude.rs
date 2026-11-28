@@ -49,7 +49,7 @@ fn profile(turn: &Turn, account: Option<&str>) -> (String, Option<String>) {
     }
 }
 
-fn build_args(turn: &Turn) -> Vec<String> {
+fn build_args(turn: &Turn, mcp_file: Option<&str>) -> Vec<String> {
     let s = turn.session();
     let a = &s.agent;
     let mut args: Vec<String> = [
@@ -78,16 +78,8 @@ fn build_args(turn: &Turn) -> Vec<String> {
     if let Some(p) = &turn.system_prompt {
         args.extend(["--append-system-prompt".into(), p.clone()]);
     }
-    if !turn.mcp_servers.is_empty() {
-        let servers: serde_json::Map<String, Value> = turn
-            .mcp_servers
-            .iter()
-            .map(|m| {
-                let env: serde_json::Map<String, Value> = m.env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
-                (m.name.clone(), json!({ "command": m.command, "args": m.args, "env": env }))
-            })
-            .collect();
-        args.extend(["--mcp-config".into(), json!({ "mcpServers": servers }).to_string()]);
+    if let Some(file) = mcp_file {
+        args.extend(["--mcp-config".into(), file.to_string()]);
         // hub tools are safe (they only show a pane), so don't ask for permission
         args.push("--allowedTools".into());
         for m in &turn.mcp_servers {
@@ -98,6 +90,43 @@ fn build_args(turn: &Turn) -> Vec<String> {
         args.extend(["--resume".into(), id.clone()]);
     }
     args
+}
+
+/// The MCP config of one agent process: a 0600 file in a private folder under the runtime
+/// folder, removed when dropped. Its env carries the hub's tokens, and any local user can read
+/// a command line, so it never goes there.
+struct McpConfig(std::path::PathBuf);
+
+impl McpConfig {
+    fn write(turn: &Turn) -> std::io::Result<Self> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        let servers: serde_json::Map<String, Value> = turn
+            .mcp_servers
+            .iter()
+            .map(|m| {
+                let env: serde_json::Map<String, Value> = m.env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+                (m.name.clone(), json!({ "command": m.command, "args": m.args, "env": env }))
+            })
+            .collect();
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let dir = crate::ssh::runtime_base(turn.data_dir())?.join(format!("mcp-{}", &id[..12]));
+        std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+        let me = Self(dir);
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(me.file())?;
+        f.write_all(json!({ "mcpServers": servers }).to_string().as_bytes())?;
+        Ok(me)
+    }
+
+    fn file(&self) -> std::path::PathBuf {
+        self.0.join("mcp.json")
+    }
+}
+
+impl Drop for McpConfig {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// Like JavaScript's `s.slice(0, n)` on UTF-16 units.
@@ -253,7 +282,19 @@ pub fn start(turn: Arc<Turn>) -> Result<Started, String> {
     let bin = claude_bin();
     let session = turn.session();
     let (profile_id, config_dir) = profile(&turn, session.agent.account.as_deref());
-    let (cmd, args) = turn.wrap.apply(&bin, build_args(&turn));
+    let mcp = if turn.mcp_servers.is_empty() {
+        None
+    } else {
+        Some(McpConfig::write(&turn).map_err(|e| format!("Could not write the MCP config for Claude Code: {e}"))?)
+    };
+    let mcp_file = mcp.as_ref().map(|m| m.file().to_string_lossy().into_owned());
+    let mut wrap = turn.wrap.clone();
+    // the sandbox hides the runtime folder: show it this one, read-only
+    if let (Some(b), Some(m)) = (&mut wrap.bwrap, &mcp) {
+        let dir = m.0.to_string_lossy().into_owned();
+        b.extend(["--ro-bind".into(), dir.clone(), dir]);
+    }
+    let (cmd, args) = wrap.apply(&bin, build_args(&turn, mcp_file.as_deref()));
     let mut command = tokio::process::Command::new(&cmd);
     command
         .args(&args)
@@ -323,6 +364,8 @@ pub fn start(turn: Arc<Turn>) -> Result<Started, String> {
             let _ = err_reader.await;
             let status = child.wait().await;
             exited.store(true, Ordering::SeqCst);
+            // the process is gone: so is its MCP config
+            drop(mcp);
             let (pending, stopped, reason, got_result) = {
                 let mut st = state.lock().expect("claude state");
                 (std::mem::take(&mut st.pending), st.stopped, st.stop_reason, st.got_result)
