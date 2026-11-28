@@ -19,8 +19,7 @@ export const es: Record<MessageKey, string> = {
   'archive.emptyTitle': 'Vaciar el archivo',
   'archive.emptyConfirm': '¿Eliminar definitivamente las {n} sesiones archivadas? Sus conversaciones no se podrán restaurar.',
   'archive.deleteOne': '¿Eliminar “{title}” definitivamente? La conversación no se podrá restaurar.',
-  'archive.emptyWithFolders': 'Eliminar con las carpetas de los chats',
-  'archive.emptyFoldersHint': 'Los archivos adjuntos también se eliminan. Las carpetas de los chats normales, con lo que sus agentes crearon, se conservan salvo que las elimines también.',
+  'archive.emptyFoldersHint': 'Los archivos adjuntos y las carpetas de los chats normales, con todo lo que sus agentes crearon en ellas, también se eliminan.',
   'archive.emptyList': 'El archivo está vacío. Archiva una sesión desde la pestaña Activas para ocultarla de la lista.',
   'archive.banner': 'Esta sesión está en el archivo. Al enviar un mensaje vuelve a estar activa.',
   'attach.add': 'Adjuntar archivos (o pégalos / suéltalos aquí)',
@@ -223,8 +222,7 @@ export const es: Record<MessageKey, string> = {
   'session.agentLocked':
     'Agente de la sesión: {agent}. El agente no se puede cambiar: el contexto de la conversación vive con él. Inicia una sesión nueva para usar otro agente.',
   'session.deleteConfirm': '¿Eliminar esta sesión y su historial?',
-  'session.deleteWithFolder': 'Eliminar con la carpeta',
-  'session.deleteFolderHint': 'Los archivos adjuntos también se eliminan. La carpeta del chat, con lo que el agente creó en ella, se conserva salvo que la elimines también.',
+  'session.deleteFolderHint': 'Los archivos adjuntos y la carpeta del chat, con todo lo que el agente creó en ella, también se eliminan.',
 
   // events
   'ev.thinking': 'Pensando',

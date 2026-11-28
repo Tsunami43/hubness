@@ -19,8 +19,7 @@ export const pt: Record<MessageKey, string> = {
   'archive.emptyTitle': 'Esvaziar o arquivo',
   'archive.emptyConfirm': 'Excluir definitivamente todas as {n} sessões arquivadas? As conversas não poderão ser restauradas.',
   'archive.deleteOne': 'Excluir “{title}” definitivamente? A conversa não poderá ser restaurada.',
-  'archive.emptyWithFolders': 'Excluir com as pastas dos chats',
-  'archive.emptyFoldersHint': 'Os arquivos anexados também são excluídos. As pastas dos chats comuns, com o que seus agentes criaram, permanecem, a menos que você as exclua também.',
+  'archive.emptyFoldersHint': 'Os arquivos anexados e as pastas dos chats comuns, com tudo o que seus agentes criaram nelas, também são excluídos.',
   'archive.emptyList': 'O arquivo está vazio. Arquive uma sessão na aba Ativas para ocultá-la da lista.',
   'archive.banner': 'Esta sessão está no arquivo. Enviar uma mensagem a traz de volta.',
   'attach.add': 'Anexar arquivos (ou cole / solte aqui)',
@@ -223,8 +222,7 @@ export const pt: Record<MessageKey, string> = {
   'session.agentLocked':
     'Agente da sessão: {agent}. O agente não pode ser trocado — o contexto da conversa fica com ele. Inicie uma nova sessão para usar outro agente.',
   'session.deleteConfirm': 'Excluir esta sessão e o seu histórico?',
-  'session.deleteWithFolder': 'Excluir com a pasta',
-  'session.deleteFolderHint': 'Os arquivos anexados também são excluídos. A pasta do chat, com o que o agente criou nela, permanece, a menos que você a exclua também.',
+  'session.deleteFolderHint': 'Os arquivos anexados e a pasta do chat, com tudo o que o agente criou nela, também são excluídos.',
 
   // events
   'ev.thinking': 'Pensando',
