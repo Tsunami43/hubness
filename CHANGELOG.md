@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-11-28
+
 ### Changed
 
 - Git logins moved from Settings to System → Git access, next to SSH; the old address
@@ -15,7 +17,6 @@ All notable changes to this project are documented here. The format follows
 
 - A turn whose answer is an error (for example `API Error: 529 overloaded`) no longer shows the
   session as failed for a moment before it settles as idle (a regression in 0.4.6).
-
 - On a phone, confirmation dialogs opened from the sessions panel (Delete all in the archive,
   deleting a session) appeared under the panel and could not be seen until it was closed. With
   several actions, the dialog's buttons now stack full width on a narrow screen.
