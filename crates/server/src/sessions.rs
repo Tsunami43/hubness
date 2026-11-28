@@ -14,6 +14,7 @@ use hubness_core::{AgentConfig, GlobalStreamMsg, Pane, PaneKind, PermissionMode,
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::sync::broadcast;
 use tokio_stream::wrappers::{BroadcastStream, IntervalStream};
 
 use crate::db::sessions::{self as repo, Archived, Filter};
@@ -480,21 +481,30 @@ async fn session_stream(
         let first = SessionStreamMsg::Snapshot { session: session.clone(), events: repo::events(&db, &id)?, pane };
         (first, rx, session)
     };
-    let updates = BroadcastStream::new(rx).filter_map(|m| async move { m.ok().map(|m| sse_event(&m)) });
     let state = s.clone();
     let pings = ticks().map(move |_| {
         let current = state.db().ok().and_then(|db| repo::get(&db, &session.id).ok().flatten()).unwrap_or_else(|| session.clone());
         sse_event(&SessionStreamMsg::Session { session: current })
     });
-    let body = stream::once(async move { sse_event(&first) }).chain(stream::select(updates, pings));
+    let body = stream::once(async move { sse_event(&first) }).chain(live(rx, pings));
     Ok(Sse::new(body))
 }
 
 /// Session changes for the lists.
 async fn global_stream(State(s): State<AppState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let updates = BroadcastStream::new(s.bus.on_global()).filter_map(|m| async move { m.ok().map(|m| sse_event(&m)) });
     let pings = ticks().map(|_| Ok(Event::default().event("ping").data("")));
-    Sse::new(stream::select(updates, pings))
+    Sse::new(live(s.bus.on_global(), pings))
+}
+
+/// Bus updates interleaved with the keep-alive pings. A subscriber that lagged behind the bus
+/// lost messages: the stream ends instead of going on with a gap, and the EventSource
+/// reconnects for a fresh snapshot.
+fn live<T: serde::Serialize + Clone + Send + 'static>(
+    rx: broadcast::Receiver<T>,
+    pings: impl Stream<Item = Result<Event, Infallible>>,
+) -> impl Stream<Item = Result<Event, Infallible>> {
+    let updates = BroadcastStream::new(rx).map(|m| m.ok().map(|m| sse_event(&m)));
+    stream::select(updates, pings.map(Some)).scan((), |(), m| std::future::ready(m))
 }
 
 // ---------- attachments ----------
@@ -734,4 +744,30 @@ async fn pane_diff(State(s): State<AppState>, Path(id): Path<String>, Query(q): 
     };
     let parts: Vec<String> = [staged, diff].into_iter().filter(|d| !d.is_empty()).collect();
     Ok(axum::Json(json!({ "diff": parts.join("\n") })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_lagging_subscriber_gets_its_stream_closed_not_a_gap() {
+        let (tx, rx) = broadcast::channel::<u32>(2);
+        for i in 0..5 {
+            tx.send(i).unwrap();
+        }
+        // the subscriber missed 0, 1 and 2: ending the stream makes the EventSource reconnect for a snapshot
+        let got = tokio::time::timeout(Duration::from_secs(1), live(rx, stream::pending()).collect::<Vec<_>>()).await;
+        assert!(matches!(got, Ok(ref events) if events.is_empty()), "stream went on after the gap: {got:?}");
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_that_keeps_up_gets_every_update() {
+        let (tx, rx) = broadcast::channel::<u32>(2);
+        let mut s = Box::pin(live(rx, stream::pending()));
+        for i in 0..5 {
+            tx.send(i).unwrap();
+            assert!(s.next().await.is_some());
+        }
+    }
 }
