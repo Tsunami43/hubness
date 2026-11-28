@@ -6,6 +6,7 @@ import { HttpError } from './errors.ts';
 import { containerIp, execCommand, runtimeOf, type Scope } from './environments.ts';
 import { closePreview, closePreviewsWithPrefix, ensurePreview, previewPort } from './preview.ts';
 import { secretEnv } from './secrets.ts';
+import { exposePreview } from './tailscale.ts';
 import { getJob, jobListeners, killJob, startJob } from './terminal.ts';
 
 /**
@@ -319,7 +320,11 @@ export async function previewPortFor(p: Project, port: number): Promise<number> 
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new HttpError(400, 'Port must be 1–65535');
   // a running command on that port already has a preview: the same page (and log) as the Preview tab
   const run = listRuns(p).find((r) => r.activePort === port && r.previewPort);
-  if (run?.previewPort) return run.previewPort;
+  if (run?.previewPort) {
+    // asked for again (the Preview tab's "Try again"): one more try at Tailscale Serve
+    void exposePreview(run.previewPort);
+    return run.previewPort;
+  }
   const pp = await ensurePreview(`${p.id}:port:${port}`, previewTarget(p, port));
   if (!pp) throw new HttpError(503, 'No free preview ports (HUBNESS_PREVIEW_PORTS)');
   return pp;

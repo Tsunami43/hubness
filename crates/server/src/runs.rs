@@ -746,6 +746,8 @@ async fn preview_route(State(s): State<AppState>, UrlPath(id): Id, JsonBody(b): 
 /// Preview tab. Must be called inside the tokio runtime.
 pub fn preview_port_for(db: &Connection, config: &Config, p: &Project, port: u16) -> ApiResult<u16> {
     if let Some(pp) = list_runs(db, p)?.into_iter().find(|r| r.active_port == Some(port)).and_then(|r| r.preview_port) {
+        // asked for again (the Preview tab's "Try again"): one more try at Tailscale Serve
+        crate::tailscale::expose(pp);
         return Ok(pp);
     }
     let docker = environments::runtime_of(db, p)?.environment == RuntimeEnvironment::Docker;

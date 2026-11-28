@@ -736,7 +736,7 @@ export const en = {
   'preview.open': 'Open preview',
   'preview.reload': 'Reload',
   'preview.newTab': 'Open in a new tab',
-  'preview.notRunning': 'The app isn’t running. Start it with Run.',
+  'preview.notRunning': "The app isn’t running.",
   'shell.title': 'Shell',
   'shell.new': 'New shell',
   'shell.hint': 'Shells keep running when you switch tabs or reload the page. + opens another one; × closes it. A shell nobody watches for 30 minutes is closed.',
@@ -1157,6 +1157,14 @@ export const en = {
   'ssh.notePlaceholder': "What it is here: prod, staging, dev… and what the agent may do (optional)",
   'ssh.noBindings': "No connections attached.",
   'ssh.manageHint': "Create and edit connections in",
+  'preview.how': "Preview shows the running app. Start its command: the page opens here as soon as the command listens on a port (set in the command, or printed by it, like http://localhost:5173).",
+  'preview.waiting': "“{name}” is running, but its port isn’t known yet.",
+  'preview.waitingHint': "The page opens once the command prints its address (http://localhost:…). If it never does, set the port in the command or enter it below.",
+  'preview.failed': "“{name}” exited with an error (code {code}).",
+  'preview.showLogs': "Show output",
+  'preview.unreachable': "The preview can’t be opened at {host}:{port}",
+  'preview.unreachableWhy': "The app is running, but a preview is a separate port of the hub ({port}), and this address doesn’t pass it. If the hub is opened through a proxy or a VPN (Tailscale Serve, Caddy, nginx), forward the preview ports there too (HUBNESS_PREVIEW_PORTS, 8790–8809 by default), or open the hub by an address that reaches those ports directly.",
+  'preview.unreachableTailscale': "On a Tailscale address the hub opens preview ports itself, once it is allowed to change Tailscale Serve. Run this once on the hub’s machine, then try again:",
 } as const;
 
 export type MessageKey = keyof typeof en;

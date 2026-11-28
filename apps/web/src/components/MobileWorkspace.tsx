@@ -57,6 +57,8 @@ export function MobileWorkspace({
     const next = new URLSearchParams(params);
     if (m === 'chat') next.delete('m');
     else next.set('m', m);
+    // leaving More closes its tool: coming back shows the list
+    if (m !== 'more') next.delete('t');
     for (const [k, v] of Object.entries(extra ?? {})) {
       if (v === null) next.delete(k);
       else next.set(k, v);
@@ -433,8 +435,16 @@ function FilesTab({ repos, git }: { repos: Repo[]; git: Record<string, GitStatus
 // ---------- More ----------
 
 function MoreTab({ tools, onFull }: { tools: Tool[]; onFull: () => void }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const tool = tools.find((x) => x.id === open);
+  // the open tool lives in the address (`t`, as in the full workspace): a tool can send the
+  // user to another one (Run → Preview), and a reload stays where it was
+  const [params, setParams] = useSearchParams();
+  const setOpen = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set('t', id);
+    else next.delete('t');
+    setParams(next, { replace: true });
+  };
+  const tool = tools.find((x) => x.id === params.get('t'));
   if (tool)
     return (
       <div className="flex min-h-0 flex-1 flex-col">

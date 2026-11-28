@@ -31,7 +31,8 @@ export function ProjectPage() {
   const [focus, setFocus] = useState<string | null>(null);
   // Run state is polled often only while a Run/Preview tab is open
   const [openTools, setOpenTools] = useState<string[]>([]);
-  const { runs, reload: reloadRuns } = useRuns(id, openTools.includes('run') || openTools.includes('preview'));
+  // (`t` — the tool open in the phone view)
+  const { runs, reload: reloadRuns } = useRuns(id, ['run', 'preview'].some((x) => openTools.includes(x) || params.get('t') === x));
   const repos = useMemo(() => (project ? [{ id: project.id, name: project.name, path: project.path }] : []), [project?.id, project?.name, project?.path]);
   const { git, refresh: refreshGit } = useGitByRepo(repos);
   // phone: the simple chat-first view unless the full workspace was asked for
@@ -61,12 +62,17 @@ export function ProjectPage() {
     next.set('t', t);
     setParams(next, { replace: true });
   };
-  const run = (r: RunState) =>
-    void api.startRun(project.id, r.id, ptySize()).then(() => {
-      setFocus(r.id);
-      void reloadRuns();
-      goto('run');
-    });
+  // `stay` — started from Preview: the page appears there once the port is known
+  const run = (r: RunState, stay = false) =>
+    void api
+      .startRun(project.id, r.id, ptySize())
+      .then(() => setFocus(r.id))
+      // a command that could not start is explained by the Run tab
+      .catch(() => (stay = false))
+      .then(() => {
+        void reloadRuns();
+        if (!stay) goto('run');
+      });
   const normal = project.kind === 'normal';
   const repo = project.repo;
 
@@ -81,7 +87,18 @@ export function ProjectPage() {
             badge: runs?.some((r) => r.job?.status === 'running') ? ('dot' as const) : null,
             render: () => <RunPanel projectId={project.id} runs={runs} reload={() => void reloadRuns()} focus={focus} setFocus={setFocus} onPreview={() => goto('preview')} />,
           },
-          { id: 'preview', label: t('preview.title'), icon: AppWindow, render: () => <PreviewPanel projectId={project.id} runs={runs} onStartRun={run} /> },
+          { id: 'preview', label: t('preview.title'), icon: AppWindow, render: () => (
+              <PreviewPanel
+                projectId={project.id}
+                runs={runs}
+                onStartRun={(r) => run(r, true)}
+                onShowRun={(r) => {
+                  if (r) setFocus(r.id);
+                  goto('run');
+                }}
+              />
+            ),
+          },
         ]
       : []),
     { id: 'shell', label: t('shell.title'), icon: SquareTerminal, render: () => <ShellPanel scope={{ projectId: project.id }} /> },
