@@ -424,7 +424,7 @@ function processName(pid: number): string | null {
   try {
     return readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
   } catch {}
-  const r = spawnSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const r = spawnSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: childEnv() });
   const name = (r.stdout ?? '').trim();
   // `ps` may print the whole path
   return r.status === 0 && name ? name.split('/').pop()! : null;

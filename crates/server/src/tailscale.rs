@@ -91,7 +91,15 @@ fn init_with(tool: &str, port: u16, host: &str) {
 
 /// Run a tailscale command: did it succeed, and what it printed.
 fn run(tool: &str, args: &[&str]) -> (bool, String) {
-    let Ok(mut child) = Command::new(tool).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() else {
+    let Ok(mut child) = Command::new(tool)
+        .args(args)
+        .env_clear()
+        .envs(crate::config::child_env())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    else {
         return (false, String::new());
     };
     let started = Instant::now();

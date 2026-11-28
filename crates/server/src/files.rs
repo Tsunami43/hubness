@@ -66,6 +66,8 @@ fn git_ignored(cwd: &Path, names: &[String]) -> Option<HashSet<String>> {
         .arg("-C")
         .arg(cwd)
         .args(["check-ignore", "--stdin"])
+        .env_clear()
+        .envs(crate::config::child_env())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -301,7 +303,14 @@ pub fn browse(path: Option<&str>) -> ApiResult<BrowseResponse> {
 /// outside git — a folder walk.
 pub fn list_files(root: &Path, limit: usize) -> ApiResult<Vec<String>> {
     let root_real = real(root)?;
-    let out = Command::new("git").arg("-C").arg(&root_real).args(["ls-files", "-co", "--exclude-standard"]).stderr(Stdio::null()).output();
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&root_real)
+        .args(["ls-files", "-co", "--exclude-standard"])
+        .env_clear()
+        .envs(crate::config::child_env())
+        .stderr(Stdio::null())
+        .output();
     if let Ok(o) = out
         && o.status.success()
     {

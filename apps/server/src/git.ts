@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GitBranch, GitCommit, GitFile, GitLogResponse, GitOpResult, GitRepoState, GitStash, GitStatus } from '@hubness/shared';
+import { childEnv } from './config.ts';
 import { authProblem, gitAuthFor } from './git-auth.ts';
 import { parseRemote } from './git-providers.ts';
 
@@ -21,7 +22,7 @@ function git(cwd: string, args: string[], timeout = 30_000, extraEnv: Record<str
         timeout,
         maxBuffer: 32 * 1024 * 1024,
         // GIT_EDITOR=true: --continue and merges keep the prepared message instead of waiting for an editor
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_EDITOR: 'true', LC_ALL: 'C', ...extraEnv },
+        env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_EDITOR: 'true', LC_ALL: 'C', ...extraEnv },
       },
       (err, stdout, stderr) => {
         const code = err ? (typeof (err as any).code === 'number' ? (err as any).code : 1) : 0;

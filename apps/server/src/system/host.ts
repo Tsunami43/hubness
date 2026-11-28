@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { arch, cpus, release, type as osType } from 'node:os';
 import type { GpuInfo, HostInfo, HostPlatform, SystemPlatform, TempSensor } from '@hubness/shared';
+import { childEnv } from '../config.ts';
 import { onPath, sh } from './exec.ts';
 
 /**
@@ -24,7 +25,7 @@ const read = (path: string) => {
 /** Synchronous one-liner for rare static facts (sysctl, sw_vers). */
 const run = (cmd: string, args: string[]) => {
   try {
-    return execFileSync(cmd, args, { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return execFileSync(cmd, args, { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'], env: childEnv() }).trim();
   } catch {
     return '';
   }

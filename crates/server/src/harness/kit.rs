@@ -22,7 +22,14 @@ pub(super) async fn run_cli(cmd: &str, args: &[&str], timeout: Duration, env: &[
         return None;
     }
     let mut c = tokio::process::Command::new(cmd);
-    c.args(args).envs(env.iter().cloned()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
+    c.args(args)
+        .env_clear()
+        .envs(crate::config::child_env())
+        .envs(env.iter().cloned())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
     let out = tokio::time::timeout(timeout, c.output()).await.ok()?.ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -31,6 +38,8 @@ pub(super) async fn run_cli(cmd: &str, args: &[&str], timeout: Duration, env: &[
 pub(super) async fn run_once(cmd: &str, args: &[&str]) -> (Option<i32>, String) {
     let child = tokio::process::Command::new(cmd)
         .args(args)
+        .env_clear()
+        .envs(crate::config::child_env())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

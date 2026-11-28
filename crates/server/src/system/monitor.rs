@@ -231,7 +231,13 @@ fn uptime_sec() -> i64 {
         return v.round() as i64;
     }
     // macOS and BSDs: `{ sec = 1700000000, usec = 0 } …`
-    let out = std::process::Command::new("sysctl").args(["-n", "kern.boottime"]).output().map(|o| o.stdout).unwrap_or_default();
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "kern.boottime"])
+        .env_clear()
+        .envs(crate::config::child_env())
+        .output()
+        .map(|o| o.stdout)
+        .unwrap_or_default();
     let boot = String::from_utf8_lossy(&out);
     let sec: Option<i64> = boot.split("sec = ").nth(1).and_then(|s| s.split(',').next()).and_then(|s| s.trim().parse().ok());
     sec.map(|s| jiff::Timestamp::now().as_second() - s).unwrap_or(0)

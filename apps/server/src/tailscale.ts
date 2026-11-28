@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
+import { childEnv } from './config.ts';
 
 /**
  * Previews behind Tailscale Serve. A hub opened as `https://<machine>.<tailnet>.ts.net`
@@ -51,7 +52,7 @@ export function initTailscale(port: number, host: string) {
 
 const run = (args: string[]) =>
   new Promise<{ ok: boolean; out: string }>((resolve) =>
-    execFile(tool(), args, { timeout: 10_000 }, (err, stdout, stderr) => resolve({ ok: !err, out: `${stdout}${stderr}`.trim() })),
+    execFile(tool(), args, { timeout: 10_000, env: childEnv() }, (err, stdout, stderr) => resolve({ ok: !err, out: `${stdout}${stderr}`.trim() })),
   );
 
 async function currentFront(): Promise<ServeFront | null> {
@@ -106,7 +107,7 @@ export function unexposeAllPreviews() {
   if (!on()) return;
   for (const [port, f] of exposed) {
     try {
-      execFileSync(tool(), ['serve', flag(f, port), 'off'], { timeout: 5000, stdio: 'ignore' });
+      execFileSync(tool(), ['serve', flag(f, port), 'off'], { timeout: 5000, stdio: 'ignore', env: childEnv() });
     } catch {}
   }
   exposed.clear();

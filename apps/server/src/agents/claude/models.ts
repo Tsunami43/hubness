@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import type { ModelOption } from '@hubness/shared';
+import { childEnv } from '../../config.ts';
 import { kv } from '../../db/index.ts';
 import { CLAUDE_BIN } from './accounts.ts';
 
@@ -26,6 +27,7 @@ function readModels(): Promise<ModelOption[] | null> {
     try {
       p = spawn(CLAUDE_BIN, ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], {
         cwd: tmpdir(),
+        env: childEnv(),
         stdio: ['pipe', 'pipe', 'ignore'],
       });
     } catch {

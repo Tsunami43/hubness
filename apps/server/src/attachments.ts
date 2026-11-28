@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync,
 import { randomUUID } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import type { Attachment } from '@hubness/shared';
+import { childEnv } from './config.ts';
 import { HttpError } from './errors.ts';
 
 /**
@@ -51,7 +52,7 @@ const isFile = (path: string) => existsSync(path) && lstatSync(path).isFile();
 
 /** Keep the attachments folder out of git, locally (works for worktrees too). */
 function excludeFromGit(cwd: string) {
-  const r = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel', '--git-path', 'info/exclude'], { encoding: 'utf8', timeout: 5000 });
+  const r = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel', '--git-path', 'info/exclude'], { encoding: 'utf8', timeout: 5000, env: childEnv() });
   if (r.status !== 0) return;
   const [top, rel] = r.stdout.trim().split('\n');
   // only when the session folder is the repository root (a group workspace is not a repository)

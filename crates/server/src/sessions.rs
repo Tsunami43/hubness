@@ -602,7 +602,8 @@ async fn convert(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b):
                 std::fs::remove_dir_all(&from)?;
             }
             if !dest.join(".git").exists() {
-                let _ = std::process::Command::new("git").args(["init", "-q"]).arg(&dest).status();
+                let _ =
+                    std::process::Command::new("git").args(["init", "-q"]).arg(&dest).env_clear().envs(crate::config::child_env()).status();
             }
             if !dest.join("AGENTS.md").exists() {
                 std::fs::write(dest.join("AGENTS.md"), format!("# {name}\n\nProject rules for any agent working here.\n"))?;

@@ -2,7 +2,7 @@ import { makeRepo, tmp } from './setup.ts';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -1914,6 +1914,15 @@ test('pane file and diff of a session', async () => {
   const staged = (await call('GET', `/sessions/${s.id}/diff?path=fresh.txt`)).json.diff;
   assert.match(staged, /\+new/);
   assert.equal((await call('GET', `/sessions/missing/file?path=a.txt`)).status, 404);
+});
+
+test('harness: the agent CLI probed for its version and login gets no hub settings', async () => {
+  const envFile = join(tmp, 'claude-last-env');
+  rmSync(envFile, { force: true });
+  assert.equal((await call('GET', '/harness/claude-code?refresh=1')).status, 200);
+  const names = readFileSync(envFile, 'utf8').split('\n').map((l) => l.slice(0, l.indexOf('=')));
+  assert.ok(names.includes('PATH'));
+  assert.deepEqual(names.filter((n) => n.startsWith('HUBNESS_')), []);
 });
 
 test('harness: agents list, per-agent info, models, settings validation', async () => {

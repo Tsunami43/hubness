@@ -15,6 +15,11 @@ import { closePreview, ensurePreview } from '../src/preview.ts';
 import { HttpError } from '../src/errors.ts';
 import { createEntry, deleteEntry, readFileSafe, renameEntry, writeFileSafe } from '../src/fsops.ts';
 import { _searchNode, searchFiles } from '../src/search.ts';
+import { ops as gitOps } from '../src/git.ts';
+import { runCli } from '../src/agents/kit.ts';
+import { runOnce } from '../src/terminal.ts';
+import { sh } from '../src/system/exec.ts';
+import { execFileSync } from 'node:child_process';
 
 const repo = makeRepo(join(tmp, 'shop', 'web'));
 const other = makeRepo(join(tmp, 'shop', 'billing'));
@@ -157,6 +162,28 @@ test('child processes do not inherit hub settings, secrets or pnpm variables', (
   assert.ok(env.PATH);
   delete process.env.HUBNESS_SECRET_KEY;
   delete process.env.npm_config_registry;
+});
+
+test('spawned tools, CLIs and git hooks do not see hub settings or secrets', async () => {
+  const dir = makeRepo(join(tmp, 'env-leak'));
+  execFileSync('git', ['-C', dir, 'config', 'user.name', 't']);
+  execFileSync('git', ['-C', dir, 'config', 'user.email', 't@t']);
+  const seen = join(tmp, 'env-leak-hook.txt');
+  writeFileSync(join(dir, '.git/hooks/pre-commit'), `#!/bin/sh\necho "\${HUBNESS_SECRET_KEY-unset}" > ${seen}\n`);
+  chmodSync(join(dir, '.git/hooks/pre-commit'), 0o755);
+  writeFileSync(join(dir, 'a.txt'), 'a');
+  const probe = ['-c', 'echo "${HUBNESS_SECRET_KEY-unset}"'];
+  process.env.HUBNESS_SECRET_KEY = 'x'.repeat(40);
+  try {
+    assert.equal((await gitOps.commit(dir, 'init', true)).ok, true);
+    assert.equal(readFileSync(seen, 'utf8').trim(), 'unset', 'git hook');
+    assert.equal((await runCli('sh', probe))?.trim(), 'unset', 'runCli');
+    assert.equal((await runCli('sh', probe, 5_000, { A: '1' }))?.trim(), 'unset', 'runCli with env');
+    assert.equal((await runOnce('sh', probe)).output, 'unset', 'runOnce');
+    assert.equal((await sh('sh', probe)).out.trim(), 'unset', 'system sh');
+  } finally {
+    delete process.env.HUBNESS_SECRET_KEY;
+  }
 });
 
 // ---------- csrf and preview ----------
