@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import type { EnvironmentStatus, Project, ProjectGroup, ProjectRuntime } from '@hubness/shared';
-import { config, repoRoot } from './config.ts';
+import { childEnv, config, repoRoot } from './config.ts';
 import { groups, projectRuntime, projects } from './db/index.ts';
 import { HttpError } from './errors.ts';
 import { shq } from './terminal.ts';
@@ -33,12 +33,12 @@ let dockerOk: boolean | null = null;
 let bwrapOk: boolean | null = null;
 
 export function dockerAvailable(): boolean {
-  if (dockerOk === null) dockerOk = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { timeout: 5000 }).status === 0;
+  if (dockerOk === null) dockerOk = spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { timeout: 5000, env: childEnv() }).status === 0;
   return dockerOk;
 }
 
 export function sandboxAvailable(): boolean {
-  if (bwrapOk === null) bwrapOk = spawnSync('bwrap', ['--ro-bind', '/', '/', '--dev', '/dev', 'true'], { timeout: 5000 }).status === 0;
+  if (bwrapOk === null) bwrapOk = spawnSync('bwrap', ['--ro-bind', '/', '/', '--dev', '/dev', 'true'], { timeout: 5000, env: childEnv() }).status === 0;
   return bwrapOk;
 }
 
@@ -304,6 +304,7 @@ export function execCommand(
       onKill: () => {
         spawn('docker', ['exec', name, 'sh', '-c', `kill -TERM -$(cat ${tag}) 2>/dev/null; sleep 2; kill -KILL -$(cat ${tag}) 2>/dev/null; rm -f ${tag}`], {
           stdio: 'ignore',
+          env: childEnv(),
         }).unref();
       },
     };

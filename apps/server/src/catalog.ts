@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } fr
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { GroupDetail, HubSettings, JobInfo, PermissionMode, Project, ProjectDetail, ProjectGroup, RepoInfo } from '@hubness/shared';
-import { config, repoRoot } from './config.ts';
+import { childEnv, config, repoRoot } from './config.ts';
 import { groups, kv, projects, sessions, DEFAULT_INSTRUCTIONS_KEY, SESSION_INSTRUCTIONS_KEY } from './db/index.ts';
 import { HttpError } from './errors.ts';
 import * as git from './git.ts';
@@ -283,7 +283,7 @@ export async function createRepo(b: { name?: unknown; groupId?: unknown }): Prom
   const { dir, slug } = targetDir(typeof b.name === 'string' ? b.name : '', group);
   mkdirSync(dir, { recursive: true });
   const { execFileSync } = await import('node:child_process');
-  execFileSync('git', ['init', '-q', dir]);
+  execFileSync('git', ['init', '-q', dir], { env: childEnv() });
   const p = projects.create(slug, dir, 'normal');
   if (group) addToGroup(group, [p.id]);
   return projects.get(p.id)!;

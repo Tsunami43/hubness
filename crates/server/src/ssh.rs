@@ -503,7 +503,14 @@ fn process_name(pid: u32) -> Option<String> {
     if let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
         return Some(comm.trim().to_string());
     }
-    let out = Command::new("ps").args(["-p", &pid.to_string(), "-o", "comm="]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let out = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .env_clear()
+        .envs(crate::config::child_env())
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     // `ps` may print the whole path
     (out.status.success() && !name.is_empty()).then(|| name.rsplit('/').next().unwrap_or_default().to_string())

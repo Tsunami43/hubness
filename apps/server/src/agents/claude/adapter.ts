@@ -344,7 +344,7 @@ export const claudeAdapter: AgentAdapter = {
 
 export function claudeVersion(): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile(CLAUDE_BIN, ['--version'], { timeout: 10_000 }, (err, out) =>
+    execFile(CLAUDE_BIN, ['--version'], { timeout: 10_000, env: childEnv() }, (err, out) =>
       resolve(err ? null : out.trim()),
     );
   });

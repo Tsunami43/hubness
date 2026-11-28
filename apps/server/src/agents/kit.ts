@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import type { HarnessAction, HarnessVersion } from '@hubness/shared';
+import { childEnv } from '../config.ts';
 import { shq } from '../terminal.ts';
 
 /**
@@ -13,7 +14,7 @@ export type Json = Record<string, any>;
 /** Run a CLI with stdin closed (otherwise some CLIs wait for input and print nothing). null — failed or timed out. */
 export function runCli(cmd: string, args: string[], timeoutMs = 20_000, env?: Record<string, string>): Promise<string | null> {
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], ...(env ? { env: { ...process.env, ...env } } : {}) });
+    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], env: { ...childEnv(), ...env } });
     let out = '';
     const timer = setTimeout(() => p.kill(), timeoutMs);
     p.stdout.on('data', (d: Buffer) => (out += d.toString()));

@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SearchFile, SearchOptions, SearchResult } from '@hubness/shared';
+import { childEnv } from './config.ts';
 import { HttpError } from './errors.ts';
 import { listFiles } from './fsops.ts';
 
@@ -17,7 +18,7 @@ const MAX_LINE = 400;
 const TIMEOUT_MS = 15_000;
 
 let rgOk: boolean | null = null;
-const hasRg = () => (rgOk ??= spawnSync('rg', ['--version'], { timeout: 3000 }).status === 0);
+const hasRg = () => (rgOk ??= spawnSync('rg', ['--version'], { timeout: 3000, env: childEnv() }).status === 0);
 
 const globs = (s: string | undefined) =>
   (s ?? '')
@@ -53,7 +54,7 @@ function searchRg(cwd: string, q: string, opts: SearchOptions): Promise<SearchRe
   args.push('--', q, '.');
 
   return new Promise((resolve, reject) => {
-    const child = spawn('rg', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('rg', args, { cwd, env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
     const byPath = new Map<string, SearchFile>();
     let total = 0;
     let truncated = false;

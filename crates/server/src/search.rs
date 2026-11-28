@@ -35,7 +35,14 @@ pub struct Options {
 fn has_rg() -> bool {
     static OK: OnceLock<bool> = OnceLock::new();
     *OK.get_or_init(|| {
-        std::process::Command::new("rg").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+        std::process::Command::new("rg")
+            .arg("--version")
+            .env_clear()
+            .envs(crate::config::child_env())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
     })
 }
 
@@ -98,6 +105,8 @@ async fn search_rg(cwd: &Path, opts: &Options) -> ApiResult<SearchResult> {
     let mut child = tokio::process::Command::new("rg")
         .args(&args)
         .current_dir(cwd)
+        .env_clear()
+        .envs(crate::config::child_env())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

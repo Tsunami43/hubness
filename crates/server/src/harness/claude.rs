@@ -51,6 +51,8 @@ pub(super) async fn read_claude_models() -> Option<Vec<Value>> {
     let mut child = tokio::process::Command::new(claude_bin())
         .args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
         .current_dir(std::env::temp_dir())
+        .env_clear()
+        .envs(crate::config::child_env())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

@@ -34,6 +34,8 @@ pub fn sandbox_available() -> bool {
     *OK.get_or_init(|| {
         Command::new("bwrap")
             .args(["--ro-bind", "/", "/", "--dev", "/dev", "true"])
+            .env_clear()
+            .envs(crate::config::child_env())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -205,7 +207,15 @@ const DEFAULT_IMAGE: &str = "node:24-bookworm";
 
 /// Run a short command: exit status and stdout, or `None` if it failed to start or timed out.
 fn run_sync(cmd: &str, args: &[&str], timeout: Duration) -> Option<(bool, String)> {
-    let mut child = Command::new(cmd).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut child = Command::new(cmd)
+        .args(args)
+        .env_clear()
+        .envs(crate::config::child_env())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut s = String::new();
@@ -531,6 +541,8 @@ pub fn exec_command(
                 on_kill: Some(Box::new(move || {
                     let _ = Command::new("docker")
                         .args(["exec", &name, "sh", "-c", &kill_script])
+                        .env_clear()
+                        .envs(crate::config::child_env())
                         .stdin(Stdio::null())
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())

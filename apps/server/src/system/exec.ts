@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
+import { childEnv } from '../config.ts';
 
 /** Running official CLIs for System pages (C locale, no colors, with a timeout). */
 
@@ -12,7 +13,7 @@ export interface CmdResult {
 
 export function sh(cmd: string, args: string[], timeoutMs = 20_000): Promise<CmdResult> {
   return new Promise((resolve) => {
-    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, LC_ALL: 'C', SYSTEMD_COLORS: '0' } });
+    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnv(), LC_ALL: 'C', SYSTEMD_COLORS: '0' } });
     let out = '';
     let err = '';
     const timer = setTimeout(() => p.kill(), timeoutMs);

@@ -139,7 +139,7 @@ function childPids(pid: number): number[] {
     const raw =
       process.platform === 'linux'
         ? readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8')
-        : execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+        : execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'], env: childEnv() });
     return raw.trim().split(/\s+/).filter(Boolean).map(Number);
   } catch {
     return [];
@@ -188,7 +188,7 @@ export function killAllJobs() {
 /** Non-interactive run (logout, switching): stdout+stderr and exit code. */
 export function runOnce(cmd: string, args: string[], env?: Record<string, string>, timeoutMs = 60_000) {
   return new Promise<{ code: number | null; output: string }>((resolve) => {
-    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
+    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...childEnv(), ...env } });
     let output = '';
     const timer = setTimeout(() => p.kill(), timeoutMs);
     p.stdout.on('data', (d: Buffer) => (output += d.toString()));

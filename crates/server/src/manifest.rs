@@ -121,7 +121,13 @@ pub fn prompt(p: &Project) -> Option<String> {
 
 /// Docker containers by name: (state, status). `None` — Docker is not available.
 async fn docker_containers() -> Option<Vec<(String, String, String)>> {
-    let out = tokio::process::Command::new("docker").args(["ps", "-a", "--format", "{{json .}}"]).output().await.ok()?;
+    let out = tokio::process::Command::new("docker")
+        .args(["ps", "-a", "--format", "{{json .}}"])
+        .env_clear()
+        .envs(crate::config::child_env())
+        .output()
+        .await
+        .ok()?;
     if !out.status.success() {
         return None;
     }
