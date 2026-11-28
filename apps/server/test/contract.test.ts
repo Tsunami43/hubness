@@ -1540,7 +1540,10 @@ test('SSH connections in a turn: the agent process gets the wrappers and the con
   const dump = readFileSync(join(tmp, 'claude-last-env'), 'utf8') + args;
   assert.ok(!dump.includes('PRIVATE KEY'), 'no key in the environment or the arguments');
   for (const name of Object.keys(env)) assert.ok(!/^HUBNESS_(SECRET|DATA|HOME|PORT|HOST)/.test(name), `${name} is the hub's own setting`);
-  assert.equal(existsSync(bin), false, 'the session folder is gone when the turn ends');
+  // the session is idle at the agent's answer; its SSH folder goes when the agent process exits
+  // (a moment later: background tasks of the agent may still use it)
+  for (let i = 0; i < 250 && existsSync(bin); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(existsSync(bin), false, 'the session folder is gone when the agent process ends');
   assert.ok(!(await feed(sid)).some((e: any) => e.kind === 'notice'), 'nothing to say');
 
   // another address is another server: test again
