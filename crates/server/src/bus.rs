@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use hubness_core::{GlobalStreamMsg, SessionStreamMsg};
 use tokio::sync::broadcast;
 
-/// Messages a slow subscriber may lag behind before it starts losing them. The session
-/// stream's keep-alive carries the current session, so a lost status change heals itself.
+/// Messages a slow subscriber may lag behind before it starts losing them; its SSE stream
+/// then ends and the client reconnects for a fresh snapshot.
 const CAPACITY: usize = 1024;
 
 #[derive(Clone)]
