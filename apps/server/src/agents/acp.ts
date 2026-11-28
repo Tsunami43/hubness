@@ -491,7 +491,9 @@ export function createAcpAdapter(spec: AcpSpec): AgentAdapter {
           stopped = true;
           stopReason = reason;
           if (sessionId) send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
-          setTimeout(kill, 1500).unref();
+          // the hub exits in 300 ms: a delayed kill would never run and leave the agent orphaned
+          if (reason === 'shutdown') kill();
+          else setTimeout(kill, 1500).unref();
         },
         respond(requestId: string, d: ApprovalDecision): boolean {
           const id = Number(requestId.split(':')[0]);
