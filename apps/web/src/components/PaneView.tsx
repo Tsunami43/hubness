@@ -6,14 +6,51 @@ import { t } from '../i18n';
 import { DiffView } from './DiffView';
 import { CodeLine, useTokens } from './Code';
 import { ErrorLine, IconButton, Spinner } from './ui';
+import { localApp, reachable } from '../lib/previewState';
+import { Unreachable } from './project/BrowserFrame';
+
+/**
+ * Where a page the agent shows is loaded from. An app on the hub's machine
+ * (`http://localhost:5173`) is not on the user's machine: it goes through the project's
+ * preview, like the Preview tab. `unreachable` — the browser can't open that preview port.
+ */
+type Shown = { state: 'loading' } | { state: 'ready'; src: string } | { state: 'unreachable'; previewPort: number };
+
+function useShownUrl(pane: Pane, projectId: string | null, reloadKey: number): Shown {
+  const app = pane.kind === 'url' && projectId ? localApp(pane.target) : null;
+  const [shown, setShown] = useState<Shown>({ state: 'loading' });
+  useEffect(() => {
+    if (pane.kind !== 'url') return;
+    if (!app || !projectId) return setShown({ state: 'ready', src: pane.target });
+    let stale = false;
+    setShown({ state: 'loading' });
+    api
+      .previewPort(projectId, app.port)
+      .then(async (r) => {
+        const origin = `${window.location.protocol}//${window.location.hostname}:${r.previewPort}`;
+        const ok = await reachable(origin);
+        if (!stale) setShown(ok ? { state: 'ready', src: origin + app.path } : { state: 'unreachable', previewPort: r.previewPort });
+      })
+      // no preview to be had (no free port, a project that is gone): the address as it is
+      .catch(() => {
+        if (!stale) setShown({ state: 'ready', src: pane.target });
+      });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.kind, pane.target, projectId, reloadKey]);
+  return shown;
+}
 
 /** Panel next to the chat: the agent shows a site preview, a file or a diff (MCP open_pane). */
-export function PaneView({ sessionId, pane, onClose }: { sessionId: string; pane: Pane; onClose: () => void }) {
+export function PaneView({ sessionId, projectId, pane, onClose }: { sessionId: string; projectId: string | null; pane: Pane; onClose: () => void }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const tokens = useTokens(file && !file.binary ? file.content.replace(/\n$/, '') : '', pane.kind === 'file' ? { path: pane.target } : null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const shown = useShownUrl(pane, projectId, reloadKey);
 
   useEffect(() => {
     setFile(null);
@@ -37,7 +74,7 @@ export function PaneView({ sessionId, pane, onClose }: { sessionId: string; pane
           <RotateCw className="size-4" />
         </IconButton>
         {pane.kind === 'url' ? (
-          <a href={pane.target} target="_blank" rel="noreferrer" aria-label={t('pane.openTab')} title={t('pane.openTab')} className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-sunken">
+          <a href={shown.state === 'ready' ? shown.src : pane.target} target="_blank" rel="noreferrer" aria-label={t('pane.openTab')} title={t('pane.openTab')} className="inline-flex size-8 items-center justify-center rounded-lg hover:bg-sunken">
             <ExternalLink className="size-4" />
           </a>
         ) : null}
@@ -50,10 +87,14 @@ export function PaneView({ sessionId, pane, onClose }: { sessionId: string; pane
           <div className="p-3">
             <ErrorLine error={error} />
           </div>
-        ) : pane.kind === 'url' ? (
+        ) : pane.kind === 'url' && shown.state === 'loading' ? (
+          <div className="p-4"><Spinner /></div>
+        ) : pane.kind === 'url' && shown.state === 'unreachable' ? (
+          <Unreachable previewPort={shown.previewPort} onRetry={() => setReloadKey((k) => k + 1)} />
+        ) : pane.kind === 'url' && shown.state === 'ready' ? (
           <iframe
             key={reloadKey}
-            src={pane.target}
+            src={shown.src}
             title={pane.title || pane.target}
             className="h-full w-full bg-white"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"

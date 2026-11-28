@@ -89,6 +89,15 @@ Browsers allow the microphone (voice input) only on `localhost` or over HTTPS: o
 use an SSH tunnel, `tailscale serve --https=443 http://127.0.0.1:8787` or the HTTPS proxy.
 Over plain HTTP the microphone button offers an audio file instead.
 
+A preview of a running app is a separate port of the hub (`HUBNESS_PREVIEW_PORTS`, 8790–8809
+by default), so a proxy that passes only the hub's port leaves previews closed — the Preview
+tab says so. Forward those ports too. Behind Tailscale Serve the hub does it itself: it adds a
+Serve route for a preview port while the preview runs. Allow it to change Serve once:
+
+```sh
+sudo tailscale set --operator=$USER
+```
+
 ## Agents and their tools
 
 - **SSH connections** (System → SSH): the hub keeps a key per server; add its public key on
@@ -116,6 +125,7 @@ All settings are environment variables (see [`.env.example`](../.env.example)):
 | `HUBNESS_CHROME` | first Chromium on `PATH` | Browser for the agents' preview tools |
 | `HUBNESS_CHROME_ARGS` | none | Extra browser arguments, e.g. `--no-sandbox` where Chromium's sandbox can't start (Ubuntu 23.10+, containers) |
 | `HUBNESS_PREVIEW_INJECT` | on | `0` stops the preview proxy from adding its helper script to pages |
+| `HUBNESS_TAILSCALE` | `tailscale` | The Tailscale CLI the hub opens preview ports with behind Tailscale Serve; `0` turns that off |
 
 > **Security.** hubness gives agents shell access to the host. Keep it on `127.0.0.1`
 > unless it has its account (`hubness user add`; the TypeScript dev server has none), and put

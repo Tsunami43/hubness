@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-28
+
+### Added
+
+- Previews work on a hub opened through Tailscale Serve: the hub adds a Serve route for a
+  preview port when the preview starts and removes it when it stops. It needs the right to
+  change Serve (`sudo tailscale set --operator=$USER`, once); `HUBNESS_TAILSCALE=0` turns it
+  off.
+
+### Changed
+
+- The Preview tab explains itself: with nothing to show it says how a preview starts, offers
+  the command to run (the main one when no command has a port yet) and stays on the tab until
+  the page appears; a command that runs without a known port, or that failed, is named with a
+  way to its output. The output of a running command has an "Open preview" button.
+
+### Fixed
+
+- A preview whose port the browser can't reach (the hub opened through Tailscale Serve or a
+  reverse proxy that passes only the hub's port) said nothing and showed a blank frame: it now
+  says why and what to forward (on a Tailscale address: the command that lets the hub do it).
+- A page the agent shows next to the chat (`open_pane` with `http://localhost:<port>`) was
+  loaded from the user's own machine and failed on a hub opened from another device: it now
+  goes through the project's preview, like the Preview tab.
+- Phone view: "Open preview" on the Run tab did nothing — tools under More can now open each
+  other, and the open tool survives a reload.
+
 ## [0.4.1] - 2026-11-28
 
 ### Added

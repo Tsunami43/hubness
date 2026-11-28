@@ -583,7 +583,7 @@ export function SessionView({
         </div>
         {pane ? (
           <div className={`min-h-0 w-full flex-col border-l border-line ${wide ? 'lg:flex lg:w-[48%]' : ''} ${mobileTab === 'pane' ? 'flex' : 'hidden'}`}>
-            <PaneView sessionId={sessionId} pane={pane} onClose={closePane} />
+            <PaneView sessionId={sessionId} projectId={session.projectId} pane={pane} onClose={closePane} />
           </div>
         ) : null}
       </div>

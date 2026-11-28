@@ -39,6 +39,7 @@ pub mod secrets;
 pub mod sessions;
 pub mod ssh;
 pub mod system;
+pub mod tailscale;
 pub mod terminal;
 pub mod users;
 pub mod voice;
@@ -139,6 +140,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     } else {
         println!("hubness: no accounts yet — open to this machine only; create one in the web app or with `hubness user add <name>`");
     }
+    // previews of a hub behind Tailscale Serve get their ports passed through it
+    tailscale::init(addr.port(), &cfg.host);
     let rt = state.runtime.clone();
     axum::serve(listener, app(state).into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async move {
@@ -149,6 +152,8 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
             crate::browser::shutdown();
             // dev servers and shells must not outlive the hub
             terminal::kill_all_jobs();
+            // (blocking is fine: the hub is going down)
+            crate::tailscale::shutdown();
         })
         .await?;
     Ok(())
