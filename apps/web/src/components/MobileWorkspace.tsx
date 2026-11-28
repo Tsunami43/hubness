@@ -1,13 +1,14 @@
 import { gitMark } from '../lib/gitMark';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
-import { ArrowDown, ArrowUp, Bot, ChevronLeft, ChevronRight, File, Folder, GitBranch, LayoutPanelLeft, Loader2, MessagesSquare, RefreshCw, Smartphone } from 'lucide-react';
+import { ArrowDown, ArrowUp, Bot, ChevronLeft, ChevronRight, Folder, GitBranch, LayoutPanelLeft, Loader2, MessagesSquare, RefreshCw, Smartphone } from 'lucide-react';
 import type { FsEntry, GitAuthProblem, GitFile, GitStatus } from '@hubness/shared';
 import { api } from '../lib/api';
 import { pushDraft } from '../lib/ask';
 import type { SessionScope } from '../lib/hooks';
 import { t } from '../i18n';
 import { DiffView } from './DiffView';
+import { FileIcon } from './FileIcon';
 import { FileViewer } from './FileViewer';
 import { GitAuthNotice, GitLoginSheet } from './GitLogin';
 import type { Tool } from './RepoWorkspace';
@@ -269,6 +270,7 @@ function RepoChanges({
                     <li key={f.path}>
                       <button type="button" onClick={() => onFile(f)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-sunken">
                         <span className={`w-3 shrink-0 font-mono text-xs font-semibold ${m.cls}`}>{m.letter}</span>
+                        <FileIcon name={f.path.slice(slash + 1)} className="size-5" />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm">{f.path.slice(slash + 1)}</span>
                           {slash > 0 ? <span className="block truncate text-xs text-muted">{f.path.slice(0, slash)}</span> : null}
@@ -419,7 +421,7 @@ function FilesTab({ repos, git }: { repos: Repo[]; git: Record<string, GitStatus
                   onClick={() => (e.dir ? setDir(e.path) : setFile(e.path))}
                   className={`flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-sunken ${e.ignored ? 'opacity-50' : ''}`}
                 >
-                  {e.dir ? <Folder className="size-4 shrink-0 text-accent" /> : <File className="size-4 shrink-0 text-muted" />}
+                  <FileIcon name={e.name} dir={e.dir} className="size-5" />
                   <span className="min-w-0 flex-1 truncate text-sm">{e.name}</span>
                   {e.dir ? <ChevronRight className="size-4 shrink-0 text-muted" /> : null}
                 </button>
