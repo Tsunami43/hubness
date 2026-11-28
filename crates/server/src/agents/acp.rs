@@ -709,6 +709,11 @@ impl RunHandle for Handle {
             c.send(json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": sid } }));
         }
         if let Some(pid) = c.pid {
+            // the hub is exiting: a delayed kill would never run and leave the agent orphaned
+            if reason == StopReason::Shutdown {
+                kill_group(pid, libc::SIGTERM);
+                return;
+            }
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(1500)).await;
                 kill_group(pid, libc::SIGTERM);

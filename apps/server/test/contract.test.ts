@@ -3240,3 +3240,53 @@ test('voice input: settings, local whisper.cpp, OpenAI-compatible service', asyn
   assert.equal(existsSync(join(models, 'ggml-tiny.bin')), false);
   assert.equal((await call('PUT', '/voice', { provider: 'off' })).json.provider, 'off');
 });
+
+test('hub shutdown kills a running ACP agent right away, it never outlives the hub', async () => {
+  // a separate hub process (SIGTERM ends it); its OpenCode never answers and leaves its pid
+  const dir = join(tmp, 'acp-shutdown');
+  mkdirSync(dir, { recursive: true });
+  const pidFile = join(dir, 'agent.pid');
+  const agent = join(dir, 'fake-acp-hang');
+  writeFileSync(agent, `#!/bin/sh\necho $$ > ${pidFile}\nexec sleep 60\n`);
+  chmodSync(agent, 0o755);
+  const [cmd, args] =
+    target === 'rust'
+      ? [rustBin(), ['serve']]
+      : [process.execPath, ['--disable-warning=ExperimentalWarning', join(import.meta.dirname, '../src/index.ts')]];
+  const srv = spawn(cmd, args, {
+    cwd: tmp,
+    env: { ...process.env, HUBNESS_PORT: '0', HUBNESS_DATA_DIR: join(dir, 'data'), HUBNESS_WEB_DIST: join(tmp, 'no-web'), HUBNESS_OPENCODE_BIN: agent },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  const base = await new Promise<string>((ok, fail) => {
+    let out = '';
+    srv.stdout!.on('data', (d: Buffer) => {
+      out += d.toString();
+      const m = out.match(/hubness: (http:\/\/\S+)/);
+      if (m) ok(m[1]!);
+    });
+    srv.on('exit', (code) => fail(new Error(`server exited with ${code}: ${out}`)));
+  });
+  const post = async (path: string, body: unknown) =>
+    (await fetch(`${base}/api${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+  const s = await post('/sessions', { agent: { kind: 'opencode' } });
+  await post(`/sessions/${s.id}/messages`, { text: 'hello' });
+  for (let i = 0; i < 250 && !existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 20));
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  const alive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  assert.ok(alive(), 'the agent runs');
+  const exited = new Promise((r) => srv.once('exit', r));
+  srv.kill('SIGTERM');
+  await exited;
+  for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 20));
+  const orphan = alive();
+  if (orphan) process.kill(pid, 'SIGKILL');
+  assert.equal(orphan, false, 'the agent is gone once the hub has exited');
+});
