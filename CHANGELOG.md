@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-28
+
 ### Added
 
 - Previews work on a hub opened through Tailscale Serve: the hub adds a Serve route for a
