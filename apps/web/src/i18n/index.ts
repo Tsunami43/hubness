@@ -5,22 +5,23 @@ type Dict = Partial<Record<MessageKey, string>>;
 /**
  * Available UI languages, `label` is the language's own name. English is built in; every
  * other dictionary is its own chunk, loaded only when chosen. To offer another language,
- * add a dictionary file and a line here.
+ * add a dictionary file and a line here. Listed alphabetically by their own names (Latin,
+ * then Cyrillic, then the rest — the order Intl.Collator gives).
  */
 export const LANGUAGES = [
+  { id: 'de', label: 'Deutsch', load: () => import('./de').then((m) => m.de) },
   { id: 'en', label: 'English', load: async (): Promise<Dict> => en },
+  { id: 'es', label: 'Español', load: () => import('./es').then((m) => m.es) },
+  { id: 'fr', label: 'Français', load: () => import('./fr').then((m) => m.fr) },
+  { id: 'it', label: 'Italiano', load: () => import('./it').then((m) => m.it) },
+  { id: 'pl', label: 'Polski', load: () => import('./pl').then((m) => m.pl) },
+  { id: 'pt', label: 'Português', load: () => import('./pt').then((m) => m.pt) },
+  { id: 'tr', label: 'Türkçe', load: () => import('./tr').then((m) => m.tr) },
   { id: 'ru', label: 'Русский', load: () => import('./ru').then((m) => m.ru) },
   { id: 'uk', label: 'Українська', load: () => import('./uk').then((m) => m.uk) },
-  { id: 'de', label: 'Deutsch', load: () => import('./de').then((m) => m.de) },
-  { id: 'fr', label: 'Français', load: () => import('./fr').then((m) => m.fr) },
-  { id: 'es', label: 'Español', load: () => import('./es').then((m) => m.es) },
-  { id: 'it', label: 'Italiano', load: () => import('./it').then((m) => m.it) },
-  { id: 'pt', label: 'Português', load: () => import('./pt').then((m) => m.pt) },
-  { id: 'pl', label: 'Polski', load: () => import('./pl').then((m) => m.pl) },
-  { id: 'tr', label: 'Türkçe', load: () => import('./tr').then((m) => m.tr) },
-  { id: 'zh', label: '简体中文', load: () => import('./zh').then((m) => m.zh) },
-  { id: 'ja', label: '日本語', load: () => import('./ja').then((m) => m.ja) },
   { id: 'ko', label: '한국어', load: () => import('./ko').then((m) => m.ko) },
+  { id: 'ja', label: '日本語', load: () => import('./ja').then((m) => m.ja) },
+  { id: 'zh', label: '简体中文', load: () => import('./zh').then((m) => m.zh) },
 ] as const;
 
 export type Lang = (typeof LANGUAGES)[number]['id'];

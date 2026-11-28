@@ -13,7 +13,7 @@ import { getLang, t } from '../../i18n';
 import type { MessageKey } from '../../i18n/en';
 
 const PROVIDERS: VoiceProvider[] = ['off', 'local'];
-const LANGUAGES = ['auto', 'en', 'ru', 'uk', 'de', 'fr', 'es', 'it', 'pt', 'pl', 'tr', 'zh', 'ja', 'ko'];
+const LANGUAGES = ['en', 'ru', 'uk', 'de', 'fr', 'es', 'it', 'pt', 'pl', 'tr', 'zh', 'ja', 'ko'];
 const RECOMMENDED_MODEL = 'large-v3-turbo-q5_0';
 
 /**
@@ -74,7 +74,11 @@ export function VoicePage() {
           <Field label={t('voice.language')} hint={t('voice.languageHint')}>
             <Select
               value={s.language}
-              options={LANGUAGES.map((l) => ({ value: l, label: l === 'auto' ? t('voice.languageAuto') : `${langName(l)} (${l})` }))}
+              options={[
+                { value: 'auto', label: t('voice.languageAuto') },
+                // names in the UI language, alphabetically in it
+                ...LANGUAGES.map((l) => ({ value: l, label: `${langName(l)} (${l})` })).sort((a, b) => a.label.localeCompare(b.label, getLang())),
+              ]}
               onChange={(language) => void save({ language })}
               label={t('voice.language')}
             />
