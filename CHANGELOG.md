@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-11-28
+
+### Fixed
+
+- CI: the SSH contract test waits for the agent process to exit before it checks that the
+  turn's SSH folder is gone. Since 0.4.6 a session is idle at the agent's answer, a moment
+  before the process exits; on slower CI machines the test checked too early (and its leftover
+  connection then failed the next test). No change in the hub itself.
+
 ## [0.4.7] - 2026-11-28
 
 ### Changed
