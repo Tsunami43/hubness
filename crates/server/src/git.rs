@@ -24,11 +24,16 @@ pub struct Exec {
     pub stderr: String,
 }
 
+/// Put before every hub git call: a sandboxed agent can write `.git/config` and hooks, and the
+/// hub runs git outside the sandbox, so programs the repository names are never started.
+pub const SAFE_ARGS: [&str; 4] = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
+
 /// Run git in `cwd`. Like Node's `execFile`: a failure to start, a signal or a timeout is
 /// exit code 1, and a failed run without stderr reports `Command failed: git …`.
 pub async fn run(cwd: &Path, args: &[&str], timeout: Duration, extra_env: &[(String, String)]) -> Exec {
     let mut cmd = tokio::process::Command::new("git");
-    cmd.args(args)
+    cmd.args(SAFE_ARGS)
+        .args(args)
         .current_dir(cwd)
         .env_clear()
         .envs(crate::config::child_env())
@@ -73,6 +78,27 @@ async fn remote_urls(cwd: &Path) -> Vec<String> {
     r.stdout.split('\n').map(|l| l.find(' ').map(|i| &l[i + 1..]).unwrap_or(l).trim().to_string()).filter(|l| !l.is_empty()).collect()
 }
 
+/// Network options: no `ext::` transport and an ssh command from outside the repository —
+/// `GIT_SSH_COMMAND` (wins over config by itself), else the user's global / system
+/// `core.sshCommand`, else `GIT_SSH`, else plain ssh.
+async fn network_args(cwd: &Path) -> Vec<String> {
+    let mut args = vec!["-c".to_string(), "protocol.ext.allow=never".to_string()];
+    if std::env::var_os("GIT_SSH_COMMAND").is_some_and(|v| !v.is_empty()) {
+        return args;
+    }
+    let mut ssh = String::new();
+    for scope in ["--global", "--system"] {
+        if ssh.is_empty() {
+            ssh = git(cwd, &["config", scope, "--get", "core.sshCommand"]).await.stdout.trim().to_string();
+        }
+    }
+    if ssh.is_empty() {
+        ssh = std::env::var("GIT_SSH").ok().filter(|v| !v.is_empty()).map(|v| crate::terminal::shq(&v)).unwrap_or_else(|| "ssh".into());
+    }
+    args.extend(["-c".to_string(), format!("core.sshCommand={ssh}")]);
+    args
+}
+
 /// Fetch / pull / push: with the stored logins of the remotes' hosts; an access refusal is recognised.
 async fn network_op(s: &AppState, cwd: &Path, args: &[&str]) -> crate::error::ApiResult<GitOpResult> {
     let urls = remote_urls(cwd).await;
@@ -80,7 +106,8 @@ async fn network_op(s: &AppState, cwd: &Path, args: &[&str]) -> crate::error::Ap
         let db = s.db()?;
         git_auth::git_auth_for(&db, &s.config.data_dir, &urls)?
     };
-    let full: Vec<&str> = auth.args.iter().map(String::as_str).chain(args.iter().copied()).collect();
+    let net = network_args(cwd).await;
+    let full: Vec<&str> = net.iter().chain(&auth.args).map(String::as_str).chain(args.iter().copied()).collect();
     let res = op(run(cwd, &full, LONG_TIMEOUT, &auth.env).await);
     if res.ok {
         return Ok(res);

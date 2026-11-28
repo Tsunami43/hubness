@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { GitBranch, GitCommit, GitFile, GitLogResponse, GitOpResult, GitRepoState, GitStash, GitStatus } from '@hubness/shared';
 import { authProblem, gitAuthFor } from './git-auth.ts';
 import { parseRemote } from './git-providers.ts';
+import { shq } from './terminal.ts';
 
 interface ExecResult {
   code: number;
@@ -11,11 +12,17 @@ interface ExecResult {
   stderr: string;
 }
 
+/**
+ * Put before every hub git call: a sandboxed agent can write `.git/config` and hooks, and the
+ * hub runs git outside the sandbox, so programs the repository names are never started.
+ */
+export const SAFE_GIT_ARGS = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+
 function git(cwd: string, args: string[], timeout = 30_000, extraEnv: Record<string, string> = {}): Promise<ExecResult> {
   return new Promise((resolve) => {
     execFile(
       'git',
-      args,
+      [...SAFE_GIT_ARGS, ...args],
       {
         cwd,
         timeout,
@@ -45,11 +52,26 @@ async function remoteUrls(cwd: string): Promise<string[]> {
     .filter(Boolean);
 }
 
+/**
+ * Network options: no `ext::` transport and an ssh command from outside the repository —
+ * `GIT_SSH_COMMAND` (wins over config by itself), else the user's global / system
+ * `core.sshCommand`, else `GIT_SSH`, else plain ssh.
+ */
+async function networkArgs(cwd: string): Promise<string[]> {
+  const args = ['-c', 'protocol.ext.allow=never'];
+  if (process.env.GIT_SSH_COMMAND) return args;
+  let ssh = '';
+  for (const scope of ['--global', '--system']) {
+    ssh ||= (await git(cwd, ['config', scope, '--get', 'core.sshCommand'])).stdout.trim();
+  }
+  return [...args, '-c', `core.sshCommand=${ssh || (process.env.GIT_SSH ? shq(process.env.GIT_SSH) : 'ssh')}`];
+}
+
 /** Fetch / pull / push: with the stored logins of the remotes' hosts; an access refusal is recognised. */
 async function networkOp(cwd: string, args: string[]): Promise<GitOpResult> {
   const urls = await remoteUrls(cwd);
   const auth = gitAuthFor(urls);
-  const res = op(await git(cwd, [...auth.args, ...args], 120_000, auth.env));
+  const res = op(await git(cwd, [...(await networkArgs(cwd)), ...auth.args, ...args], 120_000, auth.env));
   if (res.ok) return res;
   const hosts = [...new Set(urls.map((u) => parseRemote(u)?.host).filter((h): h is string => Boolean(h)))];
   const problem = authProblem(res.output, hosts);

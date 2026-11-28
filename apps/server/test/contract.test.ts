@@ -1236,6 +1236,45 @@ test('git: status, diff, stage, commit, log and show', async () => {
   assert.deepEqual((await call('POST', git('/reset'), { rev: '--hard' })).json, { ok: false, output: 'Invalid commit' });
 });
 
+test('git: programs named by the repository config (fsmonitor, hooks, ssh, ext) never run from the hub', async () => {
+  const repo = repoWithCommit(join(tmp, 'elsewhere', 'git-protected'));
+  const marker = join(tmp, 'git-protected-marker');
+  const script = join(tmp, 'git-protected-run.sh');
+  writeFileSync(script, `#!/bin/sh\necho "$0 $*" >> '${marker}'\n`, { mode: 0o755 });
+  const hooks = join(tmp, 'git-protected-hooks');
+  mkdirSync(hooks);
+  for (const h of ['pre-commit', 'commit-msg', 'post-commit', 'pre-push', 'reference-transaction']) {
+    writeFileSync(join(hooks, h), `#!/bin/sh\necho ${h} >> '${marker}'\n`, { mode: 0o755 });
+  }
+  gitIn(repo, 'config', 'core.fsmonitor', script);
+  gitIn(repo, 'config', 'core.hooksPath', hooks);
+  const bare = join(tmp, 'git-protected-remote.git');
+  execFileSync('git', ['init', '-q', '--bare', bare]);
+  gitIn(repo, 'remote', 'add', 'origin', bare);
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const git = (path: string) => `/projects/${p.id}/git${path}`;
+  const ran = () => (existsSync(marker) ? readFileSync(marker, 'utf8') : '');
+
+  writeFileSync(join(repo, 'a.txt'), 'changed\n');
+  assert.equal((await call('GET', git('/status'))).json.files.length, 1);
+  assert.equal((await call('GET', `/projects/${p.id}/tree`)).status, 200);
+  assert.ok((await call('GET', `/projects/${p.id}/files`)).json.files.includes('a.txt'));
+  assert.equal((await call('GET', `/projects/${p.id}`)).status, 200, 'languages list the files');
+  const commit = (await call('POST', git('/commit'), { message: 'change' })).json;
+  assert.ok(commit.ok, commit.output);
+  const push = (await call('POST', git('/push'))).json;
+  assert.ok(push.ok, push.output);
+  assert.equal(ran(), '', 'no repository program ran');
+
+  // network: a repository-set ssh command and an ext:: remote the repository allowed
+  gitIn(repo, 'config', 'core.sshCommand', script);
+  gitIn(repo, 'remote', 'add', 'ssh', 'ssh://git@127.0.0.1:1/x.git');
+  gitIn(repo, 'config', 'protocol.ext.allow', 'always');
+  gitIn(repo, 'remote', 'add', 'ext', `ext::${script} %S`);
+  await call('POST', git('/fetch'));
+  assert.equal(ran(), '', 'no repository program ran on fetch');
+});
+
 test('git: branches, checkout, merge and a local remote', async () => {
   const repo = repoWithCommit(join(tmp, 'elsewhere', 'git-branches'));
   const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
