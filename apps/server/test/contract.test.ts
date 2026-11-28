@@ -780,6 +780,16 @@ test('files: tree, read, write with conflict check, create/rename/delete, list, 
   assert.equal((await call('GET', `/fs/browse?path=${encodeURIComponent(join(repo, 'b.txt'))}`)).status, 400);
 });
 
+test('files: a named pipe is not opened', async () => {
+  const repo = makeRepo(join(tmp, 'elsewhere', 'fifo'));
+  execFileSync('mkfifo', [join(repo, 'pipe')]);
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  // if the server opens the pipe it blocks until a writer comes: this one frees it after 3 s
+  spawn('sh', ['-c', `sleep 3; exec 3<>'${join(repo, 'pipe')}'`], { stdio: 'ignore' }).unref();
+  assert.equal((await call('GET', `/projects/${p.id}/file?path=pipe`)).status, 400);
+  assert.equal((await call('GET', `/projects/${p.id}/tree`)).status, 200, 'the server keeps answering');
+});
+
 test('search across project files', async () => {
   const { mkdirSync } = await import('node:fs');
   const repo = makeRepo(join(tmp, 'elsewhere', 'search'));

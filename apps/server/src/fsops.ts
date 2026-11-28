@@ -80,6 +80,8 @@ export function readFileSafe(root: string, rel: string): FileContent {
     throw new HttpError(404, 'File not found');
   }
   if (st.isDirectory()) throw new HttpError(400, 'This is a folder');
+  // a FIFO, socket or device would block the open/read (and the event loop with it)
+  if (!st.isFile()) throw new HttpError(400, 'Not a regular file');
   const len = Math.min(st.size, MAX_FILE);
   const buf = Buffer.alloc(len);
   const fd = openSync(abs, 'r');
