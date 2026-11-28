@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { t } from '../i18n';
-import { Button } from './ui';
+import { Button, Layer } from './ui';
 
 /**
  * In-app replacement for window.confirm: `await confirmDialog({ message })` resolves to
@@ -75,31 +75,38 @@ export function ConfirmHost() {
     return () => window.removeEventListener('keydown', onKey);
   }, [current]);
   if (!current) return null;
+  // several actions don't fit in a row on a phone: one under another, full width (Cancel last)
+  const stack = current.choices.length > 1;
+  const wide = stack ? 'w-full sm:w-auto' : '';
   return (
-    // a small centered dialog on every screen size: a yes/no question is not worth a full page
-    <div className="inset-app z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => settle(null)}>
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-label={current.title ?? current.message}
-        onClick={(e) => e.stopPropagation()}
-        className="ui-solid w-full max-w-sm border border-line bg-surface shadow-2xl shadow-black/50"
-      >
-        <div className="px-4 pt-4 pb-3">
-          {current.title ? <h2 className="mb-1 font-semibold text-accent">{current.title}</h2> : null}
-          <p className="text-sm break-words whitespace-pre-line">{current.message}</p>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
-          <Button variant="ghost" onClick={() => settle(null)}>
-            {t('common.cancel')}
-          </Button>
-          {current.choices.map((c, i) => (
-            <Button key={c.id} autoFocus={i === current.choices.length - 1} variant={c.variant ?? 'secondary'} onClick={() => settle(c.id)}>
-              {c.label}
+    // a small centered dialog on every screen size: a yes/no question is not worth a full page;
+    // through <Layer>: on touch screens #root is fixed (its own stacking context), so a dialog
+    // inside it would stay under layers portaled to <body> (the phone's sessions panel)
+    <Layer>
+      <div className="inset-app z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => settle(null)}>
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-label={current.title ?? current.message}
+          onClick={(e) => e.stopPropagation()}
+          className="ui-solid w-full max-w-sm border border-line bg-surface shadow-2xl shadow-black/50"
+        >
+          <div className="px-4 pt-4 pb-3">
+            {current.title ? <h2 className="mb-1 font-semibold text-accent">{current.title}</h2> : null}
+            <p className="text-sm break-words whitespace-pre-line">{current.message}</p>
+          </div>
+          <div className={`flex gap-2 border-t border-line px-4 py-3 ${stack ? 'flex-col-reverse sm:flex-row sm:flex-wrap sm:justify-end' : 'flex-wrap justify-end'}`}>
+            <Button variant="ghost" className={wide} onClick={() => settle(null)}>
+              {t('common.cancel')}
             </Button>
-          ))}
+            {current.choices.map((c, i) => (
+              <Button key={c.id} className={wide} autoFocus={i === current.choices.length - 1} variant={c.variant ?? 'secondary'} onClick={() => settle(c.id)}>
+                {c.label}
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </Layer>
   );
 }
