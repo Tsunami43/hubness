@@ -131,7 +131,6 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
 
   // this turn's place among the running ones (the handle comes once the agent starts)
   const turn: ActiveTurn = { handle: null as unknown as RunHandle, answered: false, retired: false };
-  let lastFailed = false;
   const put = (uid: string, body: EventBody, opts?: { persist?: boolean }) => {
     if (turn.retired) return;
     const prev = cache.get(uid) ?? events.get(sessionId, uid);
@@ -140,16 +139,14 @@ export function sendMessage(sessionId: string, text: string, attachments: Attach
     if (opts?.persist !== false) events.put(sessionId, ev);
     bus.emitSession(sessionId, { type: 'event', event: ev });
     if (body.kind === 'result') {
-      // the agent has answered: the turn is over for the user, even if the process lingers
+      // the agent has answered: the turn is over for the user, even if the process lingers;
+      // a turn that ends with a result is idle even when the answer is an error (API Error 529)
       turn.answered = true;
-      finishTurn(sessionId, lastFailed);
-    } else {
-      lastFailed = body.kind === 'notice' && body.level === 'error';
-      if (turn.answered && !prev && WORK_KINDS.has(body.kind)) {
-        // it came back on its own (a background task finished)
-        turn.answered = false;
-        setSessionStatus(sessionId, 'running');
-      }
+      finishTurn(sessionId, false);
+    } else if (turn.answered && !prev && WORK_KINDS.has(body.kind)) {
+      // it came back on its own (a background task finished)
+      turn.answered = false;
+      setSessionStatus(sessionId, 'running');
     }
   };
 

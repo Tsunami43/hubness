@@ -561,9 +561,20 @@ test('claude-code turn: streaming, tools, limits, result and resume id', async (
   assert.ok(seen.some((m) => m.type === 'session' && m.session.status === 'running'));
 
   useFixture('claude-error.jsonl');
+  const again = await openStream(`/sessions/${s.id}/stream`);
+  await again.next(); // snapshot
   await call('POST', `/sessions/${s.id}/messages`, { text: 'again' });
   const failed = await waitFor(s.id, (x) => x.status !== 'running', 'the failed turn');
   assert.equal(failed.status, 'idle', 'the turn ended with a result, not a crash');
+  const statuses: string[] = [];
+  for (;;) {
+    const m = await again.next();
+    if (m.type !== 'session') continue;
+    statuses.push(m.session.status);
+    if (m.session.status === 'idle') break;
+  }
+  again.close();
+  assert.ok(!statuses.includes('error'), `never shown as an error on the way: ${statuses.join(' → ')}`);
   const last = (await feed(s.id)).slice(-3);
   assert.deepEqual(last.map((e: any) => e.kind), ['user', 'notice', 'result']);
   assert.equal(last[1].text, 'API Error: 529 overloaded');

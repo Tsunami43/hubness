@@ -128,8 +128,6 @@ pub struct Turn {
     answered: AtomicBool,
     /// Replaced by a newer turn or stopped after its answer: whatever it still says is dropped.
     retired: AtomicBool,
-    /// The last event before the answer was an error notice.
-    last_failed: AtomicBool,
 }
 
 /// Event kinds that mean the agent is at work again (new events, not updates of old ones).
@@ -170,7 +168,6 @@ impl Turn {
             return;
         }
         let kind = body["kind"].as_str().unwrap_or_default().to_string();
-        let failed = kind == "notice" && body["level"] == "error";
         // only seq and ts of the previous version are kept: read them without cloning it
         // (a streamed message is replaced on every delta and keeps growing)
         let seq_ts = |p: &Value| (p["seq"].as_i64(), p["ts"].as_str().map(String::from));
@@ -200,15 +197,13 @@ impl Turn {
         }
         self.state.bus.emit_session(&sid, SessionStreamMsg::Event { event: ev });
         if kind == "result" {
-            // the agent has answered: the turn is over for the user, even if the process lingers
+            // the agent has answered: the turn is over for the user, even if the process lingers;
+            // a turn that ends with a result is idle even when the answer is an error (API Error 529)
             self.answered.store(true, Ordering::SeqCst);
-            finish_turn(&self.state, &sid, self.last_failed.load(Ordering::SeqCst));
-        } else {
-            self.last_failed.store(failed, Ordering::SeqCst);
-            if is_new && WORK_KINDS.contains(&kind.as_str()) && self.answered.swap(false, Ordering::SeqCst) {
-                // it came back on its own (a background task finished)
-                set_status(&self.state, &sid, SessionStatus::Running);
-            }
+            finish_turn(&self.state, &sid, false);
+        } else if is_new && WORK_KINDS.contains(&kind.as_str()) && self.answered.swap(false, Ordering::SeqCst) {
+            // it came back on its own (a background task finished)
+            set_status(&self.state, &sid, SessionStatus::Running);
         }
     }
 
@@ -486,7 +481,6 @@ pub fn send_message(state: &AppState, session_id: &str, text: &str, attachments:
         log_path: Path::new(&state.config().logs_dir).join(format!("{session_id}.jsonl")),
         answered: AtomicBool::new(false),
         retired: AtomicBool::new(false),
-        last_failed: AtomicBool::new(false),
     });
 
     let mut user = json!({ "kind": "user", "text": text });

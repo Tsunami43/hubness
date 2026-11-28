@@ -280,7 +280,7 @@ pub fn credential_helper(action: &str, input: &mut impl Read, output: &mut impl 
     Ok(())
 }
 
-// ---------- routes (Settings → Git access) ----------
+// ---------- routes (System → Git access) ----------
 
 use axum::extract::{Path as UrlPath, State};
 use axum::routing::{get, put};
