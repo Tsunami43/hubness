@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-11-28
+
+### Changed
+
+- Deleting a session or emptying the archive has one button that removes everything: attached
+  files and the folders of regular chats with what their agents made there. The separate
+  "delete with folder" choice is gone; project and group folders are still never touched.
+- System → Overview checks for a newer release every time the page opens (the cached answer
+  shows meanwhile), so a new version shows up without pressing "Check".
+
 ## [0.4.8] - 2026-11-28
 
 ### Fixed
