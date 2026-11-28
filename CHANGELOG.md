@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-28
+
 ### Fixed
 
 - A chat no longer shows "agent is working" and the Stop button after the answer has arrived
