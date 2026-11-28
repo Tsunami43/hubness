@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useApi } from '../../lib/query';
@@ -11,6 +12,7 @@ type Phase = { kind: 'idle' } | { kind: 'updating'; from: string } | { kind: 'in
 /** The hub's version above the host card, with an "Update" button when a release is newer. */
 export function HubVersionCard() {
   const { data: v, setData, error } = useApi(['system', 'version'], () => api.hubVersion(), { staleTime: 60_000 });
+  const client = useQueryClient();
   const [checking, setChecking] = useState(false);
   const [local, setPhase] = useState<Phase>({ kind: 'idle' });
   // the server's state counts until this page starts an update (e.g. after a reload)
@@ -25,6 +27,26 @@ export function HubVersionCard() {
             ? { kind: 'error', message: v.update.message ?? t('ver.failed') }
             : local;
   const polling = phase.kind === 'updating' ? phase.from : null;
+
+  // asks the release server again, past the server's cache of the latest version
+  const check = useCallback(async () => {
+    setChecking(true);
+    try {
+      const fresh = await api.hubVersion(true);
+      // a plain fetch still in flight would put the older answer back
+      await client.cancelQueries({ queryKey: ['system', 'version'] });
+      setData(fresh);
+    } catch {
+      // the card keeps the last answer
+    } finally {
+      setChecking(false);
+    }
+  }, [client, setData]);
+
+  // every visit checks for a newer release: the cached answer shows meanwhile
+  useEffect(() => {
+    void check();
+  }, [check]);
 
   // after "Update": poll until the restarted hub answers with the new version
   useEffect(() => {
@@ -43,16 +65,6 @@ export function HubVersionCard() {
 
   if (!v) return error ? null : <div className="mb-3 h-[60px] border border-line bg-surface" />;
 
-  const check = async () => {
-    setChecking(true);
-    try {
-      setData(await api.hubVersion(true));
-    } catch {
-      // the card keeps the last answer
-    } finally {
-      setChecking(false);
-    }
-  };
   const update = async () => {
     try {
       await api.hubUpdate();
