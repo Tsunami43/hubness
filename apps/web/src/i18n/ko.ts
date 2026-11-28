@@ -19,6 +19,8 @@ export const ko: Record<MessageKey, string> = {
   'archive.emptyTitle': '보관함 비우기',
   'archive.emptyConfirm': '보관된 세션 {n}개를 영구적으로 삭제할까요? 대화는 복원할 수 없습니다.',
   'archive.deleteOne': '“{title}”을(를) 영구적으로 삭제할까요? 대화는 복원할 수 없습니다.',
+  'archive.emptyWithFolders': '채팅 폴더와 함께 삭제',
+  'archive.emptyFoldersHint': '첨부 파일도 삭제됩니다. 에이전트가 만든 파일이 있는 일반 채팅 폴더는 함께 삭제하지 않으면 남아 있습니다.',
   'archive.emptyList': '보관함이 비어 있습니다. 활성 탭에서 세션을 보관하면 목록에서 숨겨집니다.',
   'archive.banner': '이 세션은 보관함에 있습니다. 메시지를 보내면 다시 활성화됩니다.',
   'attach.add': '파일 첨부 (여기에 붙여넣거나 끌어다 놓아도 됩니다)',
@@ -221,6 +223,8 @@ export const ko: Record<MessageKey, string> = {
   'session.agentLocked':
     '세션 에이전트: {agent}. 대화 컨텍스트가 에이전트에 있으므로 에이전트를 변경할 수 없습니다. 다른 에이전트를 쓰려면 새 세션을 시작하세요.',
   'session.deleteConfirm': '이 세션과 기록을 삭제할까요?',
+  'session.deleteWithFolder': '폴더와 함께 삭제',
+  'session.deleteFolderHint': '첨부 파일도 삭제됩니다. 에이전트가 만든 파일이 있는 채팅 폴더는 함께 삭제하지 않으면 남아 있습니다.',
 
   // events
   'ev.thinking': '생각 중',

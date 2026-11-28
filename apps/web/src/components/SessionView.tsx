@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { Archive, ArchiveRestore, ArrowUp, FolderInput, Loader2, Pencil, RotateCcw, Settings2, Square, Trash2 } from 'lucide-react';
 import type { AgentConfig, HubEvent, ProjectSuggestion } from '@hubness/shared';
 import { api } from '../lib/api';
-import { confirmDialog } from './Confirm';
+import { askDeleteSession } from './deleteSession';
 import { agentLabel, permissionLabel } from '../lib/format';
 import { useLocalStorage, useSessionStream, type SessionScope } from '../lib/hooks';
 import { AgentPicker } from './AgentPicker';
@@ -637,8 +637,9 @@ function SessionSettings({
   };
 
   const remove = async () => {
-    if (!(await confirmDialog({ message: t('session.deleteConfirm'), confirmLabel: t('common.delete'), danger: true }))) return;
-    await api.deleteSession(session.id);
+    const ok = await askDeleteSession(session, t('session.deleteConfirm'));
+    if (!ok) return;
+    await api.deleteSession(session.id, ok.folder);
     onDeleted();
   };
   // to the archive and back: the session stays open

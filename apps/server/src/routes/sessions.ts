@@ -1,19 +1,20 @@
-import { readFileSync } from 'node:fs';
-import { extname } from 'node:path';
+import { readFileSync, rmSync } from 'node:fs';
+import { extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import type { AgentConfig, GlobalStreamMsg, Pane, SessionStreamMsg } from '@hubness/shared';
 import { bus } from '../bus.ts';
+import { config } from '../config.ts';
 import { events, groups, kv, projects, sessions } from '../db/index.ts';
 import { groupWorkspace, projectWorkspace } from '../workspaces/index.ts';
-import { convertToProject, inboxDirFor, suggestion } from '../inbox.ts';
+import { chatFolderOf, convertToProject, inboxDirFor, suggestion } from '../inbox.ts';
 import { groupOr404, groupProjects, projectOr404 } from '../catalog.ts';
 import { HttpError } from '../errors.ts';
 import { readFileSafe, safeJoin } from '../fsops.ts';
 import * as git from '../git.ts';
-import { attachmentPath, MAX_ATTACHMENT, resolveAttachments, saveAttachment } from '../attachments.ts';
+import { attachmentPath, MAX_ATTACHMENT, removeSessionAttachments, resolveAttachments, saveAttachment } from '../attachments.ts';
 import { isActive, respondApproval, sendMessage, sessionCwd, stopSession } from '../runtime.ts';
 import { browserAction, closeSessionBrowser } from '../browser.ts';
 import { previewPortFor } from '../runs.ts';
@@ -82,19 +83,45 @@ sessionRoutes.get('/sessions', (c) => {
   return c.json(c.req.query('all') === '1' ? sessions.list({}) : sessions.list({ chats: true }));
 });
 
-/** Delete one session for good: stop its agent, drop it from the hub. */
-function deleteSessionNow(id: string) {
+/** `?folder=1`: deleting a regular chat also removes its folder (what the agent made there). */
+const withFolder = (v: string | undefined) => v === '1' || v === 'true';
+
+/**
+ * Delete one session for good: stop its agent, drop it from the hub, remove its attached
+ * files and — when asked — the folder of a regular chat. Files go after the database: a file
+ * that can't be removed never keeps a session alive.
+ */
+function deleteSessionNow(id: string, folder = false) {
+  const s = sessions.get(id);
   stopSession(id);
   // its page in the agents' browser goes with it
   void closeSessionBrowser(id);
+  // where the files are, read before the session and its events are gone
+  let cwd: string | null = null;
+  let legacy: string[] = [];
+  let chatDir: string | null = null;
+  if (s) {
+    try {
+      // a regular chat's folder is not created again just to look into it
+      cwd = s.projectId || s.groupId ? sessionCwd(s) : (s.cwd ?? join(config.chatsDir, s.id));
+    } catch {}
+    legacy = events.list(id).flatMap((e) => (e.kind === 'user' ? (e.attachments ?? []).map((a) => a.id) : []));
+    if (folder) chatDir = chatFolderOf(s);
+  }
   sessions.delete(id);
+  if (chatDir) {
+    try {
+      rmSync(chatDir, { recursive: true, force: true });
+    } catch {}
+  } else if (cwd) removeSessionAttachments(cwd, id, legacy);
   bus.emitGlobal({ type: 'session-deleted', id });
 }
 
-/** Empty the archive (the client confirms first). */
+/** Empty the archive (the client confirms first); `?folders=1` takes regular chats' folders along. */
 sessionRoutes.delete('/sessions/archive', (c) => {
   const list = sessions.list({ archived: true });
-  for (const s of list) deleteSessionNow(s.id);
+  const folders = withFolder(c.req.query('folders'));
+  for (const s of list) deleteSessionNow(s.id, folders);
   return c.json({ ok: true, deleted: list.length });
 });
 
@@ -154,7 +181,7 @@ sessionRoutes.patch('/sessions/:id', async (c) => {
 });
 
 sessionRoutes.delete('/sessions/:id', (c) => {
-  deleteSessionNow(c.req.param('id'));
+  deleteSessionNow(c.req.param('id'), withFolder(c.req.query('folder')));
   return c.json({ ok: true });
 });
 
@@ -163,7 +190,7 @@ sessionRoutes.get('/sessions/:id/events', (c) => c.json(events.list(c.req.param(
 sessionRoutes.post('/sessions/:id/messages', async (c) => {
   const b = await parseBody(c, Message);
   const s = sessionOr404(c.req.param('id'));
-  const files = resolveAttachments(sessionCwd(s), b.attachments);
+  const files = resolveAttachments(sessionCwd(s), s.id, b.attachments);
   // writing to an archived session brings it back
   if (s.archivedAt && (b.text.trim() || files.length)) sessions.setArchived(s.id, false);
   return c.json(sendMessage(s.id, b.text, files));
@@ -181,13 +208,13 @@ sessionRoutes.post('/sessions/:id/attachments', async (c) => {
     name = decodeURIComponent(c.req.header('x-filename') ?? 'file');
   } catch {}
   const bytes = new Uint8Array(await c.req.arrayBuffer());
-  return c.json(saveAttachment(sessionCwd(s), name, c.req.header('content-type') ?? '', bytes), 201);
+  return c.json(saveAttachment(sessionCwd(s), s.id, name, c.req.header('content-type') ?? '', bytes), 201);
 });
 
 /** An attachment's content (thumbnails and downloads in the feed). */
 sessionRoutes.get('/sessions/:id/attachments/:file', (c) => {
   const s = sessionOr404(c.req.param('id'));
-  const path = attachmentPath(sessionCwd(s), c.req.param('file'));
+  const path = attachmentPath(sessionCwd(s), s.id, c.req.param('file'));
   const mime = MIME_FOR_SERVE[extname(path).toLowerCase()] ?? 'application/octet-stream';
   // never render attached HTML/SVG as a page of the hub's origin
   return c.body(readFileSync(path), 200, {

@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import type { Project, ProjectSuggestion, Session } from '@hubness/shared';
 import { findAgent } from './agents/registry.ts';
 import { config } from './config.ts';
@@ -45,6 +45,20 @@ export function inboxDirFor(id: string, at = new Date()): string {
   if (existsSync(dir)) dir = `${dir}-${Date.now().toString(36)}`;
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/**
+ * The folder of a regular chat that deleting the chat may take along (the user asks for it):
+ * its own Inbox folder, or the hub's folder of a chat from before Inbox. Null for a project or
+ * group session, for anything that is not directly inside those folders, and for a folder
+ * another session works in too.
+ */
+export function chatFolderOf(s: Session): string | null {
+  if (s.projectId || s.groupId) return null;
+  const dir = resolve(s.cwd ?? join(config.chatsDir, s.id));
+  if (dirname(dir) !== resolve(config.inboxDir) && dirname(dir) !== resolve(config.chatsDir)) return null;
+  const shared = sessions.list({ archived: 'all' }).some((o) => o.id !== s.id && !o.projectId && !o.groupId && o.cwd && resolve(o.cwd) === dir);
+  return shared ? null : dir;
 }
 
 const CODE_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.py', '.rs', '.go', '.java', '.kt', '.rb', '.php', '.c', '.cc', '.cpp', '.h', '.cs', '.swift', '.vue', '.svelte', '.html', '.css', '.scss', '.sh', '.sql']);

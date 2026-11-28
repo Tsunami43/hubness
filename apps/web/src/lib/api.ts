@@ -184,7 +184,7 @@ export const api = {
   archivedSessions: () => req<Session[]>('GET', '/sessions?archived=1'),
   archiveSession: (id: string) => req<Session>('POST', `/sessions/${id}/archive`),
   restoreSession: (id: string) => req<Session>('POST', `/sessions/${id}/restore`),
-  emptyArchive: () => req<{ ok: true; deleted: number }>('DELETE', '/sessions/archive'),
+  emptyArchive: (folders = false) => req<{ ok: true; deleted: number }>('DELETE', `/sessions/archive${folders ? '?folders=1' : ''}`),
   createSession: (input: { projectId?: string | null; groupId?: string | null; agent: AgentConfig; prompt?: string; title?: string }) =>
     req<Session>('POST', '/sessions', input),
   /** Raw upload (not JSON): bytes in the body, the name in X-Filename. */
@@ -200,7 +200,7 @@ export const api = {
   },
   updateSession: (id: string, patch: { title?: string; agent?: Partial<AgentConfig> }) =>
     req<Session>('PATCH', `/sessions/${id}`, patch),
-  deleteSession: (id: string) => req('DELETE', `/sessions/${id}`),
+  deleteSession: (id: string, folder = false) => req('DELETE', `/sessions/${id}${folder ? '?folder=1' : ''}`),
   send: (id: string, text: string, attachments?: Attachment[]) => req<Session>('POST', `/sessions/${id}/messages`, { text, attachments }),
   stop: (id: string) => req('POST', `/sessions/${id}/stop`),
   approve: (id: string, requestId: string, d: ApprovalDecision) =>

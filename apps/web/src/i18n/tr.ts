@@ -19,6 +19,8 @@ export const tr: Record<MessageKey, string> = {
   'archive.emptyTitle': 'Arşivi boşalt',
   'archive.emptyConfirm': 'Arşivdeki {n} oturumun tümü kalıcı olarak silinsin mi? Konuşmalar geri yüklenemez.',
   'archive.deleteOne': '“{title}” kalıcı olarak silinsin mi? Konuşma geri yüklenemez.',
+  'archive.emptyWithFolders': 'Sohbet klasörleriyle sil',
+  'archive.emptyFoldersHint': 'Ekli dosyalar da silinir. Ajanlarının oluşturduklarıyla birlikte normal sohbetlerin klasörleri, onları da silmezseniz kalır.',
   'archive.emptyList': 'Arşiv boş. Listeden gizlemek için Etkin sekmesinden bir oturumu arşivleyin.',
   'archive.banner': 'Bu oturum arşivde. Mesaj gönderdiğinizde geri gelir.',
   'attach.add': 'Dosya ekle (veya buraya yapıştırın / bırakın)',
@@ -221,6 +223,8 @@ export const tr: Record<MessageKey, string> = {
   'session.agentLocked':
     'Oturum ajanı: {agent}. Ajan değiştirilemez — konuşma bağlamı onunla birlikte yaşar. Farklı bir ajan için yeni bir oturum başlatın.',
   'session.deleteConfirm': 'Bu oturum ve geçmişi silinsin mi?',
+  'session.deleteWithFolder': 'Klasörüyle sil',
+  'session.deleteFolderHint': 'Ekli dosyalar da silinir. Ajanın orada oluşturduklarıyla birlikte sohbet klasörü, onu da silmezseniz kalır.',
 
   // events
   'ev.thinking': 'Düşünüyor',

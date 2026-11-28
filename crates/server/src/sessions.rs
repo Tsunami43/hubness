@@ -244,28 +244,64 @@ fn close_browser_page(id: &str) {
     }
 }
 
-/// Delete one session for good and drop it from the lists.
-fn delete_now(s: &AppState, db: &Connection, id: &str) -> ApiResult<()> {
+/// `?folder=1` (one session) / `?folders=1` (the archive): deleting a regular chat also
+/// removes its folder (what the agent made there).
+#[derive(Deserialize, Default)]
+struct DeleteQuery {
+    folder: Option<String>,
+    folders: Option<String>,
+}
+
+fn flag(v: &Option<String>) -> bool {
+    matches!(v.as_deref(), Some("1" | "true"))
+}
+
+/// Delete one session for good: stop its agent, drop it from the lists, remove its attached
+/// files and — when asked — the folder of a regular chat. Files go after the database: a file
+/// that can't be removed never keeps a session alive.
+fn delete_now(s: &AppState, db: &Connection, id: &str, folder: bool) -> ApiResult<()> {
+    let cur = repo::get(db, id)?;
     s.runtime.stop(id);
     close_browser_page(id);
+    // where the files are, read before the session and its events are gone
+    let mut cwd = None;
+    let mut legacy = vec![];
+    let mut chat_dir = None;
+    if let Some(cur) = &cur {
+        // a regular chat's folder is not created again just to look into it
+        cwd = if cur.project_id.is_some() || cur.group_id.is_some() {
+            runtime::session_cwd(db, s.config(), cur).ok().map(std::path::PathBuf::from)
+        } else {
+            Some(cur.cwd.as_ref().map(std::path::PathBuf::from).unwrap_or_else(|| s.config().chats_dir.join(&cur.id)))
+        };
+        legacy = crate::attachments::ids_in_events(&repo::events(db, id)?);
+        if folder {
+            chat_dir = inbox::chat_folder_of(db, s.config(), cur)?;
+        }
+    }
     repo::delete(db, id)?;
+    if let Some(dir) = chat_dir {
+        let _ = std::fs::remove_dir_all(&dir).or_else(|_| std::fs::remove_file(&dir));
+    } else if let Some(cwd) = cwd {
+        crate::attachments::remove_session(&cwd, id, &legacy);
+    }
     s.bus.emit_global(GlobalStreamMsg::SessionDeleted { id: id.to_string() });
     Ok(())
 }
 
-async fn remove(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<axum::Json<Value>> {
+async fn remove(State(s): State<AppState>, Path(id): Path<String>, Query(q): Query<DeleteQuery>) -> ApiResult<axum::Json<Value>> {
     s.with(|db, _| {
-        delete_now(&s, db, &id)?;
+        delete_now(&s, db, &id, flag(&q.folder))?;
         Ok(json!({ "ok": true }))
     })
 }
 
-/// Empty the archive (the client confirms first).
-async fn empty_archive(State(s): State<AppState>) -> ApiResult<axum::Json<Value>> {
+/// Empty the archive (the client confirms first); `?folders=1` takes regular chats' folders along.
+async fn empty_archive(State(s): State<AppState>, Query(q): Query<DeleteQuery>) -> ApiResult<axum::Json<Value>> {
     s.with(|db, _| {
         let list = repo::list(db, Filter { archived: Archived::Only, ..Default::default() })?;
         for x in &list {
-            delete_now(&s, db, &x.id)?;
+            delete_now(&s, db, &x.id, flag(&q.folders))?;
         }
         Ok(json!({ "ok": true, "deleted": list.len() }))
     })
@@ -315,7 +351,7 @@ async fn messages(State(s): State<AppState>, Path(id): Path<String>, JsonBody(b)
         let db = s.db()?;
         let cur = session_or_404(&db, &id)?;
         let cwd = runtime::session_cwd(&db, s.config(), &cur)?;
-        let files = crate::attachments::resolve(std::path::Path::new(&cwd), b.attachments.as_ref())?;
+        let files = crate::attachments::resolve(std::path::Path::new(&cwd), &cur.id, b.attachments.as_ref())?;
         // writing to an archived session brings it back
         if cur.archived_at.is_some() && (!b.text.trim().is_empty() || !files.is_empty()) {
             repo::set_archived(&db, &cur.id, false)?;
@@ -476,7 +512,7 @@ async fn upload(
     let raw_name = header("x-filename");
     let name = percent_decode(if raw_name.is_empty() { "file" } else { &raw_name }).unwrap_or_else(|| "file".into());
     let mime = header("content-type");
-    let a = crate::http::blocking(move || crate::attachments::save(std::path::Path::new(&cwd), &name, &mime, &body)).await?;
+    let a = crate::http::blocking(move || crate::attachments::save(std::path::Path::new(&cwd), &id, &name, &mime, &body)).await?;
     Ok((StatusCode::CREATED, a))
 }
 
@@ -507,7 +543,7 @@ async fn attachment(State(s): State<AppState>, Path((id, file)): Path<(String, S
         let db = s.db()?;
         let cur = session_or_404(&db, &id)?;
         let cwd = runtime::session_cwd(&db, s.config(), &cur)?;
-        crate::attachments::path_of(std::path::Path::new(&cwd), &file)?
+        crate::attachments::path_of(std::path::Path::new(&cwd), &cur.id, &file)?
     };
     let mime = crate::attachments::serve_mime(&path);
     let disposition = if mime.starts_with("image/") || mime.starts_with("video/") { "inline" } else { "attachment" };
