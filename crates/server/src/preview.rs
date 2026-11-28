@@ -127,6 +127,12 @@ pub fn clear_preview_logs(key: &str) {
     lock(&LOGS).remove(key);
 }
 
+/// Is the port one of `HUBNESS_PREVIEW_PORTS` (a proxy, never an app)?
+pub fn in_preview_range(port: u16) -> bool {
+    let (from, to) = range();
+    (from..=to).contains(&port)
+}
+
 pub fn preview_key_by_port(port: u16) -> Option<String> {
     lock(&PREVIEWS).iter().find(|(_, p)| p.port == port).map(|(k, _)| k.clone())
 }

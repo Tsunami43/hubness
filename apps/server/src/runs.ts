@@ -4,7 +4,8 @@ import type { JobInfo, Project, RunConfig, RunState, RunSuggestion } from '@hubn
 import { runConfigs } from './db/index.ts';
 import { HttpError } from './errors.ts';
 import { containerIp, execCommand, runtimeOf, type Scope } from './environments.ts';
-import { closePreview, closePreviewsWithPrefix, ensurePreview, previewPort } from './preview.ts';
+import { config } from './config.ts';
+import { closePreview, closePreviewsWithPrefix, ensurePreview, inPreviewRange, previewKeyByPort, previewPort } from './preview.ts';
 import { secretEnv } from './secrets.ts';
 import { exposePreview } from './tailscale.ts';
 import { getJob, jobListeners, killJob, startJob } from './terminal.ts';
@@ -325,6 +326,9 @@ export async function previewPortFor(p: Project, port: number): Promise<number> 
     void exposePreview(run.previewPort);
     return run.previewPort;
   }
+  // a preview port (or the hub) as the app: the proxy would forward to itself, again and again
+  if (previewKeyByPort(port)?.startsWith(`${p.id}:`)) return port;
+  if (inPreviewRange(port) || port === config.port) throw new HttpError(400, 'This port is a hub or preview port, not an app');
   const pp = await ensurePreview(`${p.id}:port:${port}`, previewTarget(p, port));
   if (!pp) throw new HttpError(503, 'No free preview ports (HUBNESS_PREVIEW_PORTS)');
   return pp;

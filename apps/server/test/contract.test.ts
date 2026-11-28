@@ -1591,6 +1591,13 @@ test('preview: the proxy adds the helper to pages and collects what it reports',
     const { previewPort } = (await call('POST', `/projects/${project}/preview`, { port: appPort })).json;
     const base = `http://127.0.0.1:${previewPort}`;
 
+    // a preview port is not an app port: the proxy would forward to itself (issue #2)
+    assert.deepEqual((await call('POST', `/projects/${project}/preview`, { port: previewPort })).json, { previewPort }, 'its own preview port is that preview');
+    const free = previewPort === 18799 ? 18798 : 18799;
+    const looped = await call('POST', `/projects/${project}/preview`, { port: free });
+    assert.equal(looped.status, 400, 'a port of HUBNESS_PREVIEW_PORTS is refused');
+    await assert.rejects(fetch(`http://127.0.0.1:${free}/`), 'no proxy was started on it');
+
     const html = await (await fetch(`${base}/`, { headers: { accept: 'text/html' } })).text();
     assert.equal(html, page.replace('<head>', '<head><script src="/__hubness/preview.js"></script>'));
     const tag = '<script src="/__hubness/preview.js"></script>';

@@ -750,6 +750,13 @@ pub fn preview_port_for(db: &Connection, config: &Config, p: &Project, port: u16
         crate::tailscale::expose(pp);
         return Ok(pp);
     }
+    // a preview port (or the hub) as the app: the proxy would forward to itself, again and again
+    if preview::preview_key_by_port(port).is_some_and(|k| k.starts_with(&format!("{}:", p.id))) {
+        return Ok(port);
+    }
+    if preview::in_preview_range(port) || port == config.port {
+        return Err(HttpError::bad_request("This port is a hub or preview port, not an app"));
+    }
     let docker = environments::runtime_of(db, p)?.environment == RuntimeEnvironment::Docker;
     preview::ensure_preview(&config.host, &format!("{}:port:{port}", p.id), preview_target(docker, &p.id, port))
         .ok_or_else(|| HttpError::new(503, "No free preview ports (HUBNESS_PREVIEW_PORTS)"))
