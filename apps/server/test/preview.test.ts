@@ -228,6 +228,26 @@ test('preview: an app that is down answers 502 / 503 with a hint, not a hang', a
   }
 });
 
+test('preview: a request addressed to a foreign host name is refused (DNS rebinding)', async () => {
+  const key = 'proxy:rebinding';
+  const pp = (await ensurePreview(key, () => null))!;
+  keys.push(key);
+  const { request } = await import('node:http');
+  const status = (host: string) =>
+    new Promise<number>((ok, fail) => {
+      request(`http://127.0.0.1:${pp}/`, { headers: { host } }, (res) => {
+        res.resume();
+        ok(res.statusCode ?? 0);
+      })
+        .on('error', fail)
+        .end();
+    });
+  assert.equal(await status('evil.example'), 403);
+  assert.equal(await status(`evil.example:${pp}`), 403);
+  assert.equal(await status(`localhost:${pp}`), 503, 'past the check: the app is not running');
+  assert.equal(await status(`127.0.0.1:${pp}`), 503);
+});
+
 test('preview: a page that streams is shown as it comes; an app that dies mid-answer ends the answer', async () => {
   let finish: (() => void) | null = null;
   const port = await app((req, res) => {

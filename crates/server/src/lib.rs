@@ -126,7 +126,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     if !auth::is_loopback(&cfg.host) && accounts == 0 {
         anyhow::bail!("HUBNESS_HOST={} is reachable from other machines: create an account first with `hubness user add <name>`", cfg.host);
     }
-    auth::init(state.db.clone())?;
+    auth::init(state.db.clone(), &cfg)?;
     // agents and key scratch folders left by a crashed run
     ssh::sweep_runtime(&cfg.data_dir);
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await?;

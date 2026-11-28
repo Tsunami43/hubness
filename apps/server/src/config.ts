@@ -17,6 +17,11 @@ const hubHome = resolve(process.env.HUBNESS_HOME ?? join(homedir(), 'hub'));
 export const config = {
   port: Number(process.env.HUBNESS_PORT ?? 8787),
   host: process.env.HUBNESS_HOST ?? '127.0.0.1',
+  /** Host names the hub is reached by besides loopback and IP addresses (a reverse proxy's domain). */
+  allowedHosts: (process.env.HUBNESS_ALLOWED_HOSTS ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
   dataDir,
   dbPath: join(dataDir, 'hubness.sqlite'),
   logsDir: join(dataDir, 'logs'),

@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::AppState;
+use crate::config::Config;
 use crate::error::{ApiResult, HttpError};
 use crate::http::JsonBody;
 use crate::users;
@@ -42,14 +43,42 @@ const COOKIE_MAX_AGE: u64 = 30 * 24 * 3600;
 
 static DB: OnceLock<Arc<Mutex<Connection>>> = OnceLock::new();
 static SERVICE: OnceLock<String> = OnceLock::new();
+/// `HUBNESS_HOST` and `HUBNESS_ALLOWED_HOSTS`, lower case (see `known_host`).
+static HOSTS: OnceLock<Vec<String>> = OnceLock::new();
 
 /// Turn sign-in on for this process: the database with the accounts and a fresh service
 /// token for the hub's own children. Until it is called (tests that build the router
 /// directly) nothing is checked.
-pub fn init(db: Arc<Mutex<Connection>>) -> std::io::Result<()> {
+pub fn init(db: Arc<Mutex<Connection>>, config: &Config) -> std::io::Result<()> {
     let _ = SERVICE.set(users::random_token()?);
+    let _ = HOSTS.set(std::iter::once(config.host.to_ascii_lowercase()).chain(config.allowed_hosts.iter().cloned()).collect());
     let _ = DB.set(db);
     Ok(())
+}
+
+/// The name of a Host header: lower case, without the port, the IPv6 brackets or a final dot.
+fn host_name(host: &str) -> String {
+    let h = host.trim().to_ascii_lowercase();
+    let name = match h.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or_default(),
+        None => h.rsplit_once(':').filter(|(_, port)| port.bytes().all(|b| b.is_ascii_digit())).map_or(h.as_str(), |(name, _)| name),
+    };
+    name.strip_suffix('.').unwrap_or(name).to_string()
+}
+
+fn allowed_host(host: &str, extra: &[String]) -> bool {
+    let name = host_name(host);
+    name == "localhost" || name.parse::<IpAddr>().is_ok() || extra.contains(&name)
+}
+
+/// DNS rebinding protection for what a hub without accounts trusts to this machine: a page of
+/// another site can point its own name at 127.0.0.1 and become same-origin with the hub, but
+/// the browser still sends that name as Host. Allowed: localhost, an IP address (a page can't
+/// be same-origin with one it doesn't serve), `HUBNESS_HOST` and `HUBNESS_ALLOWED_HOSTS`.
+/// (With accounts a rebound page has no session cookie: sign-in protects the hub.)
+fn known_host(headers: &HeaderMap) -> bool {
+    // no Host at all is not a browser
+    headers.get(header::HOST).and_then(|v| v.to_str().ok()).is_none_or(|h| allowed_host(h, HOSTS.get().map_or(&[], Vec::as_slice)))
 }
 
 /// The token for the hub's own helper processes (passed only in their environment).
@@ -152,7 +181,7 @@ pub fn preview_pass(port: u16) -> String {
 }
 
 fn preview_authorized(db: &Connection, headers: &HeaderMap, port: u16) -> bool {
-    !has_users(db)
+    (!has_users(db) && known_host(headers))
         || authenticate(db, headers).is_some()
         || cookie_value(headers, PREVIEW_COOKIE).is_some_and(|v| eq(v, &preview_pass(port)))
 }
@@ -197,6 +226,9 @@ pub async fn guard(mut req: Request, next: Next) -> Response {
         req.extensions_mut().insert(Caller { principal: Some(Principal::Open), local, ip });
         return next.run(req).await;
     };
+    if !users_exist && !known_host(req.headers()) {
+        return HttpError::new(403, "This host name is not allowed: add it to HUBNESS_ALLOWED_HOSTS").into_response();
+    }
     if principal.is_none() && !users_exist && local {
         principal = Some(Principal::Open);
     }
@@ -406,6 +438,9 @@ mod tests {
         assert_eq!(pass, preview_pass(8790));
         assert_ne!(pass, preview_pass(8791), "a pass is for one port");
         assert!(preview_authorized(&db, &HeaderMap::new(), 8790), "no account: previews are as open as the hub");
+        let mut rebound = HeaderMap::new();
+        rebound.insert(header::HOST, HeaderValue::from_static("evil.example:8790"));
+        assert!(!preview_authorized(&db, &rebound, 8790), "a foreign host name (DNS rebinding)");
 
         let user = users::create_first(&db, "alice", "$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaA").unwrap();
         let session = users::create_session(&db, &user.id).unwrap();
@@ -430,6 +465,19 @@ mod tests {
         let mut only = cookie(format!("{PREVIEW_COOKIE}={pass}"));
         strip_credentials(&mut only);
         assert!(only.get(header::COOKIE).is_none());
+    }
+
+    #[test]
+    fn host_names_a_browser_may_address_the_hub_by() {
+        let extra = ["hub.example".to_string()];
+        for host in
+            ["localhost", "localhost:8787", "LOCALHOST.", "127.0.0.1:8787", "[::1]:8787", "192.168.1.5", "hub.example", "Hub.Example:443"]
+        {
+            assert!(allowed_host(host, &extra), "{host}");
+        }
+        for host in ["evil.example", "evil.example:8787", "localhost.evil.example", "127.0.0.1.evil.example", "[evil]", ""] {
+            assert!(!allowed_host(host, &extra), "{host}");
+        }
     }
 
     #[test]

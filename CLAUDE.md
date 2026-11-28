@@ -76,6 +76,8 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   `HUBNESS_NO_UPDATE_CHECK`) for System → Overview; the Rust server (`version.rs`) also updates
   itself from the web by running `hubness update` from the installed binary (not a cargo build).
 - `csrf.ts` — mutating `/api` requests require JSON or the `X-Hubness-Request` header.
+- `host.ts` — DNS rebinding guard: `/api` and preview ports answer only to `localhost`, IP
+  addresses, `HUBNESS_HOST`, `HUBNESS_ALLOWED_HOSTS` and the Tailscale Serve name.
 
 ### Web (`apps/web/src`)
 

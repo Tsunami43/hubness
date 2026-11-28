@@ -9,6 +9,9 @@ use crate::paths::resolve;
 pub struct Config {
     pub port: u16,
     pub host: String,
+    /// Host names the hub is reached by besides loopback and IP addresses
+    /// (`HUBNESS_ALLOWED_HOSTS`, comma-separated: a reverse proxy's domain).
+    pub allowed_hosts: Vec<String>,
     pub data_dir: PathBuf,
     pub db_path: PathBuf,
     pub logs_dir: PathBuf,
@@ -44,6 +47,9 @@ impl Config {
             &resolve(&var("HUBNESS_WEB_DIST").unwrap_or_else(|| "apps/web/dist".into())),
         );
         config.web_dist_explicit = var("HUBNESS_WEB_DIST").is_some();
+        config.allowed_hosts = var("HUBNESS_ALLOWED_HOSTS")
+            .map(|v| v.split(',').map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty()).collect())
+            .unwrap_or_default();
         Ok(config)
     }
 
@@ -51,6 +57,7 @@ impl Config {
         Self {
             port,
             host,
+            allowed_hosts: Vec::new(),
             data_dir: data_dir.to_path_buf(),
             db_path: data_dir.join("hubness.sqlite"),
             logs_dir: data_dir.join("logs"),
