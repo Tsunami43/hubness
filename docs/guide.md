@@ -128,5 +128,5 @@ All settings are environment variables (see [`.env.example`](../.env.example)):
 | `HUBNESS_TAILSCALE` | `tailscale` | The Tailscale CLI the hub opens preview ports with behind Tailscale Serve; `0` turns that off |
 
 > **Security.** hubness gives agents shell access to the host. Keep it on `127.0.0.1`
-> unless it has its account (`hubness user add`; the TypeScript dev server has none), and put
-> it behind HTTPS or a VPN before it leaves your machine.
+> unless it has its account (`hubness user add`; the TypeScript dev server has none and refuses
+> any other host), and put it behind HTTPS or a VPN before it leaves your machine.

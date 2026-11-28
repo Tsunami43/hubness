@@ -3,7 +3,7 @@ import { relative } from 'node:path';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { config } from './config.ts';
+import { config, isLoopback } from './config.ts';
 import { HttpError } from './errors.ts';
 import { csrfGuard } from './csrf.ts';
 import { api } from './routes/api.ts';
@@ -15,6 +15,15 @@ import { shutdownBrowser } from './browser.ts';
 import { disposeAllSsh, sweepSshRuntime } from './ssh.ts';
 import { killAllJobs } from './terminal.ts';
 import { initTailscale, unexposeAllPreviews } from './tailscale.ts';
+
+// this server has no sign-in: it never listens where other machines can reach it
+if (!isLoopback(config.host)) {
+  console.error(
+    `hubness: HUBNESS_HOST=${config.host} is reachable from other machines and this server has no sign-in; ` +
+      'keep 127.0.0.1 (use an SSH tunnel or Tailscale Serve for remote access) or run the Rust server with an account',
+  );
+  process.exit(1);
+}
 
 const app = new Hono();
 

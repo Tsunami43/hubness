@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync } from 'node:fs';
+import { BlockList, isIPv4, isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,16 @@ mkdirSync(dataDir, { recursive: true });
 
 /** Hub working folder: inbox for new chats, projects for projects, home — the system project. */
 const hubHome = resolve(process.env.HUBNESS_HOME ?? join(homedir(), 'hub'));
+
+const loopback6 = new BlockList();
+loopback6.addAddress('::1', 'ipv6');
+
+/** Only this machine can reach the host — the same test as the Rust server's `auth::is_loopback`. */
+export function isLoopback(host: string): boolean {
+  if (host === 'localhost') return true;
+  if (isIPv4(host)) return host.startsWith('127.');
+  return isIPv6(host) && loopback6.check(host, 'ipv6');
+}
 
 export const config = {
   port: Number(process.env.HUBNESS_PORT ?? 8787),
