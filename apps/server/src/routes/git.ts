@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { projectOr404 } from '../catalog.ts';
 import { HttpError } from '../errors.ts';
+import { safeJoin } from '../fsops.ts';
 import * as git from '../git.ts';
 import { parseBody } from './http.ts';
 
@@ -38,11 +39,12 @@ function need<T>(schema: z.ZodType<T>, value: unknown, field: string): T {
 gitRoutes.get('/projects/:id/git/status', async (c) => c.json(await git.status(rootPath(c))));
 
 gitRoutes.get('/projects/:id/git/diff', async (c) => {
-  const diff = await git.diff(rootPath(c), {
-    path: c.req.query('path') || undefined,
-    staged: c.req.query('staged') === '1',
-    untracked: c.req.query('untracked') === '1',
-  });
+  const root = rootPath(c);
+  const path = c.req.query('path') || undefined;
+  const untracked = c.req.query('untracked') === '1';
+  // `git diff --no-index` reads any path, not only the repository's
+  if (path && untracked) safeJoin(root, path);
+  const diff = await git.diff(root, { path, staged: c.req.query('staged') === '1', untracked });
   return c.json({ diff });
 });
 

@@ -1194,6 +1194,11 @@ test('git: status, diff, stage, commit, log and show', async () => {
   const untracked = (await call('GET', git(`/diff?path=${encodeURIComponent('untracked file.txt')}&untracked=1`))).json.diff;
   assert.match(untracked, /new file mode/);
   assert.match(untracked, /^\+u$/m);
+  writeFileSync(join(tmp, 'elsewhere', 'outside-secret.txt'), 'secret\n');
+  for (const path of ['../outside-secret.txt', join(tmp, 'elsewhere', 'outside-secret.txt')]) {
+    const r = await call('GET', git(`/diff?path=${encodeURIComponent(path)}&untracked=1`));
+    assert.equal(r.status, 400, `an untracked diff stays inside the project: ${path}`);
+  }
 
   assert.equal((await call('POST', git('/stage'), {})).status, 400, 'paths are required');
   assert.equal((await call('POST', git('/stage'), { paths: [] })).status, 400);
@@ -1266,6 +1271,8 @@ test('git: branches, checkout, merge and a local remote', async () => {
   assert.equal((await call('POST', git('/checkout'), { branch: 'main' })).json.ok, true);
   assert.equal((await call('POST', git('/delete-branch'), { branch: 'from-init' })).json.ok, true);
   assert.deepEqual((await call('POST', git('/delete-branch'), { branch: '-D' })).json, { ok: false, output: 'Invalid branch' });
+  assert.deepEqual((await call('POST', git('/checkout'), { branch: '--detach' })).json, { ok: false, output: 'Invalid branch' });
+  assert.deepEqual((await call('POST', git('/checkout'), { branch: '--orphan=x', create: true })).json, { ok: false, output: 'Invalid branch' });
   assert.deepEqual((await call('POST', git('/branch-at'), { branch: 'x', rev: 'a..b' })).json, { ok: false, output: 'Invalid branch or commit' });
 
   // a local bare repository as origin: push sets the upstream, fetch works
