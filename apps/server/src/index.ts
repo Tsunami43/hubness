@@ -14,6 +14,7 @@ import { stopAll } from './runtime.ts';
 import { shutdownBrowser } from './browser.ts';
 import { disposeAllSsh, sweepSshRuntime } from './ssh.ts';
 import { killAllJobs } from './terminal.ts';
+import { initTailscale, unexposeAllPreviews } from './tailscale.ts';
 
 const app = new Hono();
 
@@ -45,6 +46,9 @@ ensureHomeProject();
 // agents and key scratch folders left by a crashed run
 sweepSshRuntime();
 
+// previews of a hub behind Tailscale Serve get their ports passed through it
+initTailscale(config.port, config.host);
+
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
   console.log(`hubness: http://${info.address}:${info.port}  (data: ${config.dataDir})`);
 });
@@ -55,6 +59,7 @@ const shutdown = () => {
   disposeAllSsh();
   shutdownBrowser();
   killAllJobs();
+  unexposeAllPreviews();
   server.close();
   // SSE streams never end on their own: drop them so the dev restart (src/dev.ts) is instant —
   // edits made while the old process is still exiting are otherwise missed by the watcher

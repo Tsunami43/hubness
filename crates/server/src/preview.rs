@@ -220,6 +220,8 @@ fn ensure_in(host: &str, (from, to): (u16, u16), key: &str, target: Target) -> O
     if let Some(cur) = previews.get(key) {
         *lock(&cur.target) = target;
         cur.used.store(now_ms(), Ordering::SeqCst);
+        // asked for again: one more try if Tailscale Serve refused the port before
+        crate::tailscale::expose(cur.port);
         return Some(cur.port);
     }
     let used: Vec<u16> = previews.values().map(|p| p.port).collect();
@@ -237,6 +239,7 @@ fn ensure_in(host: &str, (from, to): (u16, u16), key: &str, target: Target) -> O
         let used = Arc::new(AtomicU64::new(now_ms()));
         let server = tokio::spawn(accept_loop(listener, port, key_cell.clone(), target.clone(), used.clone()));
         previews.insert(key.to_string(), Preview { port, target, key: key_cell, used, server });
+        crate::tailscale::expose(port);
         return Some(port);
     }
     // nothing free: the idlest ad-hoc preview of this range hands its port (and listener) over
@@ -265,6 +268,7 @@ pub fn close_preview(key: &str) {
     if let Some(p) = lock(&PREVIEWS).remove(key) {
         // the accept loop owns the connection tasks: aborting it drops (aborts) them all
         p.server.abort();
+        crate::tailscale::unexpose(p.port);
     }
 }
 

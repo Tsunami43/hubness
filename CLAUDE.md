@@ -51,6 +51,8 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   The proxy adds `packages/shared/assets/preview-inject.js` to previewed pages (console and
   errors → `/projects/:id/previews/:port/logs`, address bar, element picker);
   `HUBNESS_PREVIEW_INJECT=0` turns it off.
+- `tailscale.ts` — a hub behind Tailscale Serve passes each preview port through it
+  (`tailscale serve --https=<port>` while the preview runs; `HUBNESS_TAILSCALE`).
 - `browser.ts` — the agent's own headless Chromium (CDP over `--remote-debugging-pipe`, one
   page per session, `HUBNESS_CHROME`, `HUBNESS_CHROME_ARGS`), driven by the hub MCP `preview_*` tools through
   `POST /sessions/:id/browser`; `localhost:<port>` of a project goes through its preview.

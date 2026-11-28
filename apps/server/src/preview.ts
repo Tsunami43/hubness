@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { PreviewLog } from '@hubness/shared';
 import { config } from './config.ts';
+import { exposePreview, unexposePreview } from './tailscale.ts';
 
 /**
  * Preview of a running app (like Webview in Replit).
@@ -270,6 +271,8 @@ export async function ensurePreview(key: string, target: Target): Promise<number
   if (cur) {
     cur.target = target;
     cur.used = Date.now();
+    // asked for again: one more try if Tailscale Serve refused the port before
+    void exposePreview(cur.port);
     return cur.port;
   }
   const open = async (): Promise<number | null> => {
@@ -280,6 +283,7 @@ export async function ensurePreview(key: string, target: Target): Promise<number
       entry.server = proxyServer(key, () => entry.target(), () => (entry.used = Date.now()));
       if (await listen(entry.server, port)) {
         previews.set(key, entry);
+        void exposePreview(port);
         return port;
       }
     }
@@ -302,6 +306,7 @@ export function closePreview(key: string) {
   logs.delete(key);
   p.server.close();
   p.server.closeAllConnections?.();
+  void unexposePreview(p.port);
 }
 
 export function closePreviewsWithPrefix(prefix: string) {
