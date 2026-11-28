@@ -45,8 +45,11 @@ export function isActive(sessionId: string) {
   return Boolean(t && !t.answered);
 }
 
-/** Stop a process that lingers after its answer, quietly: nothing it says reaches the feed. */
-function retire(sessionId: string) {
+/**
+ * Stop the session's process quietly: nothing it says reaches the feed. For one lingering after
+ * its answer, and for a session being deleted (its events would have no session to belong to).
+ */
+export function retire(sessionId: string) {
   const t = active.get(sessionId);
   if (!t) return;
   t.retired = true;

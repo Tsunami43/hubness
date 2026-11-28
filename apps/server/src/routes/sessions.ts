@@ -15,7 +15,7 @@ import { HttpError } from '../errors.ts';
 import { readFileSafe, safeJoin } from '../fsops.ts';
 import * as git from '../git.ts';
 import { attachmentPath, MAX_ATTACHMENT, removeSessionAttachments, resolveAttachments, saveAttachment } from '../attachments.ts';
-import { isActive, respondApproval, sendMessage, sessionCwd, stopSession } from '../runtime.ts';
+import { isActive, respondApproval, retire, sendMessage, sessionCwd, stopSession } from '../runtime.ts';
 import { browserAction, closeSessionBrowser } from '../browser.ts';
 import { previewPortFor } from '../runs.ts';
 import { AgentConfigSchema, parseBody, pumpSSE, shortText, validateAgent } from './http.ts';
@@ -93,7 +93,8 @@ const withFolder = (v: string | undefined) => v === '1' || v === 'true';
  */
 function deleteSessionNow(id: string, folder = false) {
   const s = sessions.get(id);
-  stopSession(id);
+  // quietly, even mid-turn: a "Stopped" notice would be written for a session that is gone
+  retire(id);
   // its page in the agents' browser goes with it
   void closeSessionBrowser(id);
   // where the files are, read before the session and its events are gone
