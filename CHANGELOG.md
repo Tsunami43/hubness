@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- On a phone, confirmation dialogs opened from the sessions panel (Delete all in the archive,
+  deleting a session) appeared under the panel and could not be seen until it was closed. With
+  several actions, the dialog's buttons now stack full width on a narrow screen.
+
 ## [0.4.6] - 2026-11-28
 
 ### Fixed
