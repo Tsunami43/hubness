@@ -1,4 +1,5 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { HarnessAction, HarnessVersion } from '@hubness/shared';
 import { shq } from '../terminal.ts';
@@ -20,6 +21,20 @@ export function runCli(cmd: string, args: string[], timeoutMs = 20_000, env?: Re
     p.on('error', () => (clearTimeout(timer), resolve(null)));
     p.on('close', (code) => (clearTimeout(timer), resolve(code === 0 ? out : null)));
   });
+}
+
+/**
+ * Config that lies inside a writable state folder (Codex, Grok): `files` and `dirs` are created
+ * when missing — empty means no config — so a sandboxed agent can't be the one to create them.
+ * shortcut: `optional` entries (an empty one would change behaviour) are protected only once
+ * they exist; upgrade to a list of the CLI's runtime files once its layout is pinned.
+ */
+export function configIn(dir: string, files: string[], dirs: string[], optional: string[] = []): string[] {
+  if (existsSync(dir)) {
+    for (const f of files) writeFileSync(join(dir, f), '', { flag: 'a', mode: 0o600 });
+    for (const d of dirs) mkdirSync(join(dir, d), { recursive: true });
+  }
+  return [...files, ...dirs, ...optional].map((e) => join(dir, e));
 }
 
 export function readJson(path: string): Json | null {

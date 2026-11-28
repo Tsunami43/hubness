@@ -2,9 +2,10 @@
 //!
 //! **sandbox** (bubblewrap): the system is read-only; the projects folder, other projects,
 //! hub data, keys (~/.ssh, ~/.aws…) and docker.sock are hidden; only the scope's
-//! repositories and agent state folders are writable. The network is shared (agents need
-//! the model API). On by default for projects when bubblewrap is available; groups are
-//! sandboxed whenever it is available; the system project never is.
+//! repositories and agent state folders are writable; the agents' own config is read-only
+//! (they run it outside the sandbox too). The network is shared (agents need the model API).
+//! On by default for projects when bubblewrap is available; groups are sandboxed whenever it
+//! is available; the system project never is.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -65,18 +66,86 @@ pub fn project_sandbox(db: &Connection, p: &Project) -> rusqlite::Result<bool> {
     Ok(saved_runtime(db, &p.id)?.sandbox.unwrap_or_else(sandbox_available))
 }
 
-/// Agent state folders — writable (login, history, caches) for every registered agent.
-fn agent_state(config: &Config) -> Vec<PathBuf> {
-    let h = home();
+/// What Claude Code writes while it works (transcripts, todos, login refresh…) — writable in the
+/// sandbox; the rest of its config folder (settings with hooks and the scripts they run, plugins,
+/// skills) and ~/.claude.json (MCP servers) stay read-only.
+const CLAUDE_RUNTIME_DIRS: [&str; 17] = [
+    "projects",
+    "sessions",
+    "session-env",
+    "todos",
+    "tasks",
+    "plans",
+    "shell-snapshots",
+    "file-history",
+    "statsig",
+    "telemetry",
+    "debug",
+    "logs",
+    "ide",
+    "cache",
+    "paste-cache",
+    "image-cache",
+    "backups",
+];
+const CLAUDE_RUNTIME_FILES: [&str; 3] = [".credentials.json", "history.jsonl", "stats-cache.json"];
+
+/// Config that lies inside a writable state folder (Codex, Grok): `files` and `dirs` are created
+/// when missing — empty means no config — so a sandboxed agent can't be the one to create them.
+/// shortcut: `optional` entries (an empty one would change behaviour) are protected only once
+/// they exist; upgrade to a list of the CLI's runtime files once its layout is pinned.
+fn config_in(dir: &Path, files: &[&str], dirs: &[&str], optional: &[&str]) -> Vec<PathBuf> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if dir.exists() {
+        for f in files {
+            let _ = std::fs::OpenOptions::new().append(true).create(true).mode(0o600).open(dir.join(f));
+        }
+        for d in dirs {
+            let _ = std::fs::create_dir_all(dir.join(d));
+        }
+    }
+    files.iter().chain(dirs).chain(optional).map(|e| dir.join(e)).collect()
+}
+
+/// Agent folders for every registered agent: state writable (login, history, caches), the agents'
+/// own config read-only — they run it outside the sandbox too (system sessions, unsandboxed
+/// projects, the user's terminal). Sorted so a folder comes before what lies in it: the deeper
+/// mount wins, and for the same path read-only wins.
+fn agent_mounts(h: &Path, config: &Config) -> Vec<(&'static str, PathBuf)> {
     let codex = std::env::var("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|_| h.join(".codex"));
-    let mut out: Vec<PathBuf> = [".cache", ".npm", ".bun"].iter().map(|d| h.join(d)).collect();
-    // claude-code
-    out.extend([h.join(".claude"), h.join(".claude.json"), config.data_dir.join("claude-profiles")]);
-    // codex, opencode, grok
-    out.push(codex);
-    out.extend([".config/opencode", ".local/share/opencode", ".local/state/opencode"].iter().map(|d| h.join(d)));
-    out.push(h.join(".grok"));
-    out
+    let grok = h.join(".grok");
+    let mut rw: Vec<PathBuf> = [".cache", ".npm", ".bun"].iter().map(|d| h.join(d)).collect();
+    let mut ro: Vec<PathBuf> = Vec::new();
+    // claude-code (legacy CLAUDE_CONFIG_DIR profiles live in the hub data)
+    let profiles = config.data_dir.join("claude-profiles");
+    let mut claude_dirs = vec![h.join(".claude")];
+    claude_dirs.extend(std::fs::read_dir(&profiles).into_iter().flatten().flatten().map(|e| e.path()));
+    for dir in claude_dirs.into_iter().filter(|d| d.exists()) {
+        // a folder missing under a read-only one can't be created inside the sandbox
+        for d in CLAUDE_RUNTIME_DIRS {
+            let _ = std::fs::create_dir_all(dir.join(d));
+        }
+        rw.extend(CLAUDE_RUNTIME_DIRS.iter().chain(&CLAUDE_RUNTIME_FILES).map(|e| dir.join(e)));
+    }
+    ro.extend([h.join(".claude"), h.join(".claude.json"), profiles]);
+    // codex: MCP servers and notify commands, instructions, approval rules, prompts, skills
+    ro.extend(config_in(
+        &codex,
+        &["config.toml", "AGENTS.md"],
+        &["rules", "prompts", "skills"],
+        &["AGENTS.override.md", "hooks.json", "plugins"],
+    ));
+    rw.push(codex);
+    // opencode: config, plugins, agents — and the tools it downloads into bin and runs outside the sandbox too
+    rw.extend([".local/share/opencode", ".local/state/opencode"].iter().map(|d| h.join(d)));
+    ro.extend([".config/opencode", ".local/share/opencode/bin"].iter().map(|d| h.join(d)));
+    // grok: MCP servers, instructions, skills, subagents, commands
+    ro.extend(config_in(&grok, &["config.toml", "AGENTS.md"], &["skills", "agents", "commands"], &[]));
+    rw.push(grok);
+    let mut all: Vec<(&'static str, PathBuf)> =
+        rw.into_iter().map(|p| ("--bind", p)).chain(ro.into_iter().map(|p| ("--ro-bind", p))).filter(|(_, p)| p.exists()).collect();
+    all.sort_by_key(|a| paths::to_string(&a.1));
+    all
 }
 
 fn uid() -> u32 {
@@ -120,6 +189,19 @@ pub fn bwrap_args(db: &Connection, config: &Config, repos: &[String], cwd: &str)
 /// bwrap arguments; `interactive` (Run and Shell on a pty) keeps the controlling terminal and
 /// gives the shell its own history folder.
 pub fn bwrap_args_for(db: &Connection, config: &Config, repos: &[String], cwd: &str, interactive: bool) -> rusqlite::Result<Vec<String>> {
+    bwrap_args_in(&home(), db, config, repos, cwd, interactive)
+}
+
+/// bwrap arguments with the agents' folders of home `h` (tests pass a temporary one: building
+/// the mounts creates the agents' runtime folders).
+fn bwrap_args_in(
+    h: &Path,
+    db: &Connection,
+    config: &Config,
+    repos: &[String],
+    cwd: &str,
+    interactive: bool,
+) -> rusqlite::Result<Vec<String>> {
     let s = |v: &str| v.to_string();
     // own PID namespace: when the agent exits, no processes are left inside; without a
     // controlling terminal the agent can't inject input into another tty (TIOCSTI)
@@ -138,17 +220,15 @@ pub fn bwrap_args_for(db: &Connection, config: &Config, repos: &[String], cwd: &
             args.extend([s("--ro-bind"), s("/dev/null"), shown]);
         }
     }
-    for p in agent_state(config) {
-        if p.exists() {
-            let shown = paths::to_string(&p);
-            args.extend([s("--bind"), shown.clone(), shown]);
-        }
+    for (flag, p) in agent_mounts(h, config) {
+        let shown = paths::to_string(&p);
+        args.extend([s(flag), shown.clone(), shown]);
     }
     // interactive shell history is separate (the host one with typed commands is not visible)
     if interactive {
         let hist = config.data_dir.join("shell-history");
         for (dir, target) in [("fish", ".local/share/fish"), ("zsh", ".local/share/zsh")] {
-            let target = home().join(target);
+            let target = h.join(target);
             // a mount point can't be created on a read-only system — only existing folders
             if !target.exists() {
                 continue;
@@ -663,7 +743,7 @@ mod tests {
             projects::create(&conn, "p", &paths::to_string(d), ProjectKind::Normal).unwrap();
         }
         let mine_s = paths::to_string(&mine);
-        let args = bwrap_args(&conn, &cfg, std::slice::from_ref(&mine_s), &mine_s).unwrap();
+        let args = bwrap_args_in(&root.join("home"), &conn, &cfg, std::slice::from_ref(&mine_s), &mine_s, false).unwrap();
         assert!(has_pair(&args, "--tmpfs", &paths::to_string(&other)), "another project is hidden");
         assert!(!has_pair(&args, "--tmpfs", &mine_s), "the scope's repository is not hidden");
         assert!(has_pair(&args, "--tmpfs", &paths::to_string(&cfg.data_dir)), "hub data is hidden");
@@ -679,5 +759,27 @@ mod tests {
             assert!(st.success(), "the other project is invisible inside, the scope is writable");
             assert!(mine.join("ok").exists());
         }
+    }
+
+    #[test]
+    fn agent_config_is_read_only_and_runtime_state_writable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let h = tmp.path().join("home");
+        for d in [".claude/projects", ".codex/sessions", ".config/opencode"] {
+            std::fs::create_dir_all(h.join(d)).unwrap();
+        }
+        std::fs::write(h.join(".claude.json"), "{}").unwrap();
+        let cfg = Config::new(0, "127.0.0.1".into(), &tmp.path().join("data"), &tmp.path().join("hub"), &tmp.path().join("web"));
+        let m = agent_mounts(&h, &cfg);
+        let at = |flag: &str, p: &str| m.iter().position(|(f, q)| *f == flag && *q == h.join(p));
+        for p in [".claude", ".claude.json", ".codex/config.toml", ".codex/rules", ".config/opencode"] {
+            assert!(at("--ro-bind", p).is_some(), "{p} read-only");
+        }
+        for p in [".claude/projects", ".claude/todos", ".codex"] {
+            assert!(at("--bind", p).is_some(), "{p} writable");
+        }
+        assert!(at("--bind", ".claude/projects") > at("--ro-bind", ".claude"), "history over the read-only config folder");
+        assert!(at("--ro-bind", ".codex/config.toml") > at("--bind", ".codex"), "config over the writable state folder");
+        assert_eq!(std::fs::read_to_string(h.join(".codex/config.toml")).unwrap(), "", "a missing config.toml exists, empty");
     }
 }

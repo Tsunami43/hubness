@@ -1,5 +1,5 @@
 import { shq } from '../../terminal.ts';
-import { action, cachedLatest, notFound, parseVersion, runCli, versionInfo } from '../kit.ts';
+import { action, cachedLatest, configIn, notFound, parseVersion, runCli, versionInfo } from '../kit.ts';
 import type { AgentModule } from '../types.ts';
 import { grokExtensions, grokMcp } from './extensions.ts';
 import { GROK_BIN, grokAdapter, grokDir, grokLoggedIn, grokModels, grokVersion } from './adapter.ts';
@@ -55,6 +55,8 @@ export const grokModule: AgentModule = {
     };
   },
   statePaths: () => [grokDir],
+  // MCP servers, instructions, skills, subagents, commands
+  configPaths: () => configIn(grokDir, ['config.toml', 'AGENTS.md'], ['skills', 'agents', 'commands']),
   mcp: grokMcp,
   extensions: grokExtensions,
 };
