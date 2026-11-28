@@ -115,6 +115,7 @@ All settings are environment variables (see [`.env.example`](../.env.example)):
 | --- | --- | --- |
 | `HUBNESS_PORT` | `8787` | Server port |
 | `HUBNESS_HOST` | `127.0.0.1` | Bind address |
+| `HUBNESS_ALLOWED_HOSTS` | none | Comma-separated host names the hub is opened by besides `localhost`, IP addresses and `HUBNESS_HOST` (a reverse proxy's domain); requests addressed to any other name are refused (DNS rebinding). A Tailscale Serve name is found by itself |
 | `HUBNESS_DATA_DIR` | `./.data` | SQLite database, logs, keys |
 | `HUBNESS_HOME` | `~/hub` | Hub working folder: `inbox`, `projects`, `home` |
 | `HUBNESS_SECRET_KEY` | generated | Key for project secrets (comma-separated for rotation) |

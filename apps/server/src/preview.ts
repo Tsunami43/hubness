@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { PreviewLog } from '@hubness/shared';
 import { config } from './config.ts';
+import { knownHost } from './host.ts';
 import { exposePreview, unexposePreview } from './tailscale.ts';
 
 /**
@@ -189,6 +190,12 @@ function relayHtml(ur: IncomingMessage, res: ServerResponse) {
 function proxyServer(key: string, target: Target, touch: () => void): Server {
   const server = createServer(async (req, res) => {
     touch();
+    // a preview port is as open as the hub: the same DNS rebinding protection
+    if (!(await knownHost(req.headers.host))) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('This host name is not allowed: add it to HUBNESS_ALLOWED_HOSTS');
+      return;
+    }
     if (ownRoute(key, req, res)) return;
     const t = await target();
     if (!t) {
@@ -229,6 +236,7 @@ function proxyServer(key: string, target: Target, touch: () => void): Server {
     // the client may drop while the target is looked up
     let up: ReturnType<typeof connect> | null = null;
     socket.on('error', () => up?.destroy());
+    if (!(await knownHost(req.headers.host))) return socket.destroy();
     const t = await target();
     if (!t || socket.destroyed) return socket.destroy();
     const conn = connect(t.port, t.host, () => {

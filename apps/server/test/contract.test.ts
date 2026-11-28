@@ -69,12 +69,14 @@ async function makeClient(): Promise<{ call: Call; raw: Fetcher }> {
   const { Hono } = await import('hono');
   const { api } = await import('../src/routes/api.ts');
   const { csrfGuard } = await import('../src/csrf.ts');
+  const { hostGuard } = await import('../src/host.ts');
   const { HttpError } = await import('../src/errors.ts');
   const { ensureHomeProject } = await import('../src/system/ask.ts');
   const { harness, jobs } = await import('../src/routes/harness.ts');
   ensureHomeProject();
   const app = new Hono();
   app.onError((err, c) => c.json({ error: err.message }, err instanceof HttpError ? (err.status as 400) : 500));
+  app.use('/api/*', hostGuard);
   app.use('/api/*', csrfGuard);
   app.route('/api/harness', harness);
   app.route('/api/jobs', jobs);
@@ -190,8 +192,24 @@ mkdirSync(join(releases, 'latest/download'), { recursive: true });
 writeFileSync(join(releases, 'latest/download/VERSION'), 'v99.0.0\n');
 process.env.HUBNESS_RELEASE_URL = `file://${releases}/`;
 delete process.env.HUBNESS_NO_UPDATE_CHECK;
+// a name the hub is reached by besides loopback (a reverse proxy's domain)
+process.env.HUBNESS_ALLOWED_HOSTS = 'hub.example';
 
 const { call, raw } = await makeClient();
+
+/** GET an API path addressed to `host` (fetch can't set Host: the Rust server gets a raw request). */
+async function statusWithHost(host: string, url: string): Promise<number> {
+  if (target !== 'rust') return (await raw(`/api${url}`, { headers: { Host: host } })).status;
+  const { request } = await import('node:http');
+  return new Promise((ok, fail) => {
+    request(`${rustBase}/api${url}`, { headers: { host } }, (res) => {
+      res.resume();
+      ok(res.statusCode ?? 0);
+    })
+      .on('error', fail)
+      .end();
+  });
+}
 
 /** Open an SSE stream; next() resolves with the next `data:` message parsed as JSON. */
 async function openStream(path: string) {
@@ -244,6 +262,13 @@ test('health, unknown routes and CSRF', async () => {
   assert.equal(plain.status, 403, 'a non-JSON mutation without the header is refused');
   const broken = await call('PUT', '/settings', '{oops');
   assert.equal(broken.status, 400);
+});
+
+test('a request addressed to a foreign host name is refused (DNS rebinding)', async () => {
+  for (const host of ['evil.example', 'evil.example:8787', 'localhost.evil.example', '127.0.0.1.evil.example'])
+    assert.equal(await statusWithHost(host, '/projects'), 403, host);
+  for (const host of ['localhost', 'localhost:8787', '127.0.0.1:8787', '[::1]:8787', '192.168.1.5:8787', 'hub.example', 'HUB.example:443'])
+    assert.equal(await statusWithHost(host, '/projects'), 200, host);
 });
 
 test('the home system project exists', async () => {
@@ -2949,7 +2974,7 @@ test('preview of a port: the app from the root with Host rewritten', async () =>
       got += d.toString();
       if (got.includes('\r\n\r\n') && !got.includes('ping')) ws.write('ping');
     });
-    ws.write('GET /hmr HTTP/1.1\r\nHost: example\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n');
+    ws.write(`GET /hmr HTTP/1.1\r\nHost: 127.0.0.1:${pp}\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n`);
     await waitUntil(async () => got, (g) => g.includes('ping'), 'the upgraded connection to echo');
     ws.destroy();
     assert.match(got, /^HTTP\/1\.1 101/);

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { exposePreview, initTailscale, serveFront, unexposeAllPreviews, unexposePreview } from '../src/tailscale.ts';
+import { exposePreview, initTailscale, serveFront, serveHosts, tailscaleHosts, unexposeAllPreviews, unexposePreview } from '../src/tailscale.ts';
 
 const status = (proxy: string, https: boolean) => ({
   TCP: { '443': https ? { HTTPS: true } : { HTTP: true } },
@@ -22,6 +22,12 @@ test('the hub is behind Serve only when a route proxies to its port', () => {
   assert.equal(serveFront(status('/srv/files', true), 8787), null);
   assert.equal(serveFront({}, 8787), null);
   assert.equal(serveFront(null, 8787), null);
+});
+
+test('the names Serve reaches the hub by are the sites that proxy to its port', () => {
+  assert.deepEqual(serveHosts(status('http://127.0.0.1:8787', true), 8787), ['box.tail1234.ts.net']);
+  assert.deepEqual(serveHosts(status('http://127.0.0.1:3000', true), 8787), [], 'another app');
+  assert.deepEqual(serveHosts(null, 8787), []);
 });
 
 test('preview ports get a Serve route and lose it', async () => {
@@ -44,10 +50,12 @@ test('preview ports get a Serve route and lose it', async () => {
   // not started by a server: nothing runs
   await exposePreview(61001);
   assert.deepEqual(calls('61001'), []);
+  assert.deepEqual(await tailscaleHosts(), []);
 
   process.env.HUBNESS_TAILSCALE = tool;
   initTailscale(61000, '127.0.0.1');
   try {
+    assert.deepEqual(await tailscaleHosts(), ['box.tail1234.ts.net'], 'the Host guard lets the Serve name through');
     void exposePreview(61001);
     await exposePreview(61001);
     assert.deepEqual(calls('61001'), ['serve --bg --https=61001 http://127.0.0.1:61001'], 'once');

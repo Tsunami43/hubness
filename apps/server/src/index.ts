@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { config } from './config.ts';
 import { HttpError } from './errors.ts';
 import { csrfGuard } from './csrf.ts';
+import { hostGuard } from './host.ts';
 import { api } from './routes/api.ts';
 import { harness, jobs } from './routes/harness.ts';
 import { handleAsk, system } from './routes/system.ts';
@@ -24,6 +25,7 @@ app.onError((err, c) => {
   return c.json({ error: err.message || 'Internal error' }, 500);
 });
 
+app.use('/api/*', hostGuard);
 app.use('/api/*', csrfGuard);
 
 app.route('/api/system', system);
