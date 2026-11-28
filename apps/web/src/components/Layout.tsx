@@ -9,7 +9,7 @@ import { useArchivedSessions, useLocalStorage, useRecentSessions, useSessionSync
 import { useAgents } from '../lib/agents';
 import { t } from '../i18n';
 import { Button, ErrorLine, Layer, PageSpinner, StatusDot } from './ui';
-import { confirmDialog } from './Confirm';
+import { askDeleteSession, askEmptyArchive } from './deleteSession';
 import { matchesQuery, SessionSearch } from './SessionSearch';
 import { AgentIcon } from './AgentIcon';
 import { JumpLabel, LeaderOverlay } from './LeaderOverlay';
@@ -232,14 +232,16 @@ function ArchiveList({ onPick, query = '' }: { onPick?: () => void; query?: stri
     p.catch((e: Error) => setError(e.message));
   };
   const remove = async (s: Session) => {
-    if (await confirmDialog({ message: t('archive.deleteOne', { title: s.title }), confirmLabel: t('common.delete'), danger: true })) act(api.deleteSession(s.id));
+    const ok = await askDeleteSession(s, t('archive.deleteOne', { title: s.title }));
+    if (ok) act(api.deleteSession(s.id, ok.folder));
   };
   // "Delete all" always means the whole archive, not just what the search shows
   const emptyAll = async () => {
     if (!all?.length) return;
-    if (!(await confirmDialog({ title: t('archive.emptyTitle'), message: t('archive.emptyConfirm', { n: all.length }), confirmLabel: t('archive.empty'), danger: true }))) return;
+    const ok = await askEmptyArchive(all);
+    if (!ok) return;
     setBusy(true);
-    act(api.emptyArchive().finally(() => setBusy(false)));
+    act(api.emptyArchive(ok.folders).finally(() => setBusy(false)));
   };
 
   if (loading && !all) return null;

@@ -19,6 +19,8 @@ export const de: Record<MessageKey, string> = {
   'archive.emptyTitle': 'Archiv leeren',
   'archive.emptyConfirm': 'Alle {n} archivierten Sitzungen endgültig löschen? Ihre Unterhaltungen lassen sich nicht wiederherstellen.',
   'archive.deleteOne': '„{title}“ endgültig löschen? Die Unterhaltung lässt sich nicht wiederherstellen.',
+  'archive.emptyWithFolders': 'Mit Chat-Ordnern löschen',
+  'archive.emptyFoldersHint': 'Angehängte Dateien werden ebenfalls gelöscht. Die Ordner normaler Chats mit dem, was ihre Agenten erstellt haben, bleiben, sofern du sie nicht mitlöschst.',
   'archive.emptyList': 'Das Archiv ist leer. Archiviere eine Sitzung im Tab „Aktiv“, um sie aus der Liste auszublenden.',
   'archive.banner': 'Diese Sitzung ist im Archiv. Wenn du eine Nachricht sendest, kehrt sie zurück.',
   'attach.add': 'Dateien anhängen (oder hier einfügen / ablegen)',
@@ -221,6 +223,8 @@ export const de: Record<MessageKey, string> = {
   'session.agentLocked':
     'Agent der Sitzung: {agent}. Der Agent lässt sich nicht wechseln — der Kontext der Unterhaltung liegt bei ihm. Starte eine neue Sitzung für einen anderen Agenten.',
   'session.deleteConfirm': 'Diese Sitzung samt Verlauf löschen?',
+  'session.deleteWithFolder': 'Mit Ordner löschen',
+  'session.deleteFolderHint': 'Angehängte Dateien werden ebenfalls gelöscht. Der Chat-Ordner mit dem, was der Agent dort erstellt hat, bleibt, sofern du ihn nicht mitlöschst.',
 
   // events
   'ev.thinking': 'Denkt nach',

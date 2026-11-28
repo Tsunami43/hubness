@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-11-28
+
+### Changed
+
+- Files attached in chats are kept per session (`.hub/attachments/<session id>/`); a session
+  can no longer open another session's attachment. Files attached before this release stay
+  where they are and still open.
+
+### Fixed
+
+- Deleting a session, or emptying the archive, now removes its attached files, including ones
+  uploaded but never sent. Archiving still keeps them.
+- Deleting a regular chat can also remove its folder (what the agent made there): the delete
+  dialog offers "Delete with folder"; a plain delete keeps the folder.
+
 ## [0.4.4] - 2026-11-28
 
 ### Added

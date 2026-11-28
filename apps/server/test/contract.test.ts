@@ -986,7 +986,7 @@ test('attachments: upload, serve, attach to a message', async () => {
   assert.equal(a.name, 'скрин _1_.png');
   assert.equal(a.mime, 'image/png');
   assert.equal(a.size, png.length);
-  assert.equal(a.path, join(repo, '.hub', 'attachments', a.id));
+  assert.equal(a.path, join(repo, '.hub', 'attachments', inProject.id, a.id), "the session's own folder");
   const { readFileSync } = await import('node:fs');
   assert.match(readFileSync(join(repo, '.git', 'info', 'exclude'), 'utf8'), /^\/\.hub\/attachments\/$/m, 'kept out of git locally');
   assert.equal((await upload(inProject.id, 'empty.txt', 'text/plain', new Uint8Array())).status, 400);
@@ -1015,6 +1015,63 @@ test('attachments: upload, serve, attach to a message', async () => {
   await waitFor(chat.id, (x) => x.status === 'idle' && x.agentSessionId, 'the turn with an attachment');
   const user = (await feed(chat.id))[0];
   assert.deepEqual(user.attachments, [{ id: shot.id, name: 'shot.png', mime: 'image/png', size: png.length, path: shot.path }]);
+});
+
+test('attachments: archiving keeps them, deleting a session removes them (and a chat folder on request)', async () => {
+  const png = Buffer.from('89504e470d0a1a0a', 'hex');
+  const upload = async (id: string, name: string) =>
+    (await (
+      await raw(`/api/sessions/${id}/attachments`, { method: 'POST', headers: { 'X-Hubness-Request': '1', 'Content-Type': 'image/png', 'X-Filename': name }, body: new Blob([png]) })
+    ).json()) as any;
+  const repo = makeRepo(join(tmp, 'elsewhere', 'attach-cleanup'));
+  const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;
+  const session = async (body: object) => (await call('POST', '/sessions', { agent: { kind: 'claude-code' }, ...body })).json;
+  const root = join(repo, '.hub', 'attachments');
+
+  // a project session: one file sent (a flat one from before the per-session folders), one only uploaded
+  const one = await session({ projectId: p.id });
+  const other = await session({ projectId: p.id });
+  const kept = await upload(other.id, 'kept.png');
+  const unsent = await upload(one.id, 'unsent.png');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'aaaa0000-old.png'), png);
+  writeFileSync(join(root, 'bbbb0000-stranger.png'), png);
+  useFixture('claude-tool-turn.jsonl');
+  assert.equal((await call('POST', `/sessions/${one.id}/messages`, { text: 'see', attachments: [{ id: 'aaaa0000-old.png' }] })).status, 200, 'a flat file is still found');
+  // only the message matters here: the turn may end either way
+  await waitFor(one.id, (x) => x.status === 'idle' || x.status === 'error', 'the turn with an old attachment');
+  assert.equal((await raw(`/api/sessions/${other.id}/attachments/${encodeURIComponent(unsent.id)}`)).status, 404, "another session's file");
+
+  assert.equal((await call('POST', `/sessions/${one.id}/archive`)).status, 200);
+  assert.ok(existsSync(unsent.path) && existsSync(join(root, 'aaaa0000-old.png')), 'archiving keeps the files');
+  assert.equal((await call('DELETE', `/sessions/${one.id}?folder=1`)).status, 200);
+  assert.ok(!existsSync(join(root, one.id)), "the session's folder is gone, unsent files too");
+  assert.ok(!existsSync(join(root, 'aaaa0000-old.png')), 'the flat file its message used is gone');
+  assert.ok(existsSync(kept.path), "another session's files stay");
+  assert.ok(existsSync(join(root, 'bbbb0000-stranger.png')), 'flat files it never used stay');
+  assert.ok(existsSync(join(repo, '.git')), 'folder=1 never touches a project folder');
+
+  // regular chats: the folder stays unless asked for
+  const keep = await session({});
+  const file = await upload(keep.id, 'a.png');
+  writeFileSync(join(keep.cwd, 'work.txt'), 'made by the agent');
+  assert.equal((await call('DELETE', `/sessions/${keep.id}`)).status, 200);
+  assert.ok(!existsSync(file.path), 'its attachments are gone');
+  assert.ok(existsSync(join(keep.cwd, 'work.txt')), 'the chat folder stays');
+  const drop = await session({});
+  await upload(drop.id, 'b.png');
+  assert.equal((await call('DELETE', `/sessions/${drop.id}?folder=1`)).status, 200);
+  assert.ok(!existsSync(drop.cwd), 'the chat folder is gone on request');
+
+  // emptying the archive: the same, for every archived session
+  const a1 = await session({});
+  const a2 = await session({ projectId: p.id });
+  const f2 = await upload(a2.id, 'c.png');
+  await call('POST', `/sessions/${a1.id}/archive`);
+  await call('POST', `/sessions/${a2.id}/archive`);
+  assert.equal((await call('DELETE', '/sessions/archive?folders=1')).json.deleted, 2);
+  assert.ok(!existsSync(a1.cwd), "an archived chat's folder");
+  assert.ok(!existsSync(f2.path) && existsSync(kept.path), "an archived project session's files only");
 });
 
 test('inbox chat → project: suggestion and conversion', async () => {

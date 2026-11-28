@@ -28,7 +28,7 @@ export interface Session {
 
 /**
  * A file attached to a message (pasted, dropped or picked). Stored next to the session's
- * working folder (`.hub/attachments/`), so the agent can open it with its own tools; images
+ * working folder (`.hub/attachments/<session id>/`), so the agent can open it with its own tools; images
  * also go to the model directly when the agent supports them.
  */
 export interface Attachment {

@@ -19,6 +19,8 @@ export const ja: Record<MessageKey, string> = {
   'archive.emptyTitle': 'アーカイブを空にする',
   'archive.emptyConfirm': 'アーカイブされた {n} 件のセッションを完全に削除しますか？会話は復元できません。',
   'archive.deleteOne': '「{title}」を完全に削除しますか？会話は復元できません。',
+  'archive.emptyWithFolders': 'チャットのフォルダーごと削除',
+  'archive.emptyFoldersHint': '添付ファイルも削除されます。通常のチャットのフォルダー（エージェントが作成したファイルを含む）は、一緒に削除しない限り残ります。',
   'archive.emptyList': 'アーカイブは空です。「アクティブ」タブでセッションをアーカイブすると、一覧から非表示になります。',
   'archive.banner': 'このセッションはアーカイブされています。メッセージを送信すると元に戻ります。',
   'attach.add': 'ファイルを添付（ここに貼り付け / ドロップも可）',
@@ -221,6 +223,8 @@ export const ja: Record<MessageKey, string> = {
   'session.agentLocked':
     'セッションのエージェント: {agent}。会話のコンテキストはエージェントに紐付いているため、変更できません。別のエージェントを使うには新しいセッションを開始してください。',
   'session.deleteConfirm': 'このセッションと履歴を削除しますか？',
+  'session.deleteWithFolder': 'フォルダーごと削除',
+  'session.deleteFolderHint': '添付ファイルも削除されます。チャットのフォルダー（エージェントが作成したファイルを含む）は、一緒に削除しない限り残ります。',
 
   // events
   'ev.thinking': '思考中',

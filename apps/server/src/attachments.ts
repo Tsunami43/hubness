@@ -1,16 +1,20 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import type { Attachment } from '@hubness/shared';
 import { HttpError } from './errors.ts';
 
 /**
- * Files attached to messages. They live in the session's working folder
- * (`.hub/attachments/`), not in the hub data: the sandbox hides the hub data from agents,
- * and an agent opens a video, a PDF or an archive with its own tools by path. Inside a
- * repository the folder is excluded locally (`.git/info/exclude`): nothing to commit by
- * accident, .gitignore stays untouched.
+ * Files attached to messages. They live in the session's working folder, one folder per
+ * session (`.hub/attachments/<session id>/`), not in the hub data: the sandbox hides the hub
+ * data from agents, and an agent opens a video, a PDF or an archive with its own tools by
+ * path. Inside a repository the folder is excluded locally (`.git/info/exclude`): nothing to
+ * commit by accident, .gitignore stays untouched.
+ *
+ * Archiving a session keeps its files (it can come back); deleting it removes its folder.
+ * Files from before the per-session folders lie flat in `.hub/attachments/`: they are still
+ * served, and deleting a session removes the ones its messages refer to.
  */
 
 export const MAX_ATTACHMENT = 20 * 1024 * 1024;
@@ -39,7 +43,11 @@ const MIME_BY_EXT: Record<string, string> = {
   '.zip': 'application/zip',
 };
 
-const dirOf = (cwd: string) => join(cwd, DIR);
+const rootOf = (cwd: string) => join(cwd, DIR);
+/** The session's own folder (session ids are UUIDs; anything else is made path-safe). */
+const dirOf = (cwd: string, sessionId: string) => join(rootOf(cwd), sessionId.replace(/[^\w-]/g, '_') || '_');
+const validId = (id: string) => Boolean(id) && !id.includes('/') && !id.includes('\\') && !id.startsWith('.');
+const isFile = (path: string) => existsSync(path) && lstatSync(path).isFile();
 
 /** Keep the attachments folder out of git, locally (works for worktrees too). */
 function excludeFromGit(cwd: string) {
@@ -63,10 +71,10 @@ function safeName(name: string): string {
   return base && !/^\.+$/.test(base) ? base : 'file';
 }
 
-export function saveAttachment(cwd: string, name: string, mime: string, bytes: Uint8Array): Attachment {
+export function saveAttachment(cwd: string, sessionId: string, name: string, mime: string, bytes: Uint8Array): Attachment {
   if (!bytes.length) throw new HttpError(400, 'Empty file');
   if (bytes.length > MAX_ATTACHMENT) throw new HttpError(413, `The file is larger than ${MAX_ATTACHMENT / 1024 / 1024} MB`);
-  const dir = dirOf(cwd);
+  const dir = dirOf(cwd, sessionId);
   mkdirSync(dir, { recursive: true });
   excludeFromGit(cwd);
   const clean = safeName(name);
@@ -78,12 +86,12 @@ export function saveAttachment(cwd: string, name: string, mime: string, bytes: U
 }
 
 /** Attachments of a message by id: only files really present in this session's folder. */
-export function resolveAttachments(cwd: string, list: unknown): Attachment[] {
+export function resolveAttachments(cwd: string, sessionId: string, list: unknown): Attachment[] {
   if (list === undefined || list === null) return [];
   if (!Array.isArray(list) || list.length > 20) throw new HttpError(400, 'attachments must be a list of up to 20 items');
   return list.map((a) => {
     const id = typeof a === 'object' && a && typeof (a as Attachment).id === 'string' ? (a as Attachment).id : '';
-    const path = attachmentPath(cwd, id);
+    const path = attachmentPath(cwd, sessionId, id);
     const st = statSync(path);
     const name = typeof (a as Attachment).name === 'string' ? safeName((a as Attachment).name) : id;
     const mime = typeof (a as Attachment).mime === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test((a as Attachment).mime) ? (a as Attachment).mime : 'application/octet-stream';
@@ -91,12 +99,32 @@ export function resolveAttachments(cwd: string, list: unknown): Attachment[] {
   });
 }
 
-/** Absolute path of an attachment; 404 for anything outside the folder or missing. */
-export function attachmentPath(cwd: string, id: string): string {
-  if (!id || id.includes('/') || id.includes('\\') || id.startsWith('.')) throw new HttpError(404, 'Attachment not found');
-  const path = join(dirOf(cwd), id);
-  if (!existsSync(path) || !statSync(path).isFile()) throw new HttpError(404, 'Attachment not found');
-  return path;
+/**
+ * Absolute path of an attachment: the session's folder, else a file from before the
+ * per-session folders. 404 for anything outside the folder or missing.
+ */
+export function attachmentPath(cwd: string, sessionId: string, id: string): string {
+  if (!validId(id)) throw new HttpError(404, 'Attachment not found');
+  for (const path of [join(dirOf(cwd, sessionId), id), join(rootOf(cwd), id)]) if (existsSync(path) && statSync(path).isFile()) return path;
+  throw new HttpError(404, 'Attachment not found');
+}
+
+/**
+ * The files of a deleted session: its folder, plus the flat files from before the
+ * per-session folders that its messages refer to (`legacyIds`). Best effort — a file that
+ * can't be removed stays.
+ */
+export function removeSessionAttachments(cwd: string, sessionId: string, legacyIds: string[] = []) {
+  try {
+    rmSync(dirOf(cwd, sessionId), { recursive: true, force: true });
+  } catch {}
+  for (const id of legacyIds) {
+    if (!validId(id)) continue;
+    const path = join(rootOf(cwd), id);
+    try {
+      if (isFile(path)) rmSync(path, { force: true });
+    } catch {}
+  }
 }
 
 /** The line the agent reads: where the files are (it opens them by path). */

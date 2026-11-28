@@ -23,6 +23,26 @@ pub fn inbox_dir_for(config: &Config, id: &str) -> ApiResult<String> {
     Ok(paths::to_string(&dir))
 }
 
+/// The folder of a regular chat that deleting the chat may take along (the user asks for it):
+/// its own Inbox folder, or the hub's folder of a chat from before Inbox. None for a project
+/// or group session, for anything that is not directly inside those folders, and for a folder
+/// another session works in too.
+pub fn chat_folder_of(db: &rusqlite::Connection, config: &Config, s: &hubness_core::Session) -> ApiResult<Option<std::path::PathBuf>> {
+    use crate::db::sessions::{self as repo, Archived, Filter};
+    if s.project_id.is_some() || s.group_id.is_some() {
+        return Ok(None);
+    }
+    let abs = |p: &std::path::Path| paths::normalize(&std::env::current_dir().unwrap_or_default().join(p));
+    let dir = abs(&s.cwd.as_ref().map(std::path::PathBuf::from).unwrap_or_else(|| config.chats_dir.join(&s.id)));
+    let parent = dir.parent().map(std::path::Path::to_path_buf);
+    if parent != Some(abs(&config.inbox_dir)) && parent != Some(abs(&config.chats_dir)) {
+        return Ok(None);
+    }
+    let all = repo::list(db, Filter { chats: true, archived: Archived::All, ..Default::default() })?;
+    let shared = all.iter().any(|o| o.id != s.id && o.cwd.as_ref().is_some_and(|c| abs(std::path::Path::new(c)) == dir));
+    Ok(if shared { None } else { Some(dir) })
+}
+
 /// Like JavaScript's `n.toString(36)`.
 fn radix36(mut n: u64) -> String {
     const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";

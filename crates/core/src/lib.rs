@@ -911,7 +911,7 @@ pub struct Session {
     pub updated_at: String,
 }
 
-/// A file attached to a message, stored in the session folder (`.hub/attachments/`).
+/// A file attached to a message, stored in the session folder (`.hub/attachments/<session id>/`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Attachment {
     /// File name in the attachments folder (unique).
