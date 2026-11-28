@@ -75,6 +75,8 @@ export function addPreviewLog(key: string, raw: Partial<PreviewLog>, source: Pre
 /** Log entries of a preview after `since` (a seq). */
 export const previewLogs = (key: string, since = 0): PreviewLog[] => (logs.get(key) ?? []).filter((l) => l.seq > since);
 export const clearPreviewLogs = (key: string) => logs.delete(key);
+/** Is the port one of HUBNESS_PREVIEW_PORTS (a proxy, never an app)? */
+export const inPreviewRange = (port: number) => port >= FROM && port <= TO;
 export const previewKeyByPort = (port: number) => [...previews.values()].find((p) => p.port === port)?.key ?? null;
 
 /**
