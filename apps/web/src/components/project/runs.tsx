@@ -219,7 +219,7 @@ export function RunPanel({
         <ErrorLine error={error} />
       </div>
       {focused?.job ? (
-        <RunLogs key={focused.job.id} job={focused.job} title={focused.name} />
+        <RunLogs key={focused.job.id} job={focused.job} title={focused.name} onPreview={isRunning(focused) && focused.previewPort ? () => onPreview(focused) : undefined} />
       ) : (
         <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted">{t('run.logsHint')}</div>
       )}
@@ -227,7 +227,7 @@ export function RunPanel({
   );
 }
 
-function RunLogs({ job, title }: { job: JobInfo; title: string }) {
+function RunLogs({ job, title, onPreview }: { job: JobInfo; title: string; onPreview?: () => void }) {
   const [status, setStatus] = useState({ running: job.status === 'running', code: job.exitCode });
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
@@ -237,6 +237,12 @@ function RunLogs({ job, title }: { job: JobInfo; title: string }) {
         <span className="ml-auto">
           <JobStatusLine status={status} />
         </span>
+        {/* the app answers on a port: say where to look at it */}
+        {onPreview && status.running ? (
+          <Button size="sm" onClick={onPreview}>
+            <AppWindow className="size-3.5" /> {t('preview.open')}
+          </Button>
+        ) : null}
       </div>
       <JobTerminal job={job} fill onStatus={setStatus} />
     </div>

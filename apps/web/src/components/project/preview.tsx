@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Play, RotateCw, Trash2 } from 'lucide-react';
+import { Play, Plus, RotateCw, SquareTerminal, Trash2 } from 'lucide-react';
 import { BrowserFrame } from './BrowserFrame';
 import type { RunState } from '@hubness/shared';
 import { api } from '../../lib/api';
@@ -8,6 +8,7 @@ import { Button, ErrorLine, IconButton, Spinner } from '../ui';
 import { Select } from '../Select';
 import { useLocalStorage } from '../../lib/hooks';
 import { isRunning } from './runs';
+import { previewIdle, startable } from '../../lib/previewState';
 
 export const previewUrl = (port: number, path = '/') => `${window.location.protocol}//${window.location.hostname}:${port}${path}`;
 
@@ -16,7 +17,19 @@ export const previewUrl = (port: number, path = '/') => `${window.location.proto
  * commands with a port and any ports entered manually (the app is running in
  * Shell, docker compose…); the page itself is in a BrowserFrame.
  */
-export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: string; runs: RunState[] | null; onStartRun: (r: RunState) => void }) {
+export function PreviewPanel({
+  projectId,
+  runs,
+  onStartRun,
+  onShowRun,
+}: {
+  projectId: string;
+  runs: RunState[] | null;
+  /** Start a command and stay here: the page shows up when its port is known. */
+  onStartRun: (r: RunState) => void;
+  /** Go to the Run tab: the output of a command, or (null) the list to add one. */
+  onShowRun: (r: RunState | null) => void;
+}) {
   const live = (runs ?? []).filter((r) => isRunning(r) && r.previewPort);
   const [manual, setManual] = useLocalStorage<number[]>(`hub.preview.ports.${projectId}`, []);
   // proxies of the manual ports, per project: a port of another project is another app
@@ -80,22 +93,51 @@ export function PreviewPanel({ projectId, runs, onStartRun }: { projectId: strin
   );
 
   if (!current) {
-    const withPort = (runs ?? []).filter((r) => r.port || r.activePort);
+    const all = runs ?? [];
+    const idle = previewIdle(all);
+    const offer = startable(all);
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
-        <p className="text-sm text-muted">{t('preview.notRunning')}</p>
-        {withPort.length ? (
-          <div className="flex flex-wrap justify-center gap-1.5">
-            {withPort.map((r) => (
-              <Button key={r.id} size="sm" onClick={() => onStartRun(r)}>
-                <Play className="size-3.5 text-ok" /> {r.name} <span className="text-muted">:{r.port ?? r.activePort}</span>
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-6 text-center">
+        {idle.kind === 'waiting' ? (
+          <>
+            <Spinner />
+            <p className="text-sm">{t('preview.waiting', { name: idle.run.name })}</p>
+            <p className="max-w-md text-xs text-muted">{t('preview.waitingHint')}</p>
+            <Button size="sm" onClick={() => onShowRun(idle.run)}>
+              <SquareTerminal className="size-3.5" /> {t('preview.showLogs')}
+            </Button>
+          </>
+        ) : (
+          <>
+            {idle.kind === 'failed' ? (
+              <div className="space-y-2">
+                <p className="text-sm text-danger">{t('preview.failed', { name: idle.run.name, code: idle.code })}</p>
+                <Button size="sm" onClick={() => onShowRun(idle.run)}>
+                  <SquareTerminal className="size-3.5" /> {t('preview.showLogs')}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">{t('preview.notRunning')}</p>
+            )}
+            <p className="max-w-md text-xs text-muted">{t('preview.how')}</p>
+            {offer.length ? (
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {offer.map((r) => (
+                  <Button key={r.id} size="sm" onClick={() => onStartRun(r)}>
+                    <Play className="size-3.5 text-ok" /> {r.name} {r.port || r.activePort ? <span className="text-muted">:{r.port ?? r.activePort}</span> : null}
+                  </Button>
+                ))}
+              </div>
+            ) : runs && !runs.length ? (
+              <Button size="sm" onClick={() => onShowRun(null)}>
+                <Plus className="size-3.5" /> {t('run.add')}
               </Button>
-            ))}
-          </div>
-        ) : null}
+            ) : null}
+          </>
+        )}
         <div className="space-y-1">
           <p className="text-xs text-muted">{t('preview.portHint')}</p>
-          {portForm}
+          <div className="flex justify-center">{portForm}</div>
         </div>
         <ErrorLine error={error} />
       </div>

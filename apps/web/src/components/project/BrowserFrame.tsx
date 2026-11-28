@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  Copy,
   ExternalLink,
   Fullscreen,
   Maximize2,
@@ -26,8 +27,10 @@ import { qrSvgPath } from '../../lib/qr';
 import { emptyLogs, isError, markSeen, mergeLogs, unseenErrors, type LogState } from '../../lib/previewLogs';
 import { logsDraft, pickDraft } from '../../lib/previewDrafts';
 import { parseFrameMessage, typedPath } from '../../lib/previewMessages';
+import { reachable, tailscaleOperatorCommand } from '../../lib/previewState';
+import { copyText } from '../../lib/clipboard';
 import { t } from '../../i18n';
-import { Button, ErrorLine, IconButton, Sheet } from '../ui';
+import { Button, ErrorLine, IconButton, Sheet, Spinner } from '../ui';
 import { Select } from '../Select';
 import { useLocalStorage } from '../../lib/hooks';
 
@@ -74,6 +77,23 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [qr, setQr] = useState(false);
   const [send, setSend] = useState<string | null>(null);
+  // can the browser open the preview port at all? (a proxy in front of the hub may not pass it)
+  const [reach, setReach] = useState<'checking' | 'ok' | 'no'>('checking');
+  const [probe, setProbe] = useState(0);
+  useEffect(() => {
+    let stale = false;
+    // "Try again" asks the hub for the preview once more first: behind Tailscale Serve that
+    // is when it tries to open the port again
+    void (probe ? api.previewPort(projectId, appPort).catch(() => {}) : Promise.resolve())
+      .then(() => reachable(origin))
+      .then((ok) => {
+        if (!stale) setReach(ok ? 'ok' : 'no');
+      });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [origin, probe]);
 
   // the page's messages: only from our frame and its origin, each checked (lib/previewMessages)
   const pickingRef = useRef(picking);
@@ -235,20 +255,37 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
       {picking ? <div className="shrink-0 bg-accent/15 px-3 py-1 text-xs text-accent">{t('preview.pickHint')}</div> : null}
 
       <div ref={area} className={`relative min-h-0 flex-1 overflow-hidden ${size ? 'flex items-start justify-center bg-sunken p-2' : ''}`}>
-        {/* one element in both modes: switching devices keeps the page where it is */}
-        <div style={size ? { width: size[0]! * scale, height: size[1]! * scale } : undefined} className={size ? 'shrink-0' : 'h-full w-full'}>
-          <iframe
-            ref={frame}
-            key={nonce}
-            src={origin + src}
-            title={t('preview.title')}
-            // the helper in the page talks only to a parent that greets it from the hub
-            onLoad={() => post('hello')}
-            style={size ? { width: size[0], height: size[1], transform: `scale(${scale})`, transformOrigin: '0 0' } : undefined}
-            className={size ? 'rounded-md border border-line bg-white shadow-lg' : 'h-full w-full bg-white'}
+        {reach === 'no' ? (
+          <Unreachable
+            previewPort={previewPort}
+            onRetry={() => {
+              setReach('checking');
+              setProbe((n) => n + 1);
+            }}
           />
-        </div>
-        {size ? <div className="absolute right-2 bottom-1 font-mono text-[10px] text-muted">{`${size[0]}×${size[1]}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}`}</div> : null}
+        ) : reach === 'checking' ? (
+          // the frame waits for the port: a page that failed to load would stay blank
+          <div className="flex h-full w-full items-center justify-center">
+            <Spinner />
+          </div>
+        ) : (
+          <>
+            {/* one element in both modes: switching devices keeps the page where it is */}
+            <div style={size ? { width: size[0]! * scale, height: size[1]! * scale } : undefined} className={size ? 'shrink-0' : 'h-full w-full'}>
+              <iframe
+                ref={frame}
+                key={nonce}
+                src={origin + src}
+                title={t('preview.title')}
+                // the helper in the page talks only to a parent that greets it from the hub
+                onLoad={() => post('hello')}
+                style={size ? { width: size[0], height: size[1], transform: `scale(${scale})`, transformOrigin: '0 0' } : undefined}
+                className={size ? 'rounded-md border border-line bg-white shadow-lg' : 'h-full w-full bg-white'}
+              />
+            </div>
+          </>
+        )}
+        {size && reach === 'ok' ? <div className="absolute right-2 bottom-1 font-mono text-[10px] text-muted">{`${size[0]}×${size[1]}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}`}</div> : null}
       </div>
 
       {consoleOpen ? (
@@ -276,6 +313,45 @@ export function BrowserFrame({ projectId, previewPort, appPort, toolbar }: { pro
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The browser can't open the preview port: said in words, with what to do (a blank frame
+ * explains nothing). Typical when the hub is opened through Tailscale Serve or a reverse
+ * proxy that passes only the hub's own port.
+ */
+export function Unreachable({ previewPort, onRetry }: { previewPort: number; onRetry: () => void }) {
+  const { hostname } = window.location;
+  const command = tailscaleOperatorCommand(hostname);
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-3 overflow-auto p-6 text-center">
+      <p className="text-sm font-medium">{t('preview.unreachable', { host: hostname, port: previewPort })}</p>
+      <p className="max-w-md text-xs text-muted">{t('preview.unreachableWhy', { port: previewPort })}</p>
+      {command ? (
+        <div className="flex max-w-full flex-col items-center gap-1.5">
+          <p className="text-xs text-muted">{t('preview.unreachableTailscale')}</p>
+          <code className="max-w-full border border-line bg-sunken px-2 py-1 font-mono text-[11.5px] break-all select-all">{command}</code>
+          <Button
+            size="sm"
+            onClick={() =>
+              void copyText(command).then((ok) => {
+                setCopied(ok);
+                setTimeout(() => setCopied(false), 2000);
+              })
+            }
+          >
+            <Copy className="size-3.5" />
+            {copied ? t('harness.copied') : t('harness.copy')}
+          </Button>
+        </div>
+      ) : null}
+      <Button size="sm" onClick={onRetry}>
+        <RotateCw className="size-3.5" />
+        {t('common.retry')}
+      </Button>
     </div>
   );
 }
