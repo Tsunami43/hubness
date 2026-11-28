@@ -695,10 +695,10 @@ pub fn start(plan: Plan) -> Result<SessionSsh, String> {
     let private = |p: &Path| std::fs::DirBuilder::new().mode(0o700).create(p);
 
     let short: String = plan.session_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect();
-    let dir = runtime_base(&plan.data_dir).map_err(io)?.join(if short.is_empty() { "session".into() } else { short });
-    // a previous turn of this session that never ended properly
-    stop_agent_of(&dir);
-    remove_dir(&dir);
+    // one folder per turn: a lingering previous turn of the session cleans up only its own;
+    // short, the agent socket path has a length limit
+    let turn = &uuid::Uuid::new_v4().simple().to_string()[..6];
+    let dir = runtime_base(&plan.data_dir).map_err(io)?.join(format!("{}-{turn}", if short.is_empty() { "session" } else { &short }));
     private(&dir).map_err(io)?;
     let sock = dir.join("agent.sock");
     // from here on a drop cleans up: the folder, and the agent once it runs
@@ -1157,7 +1157,8 @@ mod tests {
         assert!(s.sock.len() < 100, "a unix socket path must be short: {}", s.sock);
         assert!(!env.contains_key("SSH_AUTH_SOCK"), "the user's own agent is not hidden");
         assert!(s.failed.is_empty());
-        assert_eq!(s.mount, base.0.join("sess0001abcd").to_string_lossy());
+        let turn_dir = s.mount.strip_prefix(&format!("{}/sess0001abcd-", base.0.display())).expect("named after the session");
+        assert_eq!(turn_dir.len(), 6, "a short per-turn suffix: {}", s.mount);
         assert!(env["PATH"].starts_with(&format!("{}/bin:", s.mount)));
         assert_eq!(env["GIT_SSH_COMMAND"], format!("'{}/bin/ssh'", s.mount));
         assert!(s.context.contains("`turn-prod` — deploy@203.0.113.10:2222 In this project: read only"));
@@ -1301,20 +1302,16 @@ mod tests {
         assert!(!Path::new(&s.mount).exists());
         drop(s);
 
-        // a second turn of a session whose first never ended properly takes its place
+        // two overlapping turns of one session (the old process lingers after its answer):
+        // ending the first leaves the second's agent and wrappers, and hub exit still stops it
         let first = session_setup(&db, &cfg, &owner, "sess-twice").unwrap().unwrap();
-        let old_pid = agents(&base.0);
-        live().remove(Path::new(&first.mount));
-        std::mem::forget(first);
         let second = session_setup(&db, &cfg, &owner, "sess-twice").unwrap().unwrap();
-        for _ in 0..100 {
-            if agents(&base.0).len() == 1 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(agents(&base.0) != old_pid && agents(&base.0).len() == 1, "the leftover agent was replaced");
+        assert_ne!(first.mount, second.mount, "one folder per turn");
+        drop(first);
         assert!(ssh_add_l(&second.sock).0);
+        assert!(Path::new(&second.mount).join("bin/ssh").exists());
+        dispose_live(Some(&base.0));
+        assert!(no_agents(&base.0), "the second turn's agent is stopped on hub exit");
         drop(second);
 
         // a crash: the agent and its folder stay — the next start sweeps them, and the old scratch folders
@@ -1328,7 +1325,11 @@ mod tests {
         assert_eq!(agents(&base.0).len(), 2);
         sweep_runtime(&cfg.data_dir);
         assert!(!legacy.exists(), "a key file left in the data folder by an older version is removed");
-        assert_eq!(entries(&base.0), ["sessrunning"], "the leftover is gone, a turn of this process is not touched");
+        assert_eq!(
+            entries(&base.0),
+            [Path::new(&kept.mount).file_name().unwrap().to_string_lossy()],
+            "the leftover is gone, a turn of this process is not touched"
+        );
         assert!(ssh_add_l(&kept.sock).0);
         drop(kept);
         assert!(no_agents(&base.0), "the leftover agent is stopped");

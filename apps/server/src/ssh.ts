@@ -489,12 +489,9 @@ export function sessionSetup(owners: Owner[], sessionId: string): SessionSsh | n
   // decrypt first: a key that can't be read fails here, before anything is started
   const keys = bound.map((b) => privateKey(b.connection.id));
 
-  const dir = join(runtimeBase(), sessionId.replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'session');
-  // a previous turn of this session that never ended properly
-  try {
-    stopAgent(Number(readFileSync(join(dir, 'agent.pid'), 'utf8')));
-  } catch {}
-  removeDir(dir);
+  // one folder per turn: a lingering previous turn of the session cleans up only its own;
+  // short, the agent socket path has a length limit
+  const dir = join(runtimeBase(), `${sessionId.replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'session'}-${randomUUID().slice(0, 6)}`);
   mkdirSync(dir, { mode: 0o700 });
   const sock = join(dir, 'agent.sock');
   let agent: ChildProcess | null = null;
