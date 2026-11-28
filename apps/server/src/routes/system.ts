@@ -3,6 +3,7 @@ import { AgentConfigSchema, parseBody } from './http.ts';
 import { z } from 'zod';
 import { HttpError } from '../errors.ts';
 import { askAbout } from '../system/ask.ts';
+import { hubVersion } from '../version.ts';
 import { systemPlatform } from '../system/host.ts';
 import { managerPackages, packageManagers } from '../system/packages.ts';
 import {
@@ -50,6 +51,11 @@ const scope = (s: string): 'system' | 'user' => {
 };
 
 system.get('/platform', (c) => c.json(systemPlatform()));
+system.get('/version', async (c) => c.json(await hubVersion(c.req.query('check') === '1')));
+// a checkout is updated with git, not by the hub
+system.post('/update', () => {
+  throw new HttpError(400, 'This hub runs from a source checkout and can\'t update itself: pull and restart it');
+});
 system.get('/overview', async (c) => c.json(await overview()));
 
 system.get('/containers', async (c) => {

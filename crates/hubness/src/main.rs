@@ -150,7 +150,20 @@ fn client_only(args: &[String]) -> anyhow::Result<()> {
 #[cfg(feature = "server")]
 fn serve() -> anyhow::Result<()> {
     let config = hubness_server::Config::from_env()?;
+    // the web's "Update" button runs `hubness update` from this binary; a cargo build
+    // (target/debug, target/release) is a checkout and isn't replaced
+    if let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize())
+        && !is_cargo_build(&exe)
+    {
+        hubness_server::version::set_updater(exe);
+    }
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(hubness_server::serve(config))
+}
+
+/// `…/target/debug/hubness`, `…/target/release/hubness`, `…/target/<triple>/release/hubness`.
+#[cfg(feature = "server")]
+fn is_cargo_build(exe: &std::path::Path) -> bool {
+    exe.ancestors().skip(1).take(3).any(|d| d.file_name().is_some_and(|n| n == "target"))
 }
 
 #[cfg(feature = "server")]

@@ -42,6 +42,7 @@ pub mod system;
 pub mod tailscale;
 pub mod terminal;
 pub mod users;
+pub mod version;
 pub mod voice;
 pub mod watch;
 pub mod web;

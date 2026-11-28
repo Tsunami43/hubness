@@ -184,6 +184,13 @@ after(() => {
   gitApiServer.close();
 });
 
+// releases for /system/version: a file:// folder like the GitHub Releases layout (set before the Rust server starts)
+const releases = join(tmp, 'releases');
+mkdirSync(join(releases, 'latest/download'), { recursive: true });
+writeFileSync(join(releases, 'latest/download/VERSION'), 'v99.0.0\n');
+process.env.HUBNESS_RELEASE_URL = `file://${releases}/`;
+delete process.env.HUBNESS_NO_UPDATE_CHECK;
+
 const { call, raw } = await makeClient();
 
 /** Open an SSE stream; next() resolves with the next `data:` message parsed as JSON. */
@@ -2563,6 +2570,33 @@ test('system: input checks before anything runs on the host', async () => {
   assert.match(root.output, /root/);
   assert.deepEqual((await call('GET', `/system/units/user/${encodeURIComponent('a;b')}/logs`)).json, { logs: 'Invalid unit name' });
   assert.deepEqual((await call('GET', `/system/package-info/${encodeURIComponent('a b')}`)).json, { info: 'Invalid package name' });
+});
+
+test('system: the hub version, the latest release and the self-update guard', async () => {
+  const own = JSON.parse(readFileSync(join(repoRoot, 'apps/server/package.json'), 'utf8')).version;
+  const v = await call('GET', '/system/version');
+  assert.equal(v.status, 200);
+  assert.deepEqual(v.json, {
+    version: own,
+    latest: '99.0.0',
+    updateAvailable: true,
+    releaseUrl: null, // release notes only for web releases
+    canUpdate: false, // a checkout / cargo build doesn't replace itself
+    update: { state: 'idle', message: null },
+  });
+
+  const file = join(releases, 'latest/download/VERSION');
+  writeFileSync(file, '0.0.1');
+  assert.equal((await call('GET', '/system/version')).json.latest, '99.0.0', 'cached between checks');
+  const older = (await call('GET', '/system/version?check=1')).json;
+  assert.deepEqual([older.latest, older.updateAvailable], ['0.0.1', false]);
+
+  writeFileSync(file, 'not a version');
+  assert.equal((await call('GET', '/system/version?check=1')).json.latest, '0.0.1', 'a failed check keeps the last known release');
+
+  const up = await call('POST', '/system/update');
+  assert.equal(up.status, 400);
+  assert.equal(typeof up.json.error, 'string');
 });
 
 test('system: services and package managers', async () => {
