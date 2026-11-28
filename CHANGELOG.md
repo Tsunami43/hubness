@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-28
+
 ### Fixed
 
 - The mobile file list and list of changes show file-type icons, as on the desktop, instead
