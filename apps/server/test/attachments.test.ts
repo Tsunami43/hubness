@@ -2,7 +2,7 @@ import { makeRepo, tmp } from './setup.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Hono } from 'hono';
 import { api } from '../src/routes/api.ts';
@@ -38,6 +38,16 @@ test('attachments: stored in the repository, excluded from git locally, resolved
   assert.throws(() => resolveAttachments(repo, 's1', [{ id: 'missing.png' }]), /not found/);
   assert.match(attachmentsNote([a]), /Attached files[\s\S]*\.png \(image\/png, 1 KB\)/);
   assert.throws(() => saveAttachment(repo, 's1', 'empty', '', new Uint8Array()), /Empty/);
+});
+
+test('attachments: a project reached through a symlink is excluded from git too', () => {
+  const real = makeRepo(join(tmp, 'attach-real'));
+  const link = join(tmp, 'attach-link');
+  symlinkSync(real, link);
+  saveAttachment(link, 's1', 'shot.png', 'image/png', PNG);
+  const status = execFileSync('git', ['-C', link, 'status', '--porcelain', '--untracked-files=all'], { encoding: 'utf8' });
+  assert.ok(!status.includes('attachments'), status);
+  assert.match(readFileSync(join(real, '.git', 'info', 'exclude'), 'utf8'), /^\/\.hub\/attachments\/$/m);
 });
 
 test('attachments: removing a session takes its folder and its own flat files from before', () => {

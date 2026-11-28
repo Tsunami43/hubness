@@ -81,9 +81,11 @@ fn exclude_from_git(cwd: &Path) {
     let text = String::from_utf8_lossy(&out.stdout);
     let mut lines = text.trim().lines();
     let (Some(top), Some(rel)) = (lines.next(), lines.next()) else { return };
-    // only when the session folder is the repository root (a group workspace is not a repository)
-    if paths::normalize(Path::new(top)) != paths::normalize(cwd) {
-        return;
+    // only when the session folder is the repository root (a group workspace is not a repository);
+    // git reports the top with symlinks resolved, so compare real paths
+    match (fs::canonicalize(top), fs::canonicalize(cwd)) {
+        (Ok(a), Ok(b)) if a == b => {}
+        _ => return,
     }
     let file = paths::normalize(&cwd.join(rel));
     let cur = fs::read_to_string(&file).unwrap_or_default();
@@ -241,6 +243,20 @@ mod tests {
         assert!(!root_of(&dir).join("aaaa0000-old.png").exists());
         assert!(Path::new(&theirs.path).exists() && root_of(&dir).join("bbbb0000-other.png").exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn excluded_through_a_symlink() {
+        let base = std::env::temp_dir().join(format!("hubness-attach-{}", crate::db::new_id()));
+        let real = base.join("real");
+        fs::create_dir_all(&real).unwrap();
+        assert!(Command::new("git").args(["init", "-q"]).arg(&real).status().unwrap().success());
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        save(&link, "s1", "shot.png", "image/png", b"x").unwrap();
+        let exclude = fs::read_to_string(real.join(".git/info/exclude")).unwrap_or_default();
+        assert!(exclude.lines().any(|l| l == EXCLUDE_LINE), "{exclude}");
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

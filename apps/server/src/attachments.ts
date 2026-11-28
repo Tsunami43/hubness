@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import type { Attachment } from '@hubness/shared';
@@ -54,10 +54,12 @@ function excludeFromGit(cwd: string) {
   const r = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel', '--git-path', 'info/exclude'], { encoding: 'utf8', timeout: 5000 });
   if (r.status !== 0) return;
   const [top, rel] = r.stdout.trim().split('\n');
-  // only when the session folder is the repository root (a group workspace is not a repository)
-  if (!top || !rel || resolve(top) !== resolve(cwd)) return;
+  if (!top || !rel) return;
   const file = resolve(cwd, rel);
   try {
+    // only when the session folder is the repository root (a group workspace is not a repository);
+    // git reports the top with symlinks resolved, so compare real paths
+    if (realpathSync(top) !== realpathSync(cwd)) return;
     const cur = existsSync(file) ? readFileSync(file, 'utf8') : '';
     if (cur.split('\n').some((l) => l.trim() === EXCLUDE_LINE)) return;
     mkdirSync(join(file, '..'), { recursive: true });
