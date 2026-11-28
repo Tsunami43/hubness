@@ -196,6 +196,13 @@ install_source() {
 # ---------------------------------------------------------------- install / uninstall
 
 do_install() {
+  # the client build has no server: over a full build it would break a running hub service
+  if [ "$FLAVOR" = client ] && [ -x "$INSTALL_DIR/hubness" ] &&
+    "$INSTALL_DIR/hubness" --version 2>/dev/null | grep -q '(full)'; then
+    die "$INSTALL_DIR/hubness is the full build (it has the hub server, and the terminal UI too:
+  hubness tui). The client build would replace it; install it elsewhere with --dir DIR,
+  or remove the full build first with --uninstall"
+  fi
   upgraded=0
   if [ "$FLAVOR" = full ] && [ -x "$INSTALL_DIR/hubness" ]; then upgraded=1; fi
   check_old
