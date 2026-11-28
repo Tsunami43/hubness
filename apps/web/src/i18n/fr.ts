@@ -19,8 +19,7 @@ export const fr: Record<MessageKey, string> = {
   'archive.emptyTitle': 'Vider les archives',
   'archive.emptyConfirm': 'Supprimer définitivement les {n} sessions archivées ? Leurs conversations ne pourront pas être restaurées.',
   'archive.deleteOne': 'Supprimer définitivement « {title} » ? La conversation ne pourra pas être restaurée.',
-  'archive.emptyWithFolders': 'Supprimer avec les dossiers des chats',
-  'archive.emptyFoldersHint': 'Les fichiers joints sont supprimés aussi. Les dossiers des chats ordinaires, avec ce que leurs agents y ont créé, sont conservés sauf si vous les supprimez également.',
+  'archive.emptyFoldersHint': 'Les fichiers joints et les dossiers des chats ordinaires, avec tout ce que leurs agents y ont créé, sont supprimés aussi.',
   'archive.emptyList': 'Les archives sont vides. Archivez une session depuis l’onglet Actives pour la masquer de la liste.',
   'archive.banner': 'Cette session est archivée. Envoyer un message la restaure.',
   'attach.add': 'Joindre des fichiers (ou les coller / déposer ici)',
@@ -223,8 +222,7 @@ export const fr: Record<MessageKey, string> = {
   'session.agentLocked':
     'Agent de la session : {agent}. L’agent ne peut pas être changé — le contexte de la conversation lui appartient. Démarrez une nouvelle session pour un autre agent.',
   'session.deleteConfirm': 'Supprimer cette session et son historique ?',
-  'session.deleteWithFolder': 'Supprimer avec le dossier',
-  'session.deleteFolderHint': 'Les fichiers joints sont supprimés aussi. Le dossier du chat, avec ce que l’agent y a créé, est conservé sauf si vous le supprimez également.',
+  'session.deleteFolderHint': 'Les fichiers joints et le dossier du chat, avec tout ce que l’agent y a créé, sont supprimés aussi.',
 
   // events
   'ev.thinking': 'Réflexion',
