@@ -42,8 +42,9 @@ off per username and address. Settings → Account (web and TUI) changes the pas
 (`PUT /api/auth/password` with the current one) and signs out; `hubness user add|passwd|show`
 works on the data folder (`HUBNESS_DATA_DIR`, also while the hub runs) — `passwd` is the way
 back in after a forgotten password. A password change ends the account's other sessions.
-Migration v7 keeps only the first account of hubs that had several. The hub's own children (the MCP server)
-call it back with a random per-process service token from their environment.
+Migration v7 keeps only the first account of hubs that had several. The hub MCP server of an agent session
+calls it back with a random token of that session from its environment; the token opens only
+that session's `POST /api/sessions/<id>/{pane,browser}`, never the rest of the API.
 
 The hub speaks plain HTTP — across untrusted networks put it behind an HTTPS reverse proxy
 (Caddy, nginx) or a VPN (Tailscale, WireGuard). The TypeScript server has no sign-in and

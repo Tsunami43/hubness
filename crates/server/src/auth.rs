@@ -8,8 +8,10 @@
 //!   - API clients (the TUI, scripts) send `Authorization: Bearer <token>` from
 //!     `POST /api/auth/login`;
 //!   - browsers get the same session as an HttpOnly cookie (EventSource can't send headers).
-//! - The hub's own helper processes (the MCP server calls the hub back) use a random
-//!   per-process service token passed in their environment; it is never shown to anyone.
+//! - The hub's MCP server of an agent session calls the hub back with a random token of that
+//!   session, passed in its environment. The agent can read it (the MCP server is its child,
+//!   maybe in the same sandbox), so it opens only that session's MCP routes
+//!   (`POST /api/sessions/<id>/{pane,browser}`), never the rest of the API.
 //!
 //! The hub doesn't do TLS: across untrusted networks put it behind an HTTPS reverse proxy or
 //! a VPN.
@@ -41,20 +43,38 @@ pub const PREVIEW_COOKIE: &str = "hubness_preview";
 const COOKIE_MAX_AGE: u64 = 30 * 24 * 3600;
 
 static DB: OnceLock<Arc<Mutex<Connection>>> = OnceLock::new();
-static SERVICE: OnceLock<String> = OnceLock::new();
+/// Session id → the token of its MCP server (see `agent_token`), for the life of the process.
+static AGENT_TOKENS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-/// Turn sign-in on for this process: the database with the accounts and a fresh service
-/// token for the hub's own children. Until it is called (tests that build the router
-/// directly) nothing is checked.
+/// Turn sign-in on for this process: the database with the accounts. Until it is called
+/// (tests that build the router directly) nothing is checked.
 pub fn init(db: Arc<Mutex<Connection>>) -> std::io::Result<()> {
-    let _ = SERVICE.set(users::random_token()?);
     let _ = DB.set(db);
     Ok(())
 }
 
-/// The token for the hub's own helper processes (passed only in their environment).
-pub fn service_token() -> Option<String> {
-    SERVICE.get().cloned()
+/// The token the hub MCP server of `session_id` calls the hub back with (passed only in its
+/// environment). It opens nothing but that session's MCP routes (`agent_route`).
+pub fn agent_token(session_id: &str) -> Option<String> {
+    let mut map = AGENT_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = map.get_or_insert_with(HashMap::new);
+    if let Some(t) = map.get(session_id) {
+        return Some(t.clone());
+    }
+    let t = users::random_token().ok()?;
+    map.insert(session_id.to_string(), t.clone());
+    Some(t)
+}
+
+fn is_agent_token(token: &str) -> bool {
+    AGENT_TOKENS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|m| m.values().any(|t| eq(t, token)))
+}
+
+/// The session of an MCP route (`/sessions/<id>/pane|browser`, with or without `/api`).
+fn agent_route(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api").unwrap_or(path).strip_prefix("/sessions/")?;
+    let (id, tail) = rest.split_once('/')?;
+    (!id.is_empty() && matches!(tail, "pane" | "browser")).then_some(id)
 }
 
 /// Who makes a request.
@@ -62,8 +82,8 @@ pub fn service_token() -> Option<String> {
 pub enum Principal {
     /// No accounts yet and the request comes from this machine.
     Open,
-    /// One of the hub's own processes (service token).
-    Service,
+    /// The hub MCP server of an agent session, on that session's MCP routes only.
+    Agent,
     /// A signed-in user and the session token used.
     User { user: User, token: String },
 }
@@ -118,15 +138,21 @@ fn principal_for(db: &Connection, token: &str) -> Option<Principal> {
     if token.is_empty() {
         return None;
     }
-    if SERVICE.get().is_some_and(|s| eq(s, token)) {
-        return Some(Principal::Service);
-    }
     users::session_user(db, token).ok().flatten().map(|user| Principal::User { user, token: token.to_string() })
 }
 
 /// The principal behind the request's credentials (bearer header first, then the cookie).
 fn authenticate(db: &Connection, headers: &HeaderMap) -> Option<Principal> {
     [bearer(headers), cookie_value(headers, COOKIE)].into_iter().flatten().find_map(|t| principal_for(db, t))
+}
+
+/// `authenticate`, plus an agent's session token on its own session's MCP routes.
+fn identify(db: &Connection, headers: &HeaderMap, path: &str) -> Option<Principal> {
+    authenticate(db, headers).or_else(|| {
+        let (id, token) = (agent_route(path)?, bearer(headers)?);
+        let own = AGENT_TOKENS.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.get(id).is_some_and(|t| eq(t, token));
+        own.then_some(Principal::Agent)
+    })
 }
 
 fn has_users(db: &Connection) -> bool {
@@ -167,7 +193,7 @@ pub fn authorized(headers: &HeaderMap, port: u16) -> bool {
 /// Drop the hub's own credentials (and the preview pass) before a request goes to a
 /// previewed app.
 pub fn strip_credentials(headers: &mut HeaderMap) {
-    if bearer(headers).is_some_and(|t| db().is_some_and(|db| principal_for(&db, t).is_some())) {
+    if bearer(headers).is_some_and(|t| is_agent_token(t) || db().is_some_and(|db| principal_for(&db, t).is_some())) {
         headers.remove(header::AUTHORIZATION);
     }
     let rest: Vec<String> = headers
@@ -192,7 +218,7 @@ pub fn strip_credentials(headers: &mut HeaderMap) {
 pub async fn guard(mut req: Request, next: Next) -> Response {
     let (local, ip) = local_peer(&req);
     // `None` until `init` (tests building the router directly): nothing is checked
-    let checked = db().map(|db| (authenticate(&db, req.headers()), has_users(&db)));
+    let checked = db().map(|db| (identify(&db, req.headers(), req.uri().path()), has_users(&db)));
     let Some((mut principal, users_exist)) = checked else {
         req.extensions_mut().insert(Caller { principal: Some(Principal::Open), local, ip });
         return next.run(req).await;
@@ -430,6 +456,41 @@ mod tests {
         let mut only = cookie(format!("{PREVIEW_COOKIE}={pass}"));
         strip_credentials(&mut only);
         assert!(only.get(header::COOKIE).is_none());
+    }
+
+    #[test]
+    fn an_agent_token_opens_only_its_own_sessions_mcp_routes() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::init(&db).unwrap();
+        users::create_first(&db, "alice", "$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaA").unwrap();
+        let token = agent_token("s-own").unwrap();
+        assert_eq!(agent_token("s-own").unwrap(), token, "one token per session");
+        assert_ne!(agent_token("s-other").unwrap(), token);
+        let mut h = HeaderMap::new();
+        h.insert(header::AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
+
+        for path in ["/sessions/s-own/pane", "/sessions/s-own/browser", "/api/sessions/s-own/pane"] {
+            assert!(matches!(identify(&db, &h, path), Some(Principal::Agent)), "{path}");
+        }
+        for path in [
+            "/sessions/s-other/pane",
+            "/sessions/s-other/browser",
+            "/sessions/s-own",
+            "/sessions/s-own/messages",
+            "/sessions/s-own/pane/x",
+            "/sessions//pane",
+            "/projects",
+            "/projects/p1/environment",
+            "/settings",
+            "/system/overview",
+        ] {
+            assert!(identify(&db, &h, path).is_none(), "{path}");
+        }
+        // nor as a session cookie, nor on a preview port
+        let mut c = HeaderMap::new();
+        c.insert(header::COOKIE, HeaderValue::from_str(&format!("{COOKIE}={token}")).unwrap());
+        assert!(identify(&db, &c, "/sessions/s-own/pane").is_none());
+        assert!(!preview_authorized(&db, &h, 8790));
     }
 
     #[test]
