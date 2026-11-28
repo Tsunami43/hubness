@@ -18,8 +18,7 @@ export const en = {
   'archive.emptyTitle': 'Empty the archive',
   'archive.emptyConfirm': 'Delete all {n} archived sessions for good? Their conversations can’t be restored.',
   'archive.deleteOne': 'Delete “{title}” for good? The conversation can’t be restored.',
-  'archive.emptyWithFolders': 'Delete with chat folders',
-  'archive.emptyFoldersHint': 'Their attached files are deleted too. Folders of regular chats, with the files their agents made, stay unless you delete them as well.',
+  'archive.emptyFoldersHint': 'Their attached files and the folders of regular chats, with everything their agents made there, are deleted too.',
   'archive.emptyList': 'The archive is empty. Archive a session from the Active tab to hide it from the list.',
   'archive.banner': 'This session is in the archive. Sending a message brings it back.',
   'attach.add': 'Attach files (or paste / drop them here)',
@@ -222,8 +221,7 @@ export const en = {
   'session.agentLocked':
     'Session agent: {agent}. The agent can’t be changed — the conversation context lives with it. Start a new session for a different agent.',
   'session.deleteConfirm': 'Delete this session and its history?',
-  'session.deleteWithFolder': 'Delete with folder',
-  'session.deleteFolderHint': 'Its attached files are deleted too. The chat folder, with the files the agent made there, stays unless you delete it as well.',
+  'session.deleteFolderHint': 'Its attached files and the chat folder, with everything the agent made there, are deleted too.',
 
   // events
   'ev.thinking': 'Thinking',
