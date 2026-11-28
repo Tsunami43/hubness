@@ -10,7 +10,7 @@ import { decrypt, deleteSecret, encrypt, listSecrets, resetKeys, secretEnv, setS
 import { createRun, listRuns, suggestRuns, updateRun, deleteRun } from '../src/runs.ts';
 import { bwrapArgs, execCommand, runtimeOf, setRuntime } from '../src/environments.ts';
 import { csrfGuard } from '../src/csrf.ts';
-import { childEnv, config } from '../src/config.ts';
+import { childEnv, config, isLoopback } from '../src/config.ts';
 import { closePreview, ensurePreview } from '../src/preview.ts';
 import { HttpError } from '../src/errors.ts';
 import { createEntry, deleteEntry, readFileSafe, renameEntry, writeFileSafe } from '../src/fsops.ts';
@@ -145,6 +145,22 @@ test('system project never runs in the sandbox', () => {
   const home = projects.create('home', join(tmp, 'hub-home'), 'system');
   const spec = execCommand({ kind: 'project', project: home }, 'true', {});
   assert.ok(!spec.command.includes('bwrap'));
+});
+
+test('loopback hosts match the Rust server: localhost, 127.0.0.0/8 and ::1 only', () => {
+  for (const h of ['localhost', '127.0.0.1', '127.5.5.5', '::1', '0:0:0:0:0:0:0:1']) assert.ok(isLoopback(h), h);
+  for (const h of ['0.0.0.0', '::', '192.168.1.5', '[::1]', '127.1', '::ffff:127.0.0.1', 'example.com', '']) assert.ok(!isLoopback(h), h);
+});
+
+test('the server refuses to start on a non-loopback host (it has no sign-in)', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync(process.execPath, [join(import.meta.dirname, '../src/index.ts')], {
+    env: { ...process.env, HUBNESS_HOST: '0.0.0.0', HUBNESS_PORT: '0' },
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /HUBNESS_HOST=0\.0\.0\.0 is reachable from other machines/);
 });
 
 test('child processes do not inherit hub settings, secrets or pnpm variables', () => {
