@@ -47,6 +47,37 @@ pub enum ServiceManager {
     Launchd,
 }
 
+/// State of a self-update started from the web (`POST /api/system/update`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HubUpdateStage {
+    #[default]
+    Idle,
+    Running,
+    /// The new binary is in place, but this process still runs the old one.
+    Installed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct HubUpdateState {
+    pub state: HubUpdateStage,
+    /// The error of a failed update, or the version an installed one put in place.
+    pub message: Option<String>,
+}
+
+/// `GET /api/system/version`: this hub's version and the latest release.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HubVersion {
+    pub version: String,
+    pub latest: Option<String>,
+    pub update_available: bool,
+    pub release_url: Option<String>,
+    pub can_update: bool,
+    pub update: HubUpdateState,
+}
+
 /// What the System pages can do on this server (asked once by the System menu).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SystemPlatform {

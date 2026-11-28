@@ -7,6 +7,7 @@ import { OsLogo } from '../../components/OsLogo';
 import { ErrorLine, Spinner } from '../../components/ui';
 import { t } from '../../i18n';
 import { fmtUptime, Header, Bar } from './parts';
+import { HubVersionCard } from './version';
 
 function Tile({ label, value, sub, children, to }: { label: string; value: ReactNode; sub?: ReactNode; children?: ReactNode; to?: string }) {
   const inner = (
@@ -62,6 +63,7 @@ export function OverviewSection() {
     <div>
       <Header title={t('sys.overview')} hint={t('sys.overviewHint')} />
       {o.info.platform === 'other' ? <p className="mb-3 border border-warn/50 px-3 py-2 text-sm text-warn">{t('sys.unsupported')}</p> : null}
+      <HubVersionCard />
       <HostHeader o={o} />
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Tile

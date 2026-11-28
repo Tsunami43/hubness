@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 mod system;
 pub use system::*;
+pub mod version;
 
 /// Error body of every failed API request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

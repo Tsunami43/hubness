@@ -141,3 +141,27 @@ export type AskTarget =
   | { kind: 'container'; id: string }
   | { kind: 'unit'; id: string; scope: 'system' | 'user' }
   | { kind: 'package'; id: string };
+
+/** Progress of a self-update started from the web (`POST /api/system/update`). */
+export interface HubUpdateState {
+  /**
+   * idle — none started; running — downloading and replacing the binary; installed — the new
+   * binary is in place but this process still runs the old one (restart the hub); failed.
+   */
+  state: 'idle' | 'running' | 'installed' | 'failed';
+  /** The error of a failed update, or the version an installed one put in place. */
+  message: string | null;
+}
+
+/** `GET /api/system/version`: this hub's version and the latest release. */
+export interface HubVersion {
+  version: string;
+  /** The latest released version; null — unknown (offline, or the check is turned off). */
+  latest: string | null;
+  updateAvailable: boolean;
+  /** Release notes of `latest`, when releases live on a web page. */
+  releaseUrl: string | null;
+  /** This hub can replace itself (the installed `hubness` binary, not a dev checkout). */
+  canUpdate: boolean;
+  update: HubUpdateState;
+}
