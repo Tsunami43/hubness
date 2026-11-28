@@ -20,6 +20,7 @@ embed-web = ["server", "hubness-server?/embed-web"]
 anyhow.workspace = true
 clap.workspace = true
 flate2.workspace = true
+hubness-core.workspace = true
 hubness-server = { workspace = true, optional = true }
 hubness-tui.workspace = true
 reqwest.workspace = true

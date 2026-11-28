@@ -72,6 +72,9 @@ crates/         Rust server, API client and terminal UI (Cargo workspace)
   own config through `agents/mcp-config.ts`) and each agent's skills / rules / subagents /
   commands; every agent module declares its own paths (`agents/<kind>/extensions.ts`).
 - `system/` — host monitoring and the "ask about this" flow for containers, units, packages.
+- `version.ts` — the hub's version and the latest release (`HUBNESS_RELEASE_URL`,
+  `HUBNESS_NO_UPDATE_CHECK`) for System → Overview; the Rust server (`version.rs`) also updates
+  itself from the web by running `hubness update` from the installed binary (not a cargo build).
 - `csrf.ts` — mutating `/api` requests require JSON or the `X-Hubness-Request` header.
 
 ### Web (`apps/web/src`)

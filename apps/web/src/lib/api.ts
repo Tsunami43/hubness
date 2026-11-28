@@ -56,6 +56,7 @@ import type {
   Session,
   SystemOverview,
   SystemPlatform,
+  HubVersion,
   UnitInfo,
   VoiceSettings,
   VoiceSettingsInput,
@@ -225,6 +226,8 @@ export const api = {
 
   sysPlatform: () => req<SystemPlatform>('GET', '/system/platform'),
   sysOverview: () => req<SystemOverview>('GET', '/system/overview'),
+  hubVersion: (check = false) => req<HubVersion>('GET', `/system/version${check ? '?check=1' : ''}`),
+  hubUpdate: () => req<{ ok: true }>('POST', '/system/update'),
   containers: () => req<{ available: boolean; containers: ContainerInfo[] }>('GET', '/system/containers'),
   containerAction: (name: string, action: string) => req<GitOpResult>('POST', `/system/containers/${encodeURIComponent(name)}/${action}`),
   containerRemove: (name: string) => req<GitOpResult>('DELETE', `/system/containers/${encodeURIComponent(name)}`),
