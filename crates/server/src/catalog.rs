@@ -532,7 +532,7 @@ pub fn clone_repo(
             None => None,
         };
         let (dir, slug) = target_dir(&s.config, &name, group.as_ref())?;
-        // a login stored for the host (Settings → Git access) is used; otherwise git asks in the terminal
+        // a login stored for the host (System → Git access) is used; otherwise git asks in the terminal
         let auth = crate::git_auth::git_auth_for(&db, &s.config.data_dir, std::slice::from_ref(&url))?;
         (dir, slug, group, auth)
     };

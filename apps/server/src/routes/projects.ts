@@ -132,7 +132,7 @@ projectRoutes.post('/projects/:id/manifest', async (c) => {
   return c.json(await manifestResponse(p), 201);
 });
 
-// ---------- git logins per host (Settings → Git access) ----------
+// ---------- git logins per host (System → Git access) ----------
 
 projectRoutes.get('/git-credentials', (c) => c.json(listGitCredentials()));
 projectRoutes.put('/git-credentials/:host', async (c) => c.json(setGitCredential(c.req.param('host'), await parseBody(c, GitCredential))));
