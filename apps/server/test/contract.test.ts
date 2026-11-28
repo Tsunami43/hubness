@@ -614,6 +614,18 @@ test('claude-code approvals and stop', async () => {
   assert.deepEqual((await call('POST', `/sessions/${s.id}/stop`)).json, { ok: false }, 'nothing left to stop');
 });
 
+test('deleting a session while its agent works stops it quietly, the hub keeps serving', async () => {
+  useFixture('claude-approval.jsonl');
+  const s = (await call('POST', '/sessions', { agent: { kind: 'claude-code' }, prompt: 'clean the build' })).json;
+  await waitFor(s.id, (x) => x.status === 'waiting', 'the permission request');
+  assert.deepEqual((await call('DELETE', `/sessions/${s.id}`)).json, { ok: true });
+  // the killed agent's "Stopped" notice would land on a session that is gone (a foreign key failure)
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal((await call('GET', `/sessions/${s.id}`)).status, 404);
+  assert.deepEqual((await call('GET', `/sessions/${s.id}/events`)).json, [], 'nothing written for the deleted session');
+  assert.equal((await call('GET', '/sessions')).status, 200, 'still serving');
+});
+
 test('project secrets: names only, validation, removal', async () => {
   const repo = makeRepo(join(tmp, 'elsewhere', 'secrets'));
   const [p] = (await call('POST', '/projects/import', { paths: [repo] })).json;

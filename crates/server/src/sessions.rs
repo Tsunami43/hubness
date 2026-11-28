@@ -261,7 +261,8 @@ fn flag(v: &Option<String>) -> bool {
 /// that can't be removed never keeps a session alive.
 fn delete_now(s: &AppState, db: &Connection, id: &str, folder: bool) -> ApiResult<()> {
     let cur = repo::get(db, id)?;
-    s.runtime.stop(id);
+    // quietly, even mid-turn: a "Stopped" notice would be written for a session that is gone
+    s.runtime.retire(id);
     close_browser_page(id);
     // where the files are, read before the session and its events are gone
     let mut cwd = None;

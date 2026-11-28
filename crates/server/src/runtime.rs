@@ -58,8 +58,9 @@ impl Runtime {
         self.active.lock().expect("runtime lock").get(session_id).is_some_and(|a| !a.turn.answered.load(Ordering::SeqCst))
     }
 
-    /// Stop a process that lingers after its answer, quietly: nothing it says reaches the feed.
-    fn retire(&self, session_id: &str) {
+    /// Stop the session's process quietly: nothing it says reaches the feed. For one lingering
+    /// after its answer, and for a session being deleted (its events would have no session).
+    pub fn retire(&self, session_id: &str) {
         let Some(a) = self.active.lock().expect("runtime lock").remove(session_id) else { return };
         a.turn.retired.store(true, Ordering::SeqCst);
         a.handle.stop(StopReason::User);
