@@ -234,6 +234,7 @@ export const ops = {
     return op(await git(cwd, ['rm', '--cached', '-r', '--quiet', '--', ...paths]));
   },
   async checkout(cwd: string, branch: string, create: boolean) {
+    if (!validRev(branch)) return bad('branch');
     if (create) return op(await git(cwd, ['switch', '-c', branch]));
     const remote = branch.match(/^([^/]+)\/(.+)$/);
     if (remote) {

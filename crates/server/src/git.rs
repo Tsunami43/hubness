@@ -384,6 +384,9 @@ pub mod ops {
     }
 
     pub async fn checkout(cwd: &Path, branch: &str, create: bool) -> GitOpResult {
+        if !valid_rev(branch) {
+            return bad("branch");
+        }
         if create {
             return op(git(cwd, &["switch", "-c", branch]).await);
         }
@@ -582,7 +585,12 @@ async fn read_route(
         "status" => Json(status(&cwd).await).into_response(),
         "diff" => {
             let path = qs("path").filter(|p| !p.is_empty());
-            Json(json!({ "diff": diff(&cwd, path, qs("staged") == Some("1"), qs("untracked") == Some("1")).await })).into_response()
+            let untracked = qs("untracked") == Some("1");
+            // `git diff --no-index` reads any path, not only the repository's
+            if let (Some(p), true) = (path, untracked) {
+                crate::files::safe_join(&cwd, p)?;
+            }
+            Json(json!({ "diff": diff(&cwd, path, qs("staged") == Some("1"), untracked).await })).into_response()
         }
         "branches" => Json(branches(&cwd).await).into_response(),
         "log" => {
