@@ -157,6 +157,13 @@ async fn delete_project(State(s): State<AppState>, Path(id): Path<String>, Query
             }
             // stop its Run commands, shells and previews
             crate::runs::stop_project_processes(db, &id)?;
+            // agents that only linger after their answer (background tasks) go with the project
+            for x in crate::db::sessions::list(
+                db,
+                crate::db::sessions::Filter { project_id: Some(&id), archived: crate::db::sessions::Archived::All, ..Default::default() },
+            )? {
+                s.runtime.stop(&x.id);
+            }
             Ok(dir)
         })?
         .0;
@@ -256,7 +263,15 @@ async fn group_context(State(s): State<AppState>, Path(id): Path<String>) -> Api
 
 async fn delete_group(State(s): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     s.with(|db, cfg| {
+        // read before the group's sessions are gone; agents lingering after their answer go with it
+        let lingering = crate::db::sessions::list(
+            db,
+            crate::db::sessions::Filter { group_id: Some(&id), archived: crate::db::sessions::Archived::All, ..Default::default() },
+        )?;
         catalog::delete_group(db, cfg, &id, &|sid| s.runtime.is_active(sid))?;
+        for x in lingering {
+            s.runtime.stop(&x.id);
+        }
         Ok(json!({ "ok": true }))
     })
 }

@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { groups } from '../db/index.ts';
+import { groups, sessions } from '../db/index.ts';
 import {
   assertRemovable,
   cloneRepo,
@@ -34,7 +34,7 @@ import { deleteGitCredential, ghLogin, listGitCredentials, setGitCredential } fr
 import { checkGitCredential, gitCredentialAvatar } from '../git-login-check.ts';
 import { createSsh, deleteSsh, listSsh, setSshBindings, SshBindings, sshBindings, SshCreate, SshPatch, testSsh, updateSsh } from '../ssh.ts';
 import { HttpError } from '../errors.ts';
-import { isActive } from '../runtime.ts';
+import { isActive, stopSession } from '../runtime.ts';
 import { parseBody, PermissionModeSchema, shortText, TermSizeSchema } from './http.ts';
 
 /** Projects and groups, hub settings, the project manifest, git logins per host. */
@@ -82,6 +82,8 @@ projectRoutes.delete('/projects/:id', async (c) => {
   const dir = withFiles ? deletableFolder(p) : null;
   if (dir && c.req.query('confirm') !== basename(dir)) throw new HttpError(400, 'confirm must be the name of the project folder');
   stopProjectProcesses(id);
+  // agents that only linger after their answer (background tasks) go with the project
+  for (const s of sessions.list({ projectId: id, archived: 'all' })) stopSession(s.id);
   await stopContainer(id);
   if (dir) deleteFolder(dir);
   removeProject(id, isActive);
@@ -107,7 +109,11 @@ projectRoutes.get('/groups/:id', (c) => c.json(groupDetail(c.req.param('id'))));
 projectRoutes.post('/groups', async (c) => c.json(createGroup(await parseBody(c, GroupFields)), 201));
 projectRoutes.patch('/groups/:id', async (c) => c.json(updateGroup(c.req.param('id'), await parseBody(c, GroupFields))));
 projectRoutes.delete('/groups/:id', (c) => {
-  deleteGroup(c.req.param('id'), isActive);
+  const id = c.req.param('id');
+  // read before the group's sessions are gone; agents lingering after their answer go with it
+  const lingering = sessions.list({ groupId: id, archived: 'all' });
+  deleteGroup(id, isActive);
+  for (const s of lingering) stopSession(s.id);
   return c.json({ ok: true });
 });
 /** Aggregated context the agent will receive in a group session (preview). */
